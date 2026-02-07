@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import type { Activity } from "@/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -83,9 +83,12 @@ function formatCost(cost: number): string {
 
 export function ActivityFeed() {
   const [category, setCategory] = useState<string>("");
-  const [dateRange, setDateRange] = useState<number>(7);
+  const [dateRange, setDateRange] = useState<number>(1); // Default to today
   
-  const sinceTimestamp = Date.now() - dateRange * 24 * 60 * 60 * 1000;
+  // Memoize to prevent recalculating on every render (Date.now() changes)
+  const sinceTimestamp = useMemo(() => {
+    return Date.now() - dateRange * 24 * 60 * 60 * 1000;
+  }, [dateRange]);
   
   const activities = useQuery(api.activities.list, {
     limit: 100,
