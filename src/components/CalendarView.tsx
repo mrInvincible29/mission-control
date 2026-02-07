@@ -61,10 +61,15 @@ function getTimesFromSchedule(
   schedule: string,
   nextRun?: number
 ): { hour: number; minute: number; isBanner?: boolean }[] {
-  // Handle "every X hours" or "every Xh"
+  // Handle "every X hours" or "every Xh" - show as banner if too frequent (<=6 hours)
   const everyHoursMatch = schedule.match(/every\s+(\d+)\s*(?:hours?|h)\b/i);
   if (everyHoursMatch) {
     const interval = parseInt(everyHoursMatch[1]);
+    // If 6 hours or less, show as banner (too frequent for calendar grid)
+    if (interval <= 6) {
+      return [{ hour: 0, minute: 0, isBanner: true }];
+    }
+    // Otherwise show on calendar
     const times: { hour: number; minute: number }[] = [];
     for (let hour = 0; hour < 24; hour += interval) {
       times.push({ hour, minute: 0 });
@@ -76,8 +81,8 @@ function getTimesFromSchedule(
   const everyMinutesMatch = schedule.match(/every\s+(\d+)\s*(?:minutes?|m)\b/i);
   if (everyMinutesMatch) {
     const interval = parseInt(everyMinutesMatch[1]);
-    // If less than 60 minutes, show as banner instead of cluttering calendar
-    if (interval < 60) {
+    // Always show as banner (too frequent for calendar)
+    if (interval < 120) {
       return [{ hour: 0, minute: 0, isBanner: true }];
     }
     // For 60+ minute intervals, show hourly instances
@@ -277,6 +282,35 @@ export function CalendarView() {
           checkDate = new Date(checkDate.getTime() + intervalMs);
         }
       } else {
+        // Check if this is a one-time "at" schedule (e.g., "once at 2/1/2026, 1:55:06 PM")
+        const onceAtMatch = job.schedule.match(/once at/i);
+        if (onceAtMatch) {
+          // For one-time tasks, only show if the scheduled date is within this week
+          // Skip disabled one-time tasks entirely (they're in the past)
+          if (!job.enabled) continue;
+          
+          // Try to extract the date from nextRun or lastRun
+          const runTime = job.nextRun || job.lastRun;
+          if (runTime) {
+            const runDate = new Date(runTime);
+            const weekStart = new Date(weekDates[0]);
+            weekStart.setHours(0, 0, 0, 0);
+            const weekEnd = new Date(weekDates[6]);
+            weekEnd.setHours(23, 59, 59, 999);
+            
+            if (runDate >= weekStart && runDate <= weekEnd) {
+              const dayIndex = runDate.getDay();
+              tasks.push({
+                job,
+                dayIndex,
+                hour: runDate.getHours(),
+                minute: runDate.getMinutes(),
+              });
+            }
+          }
+          continue;
+        }
+        
         // Regular daily/weekly schedules
         const days = parseScheduleToDay(job.schedule);
         
