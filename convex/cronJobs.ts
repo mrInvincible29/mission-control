@@ -53,3 +53,21 @@ export const updateLastRun = mutation({
     }
   },
 });
+
+export const remove = mutation({
+  args: {
+    name: v.string(),
+  },
+  handler: async (ctx, args) => {
+    const job = await ctx.db
+      .query("cron_jobs")
+      .filter((q) => q.eq(q.field("name"), args.name))
+      .first();
+    
+    if (job) {
+      await ctx.db.delete(job._id);
+      return true;
+    }
+    return false;
+  },
+});
