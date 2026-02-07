@@ -1,15 +1,20 @@
 export interface Activity {
   _id: string;
   actionType: string;
+  category?: "important" | "model" | "message" | "system" | "noise";
   description: string;
   timestamp: number;
   status: "success" | "error" | "pending";
   metadata?: {
     tool?: string;
     session?: string;
+    sessionKey?: string;
     channel?: string;
     duration?: number;
     error?: string;
+    model?: string;
+    tokens?: number;
+    cost?: number;
   };
 }
 
@@ -38,4 +43,5 @@ export interface CronJob {
   enabled: boolean;
   lastRun?: number;
   nextRun?: number;
+  model?: string;
 }

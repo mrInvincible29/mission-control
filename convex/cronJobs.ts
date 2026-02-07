@@ -16,6 +16,7 @@ export const upsert = mutation({
     enabled: v.boolean(),
     lastRun: v.optional(v.number()),
     nextRun: v.optional(v.number()),
+    model: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
     const existing = await ctx.db

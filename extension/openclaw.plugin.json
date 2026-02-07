@@ -1,0 +1,17 @@
+{
+  "id": "mission-control-sync",
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "convexUrl": {
+        "type": "string",
+        "description": "Convex deployment URL"
+      },
+      "enabled": {
+        "type": "boolean",
+        "default": true
+      }
+    }
+  }
+}
