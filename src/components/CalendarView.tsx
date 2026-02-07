@@ -387,34 +387,30 @@ export function CalendarView() {
                   const indexInGroup = group.findIndex(t => t.job._id === task.job._id && t.dayIndex === task.dayIndex);
                   const groupSize = group.length;
                   
-                  // Stack tasks vertically within the hour slot
-                  const taskHeight = groupSize > 1 
-                    ? Math.max(20, Math.floor((HOUR_HEIGHT - 4) / Math.min(groupSize, 3))) 
-                    : HOUR_HEIGHT - 4;
-                  const verticalOffset = groupSize > 1 ? indexInGroup * taskHeight : 0;
+                  // Horizontal stacking - divide cell width among tasks
+                  const maxVisible = 3;
+                  if (indexInGroup >= maxVisible) return null;
                   
-                  // Don't render tasks beyond the 3rd one in a slot (show "+N" instead handled separately)
-                  if (indexInGroup >= 3) return null;
-                  
-                  const topPosition = (task.hour * HOUR_HEIGHT) + (task.minute / 60 * HOUR_HEIGHT) + verticalOffset + 2;
-                  const leftPosition = `calc(60px + ((100% - 60px) / 7) * ${task.dayIndex} + 2px)`;
-                  const taskWidth = `calc((100% - 60px) / 7 - 6px)`;
+                  const visibleCount = Math.min(groupSize, maxVisible);
+                  const topPosition = (task.hour * HOUR_HEIGHT) + 2;
+                  const cellWidth = `((100% - 60px) / 7)`;
+                  const taskWidthPercent = 100 / visibleCount;
+                  const leftOffset = taskWidthPercent * indexInGroup;
                   
                   return (
                     <button
                       key={`${task.job._id}-${task.dayIndex}-${idx}`}
                       onClick={() => setSelectedJob(task.job)}
-                      className={`absolute border rounded-md px-1.5 py-0.5 text-left transition-all cursor-pointer z-[2] overflow-hidden ${
+                      className={`absolute border rounded-sm px-1 py-0.5 text-left transition-all cursor-pointer z-[2] overflow-hidden ${
                         task.job.enabled
                           ? getModelColorLight(task.job.model)
                           : "bg-muted/50 hover:bg-muted border-muted-foreground/20 opacity-60"
                       }`}
                       style={{
                         top: `${topPosition}px`,
-                        left: leftPosition,
-                        width: taskWidth,
-                        height: `${taskHeight - 2}px`,
-                        maxHeight: `${HOUR_HEIGHT - verticalOffset - 4}px`,
+                        left: `calc(60px + ${cellWidth} * ${task.dayIndex} + ${cellWidth} * ${leftOffset / 100})`,
+                        width: `calc(${cellWidth} * ${taskWidthPercent / 100} - 3px)`,
+                        height: `${HOUR_HEIGHT - 6}px`,
                       }}
                     >
                       <div className={`text-[10px] font-semibold truncate leading-tight ${
@@ -422,17 +418,15 @@ export function CalendarView() {
                       }`}>
                         {task.job.name}
                       </div>
-                      {taskHeight > 24 && (
-                        <div className="text-[9px] opacity-70 truncate">
-                          {formatTime(task.hour)}
-                        </div>
-                      )}
+                      <div className="text-[9px] opacity-70 truncate">
+                        {formatTime(task.hour)}
+                      </div>
                     </button>
                   );
                 });
               })()}
               
-              {/* "+N more" indicators for slots with more than 3 tasks */}
+              {/* "+N more" indicator for slots with more than 3 tasks */}
               {(() => {
                 const taskGroups: Record<string, ScheduledTask[]> = {};
                 scheduledTasks.forEach(task => {
@@ -446,19 +440,18 @@ export function CalendarView() {
                   .map(([key, group]) => {
                     const [dayIndex, hour] = key.split('-').map(Number);
                     const extraCount = group.length - 3;
-                    const topPosition = (hour * HOUR_HEIGHT) + HOUR_HEIGHT - 14;
-                    const leftPosition = `calc(60px + ((100% - 60px) / 7) * ${dayIndex} + 2px)`;
+                    const cellWidth = `((100% - 60px) / 7)`;
                     
                     return (
                       <div
                         key={`more-${key}`}
-                        className="absolute text-[9px] text-muted-foreground font-medium z-[3]"
+                        className="absolute text-[9px] bg-background/80 px-1 rounded text-muted-foreground font-medium z-[4]"
                         style={{
-                          top: `${topPosition}px`,
-                          left: leftPosition,
+                          top: `${hour * HOUR_HEIGHT + HOUR_HEIGHT - 16}px`,
+                          left: `calc(60px + ${cellWidth} * ${dayIndex} + ${cellWidth} - 45px)`,
                         }}
                       >
-                        +{extraCount} more
+                        +{extraCount}
                       </div>
                     );
                   });
