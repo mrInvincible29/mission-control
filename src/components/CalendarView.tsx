@@ -230,28 +230,51 @@ export function CalendarView() {
         continue;
       }
       
-      // Handle "every X days" - only show on the day indicated by nextRun
-      if (job.schedule.match(/every\s+\d+\s+days?/i) && job.nextRun) {
+      // Handle "every X days" - show on days within the week based on nextRun
+      const everyDaysMatch = job.schedule.match(/every\s+(\d+)\s+days?/i);
+      if (everyDaysMatch && job.nextRun) {
+        const intervalDays = parseInt(everyDaysMatch[1]);
+        const intervalMs = intervalDays * 24 * 60 * 60 * 1000;
         const nextRunDate = new Date(job.nextRun);
-        const nextRunDayIndex = nextRunDate.getDay();
         
-        // Check if nextRun falls within the current week view
-        const nextRunDateOnly = new Date(nextRunDate);
-        nextRunDateOnly.setHours(0, 0, 0, 0);
+        // Get week start/end timestamps
+        const weekStart = new Date(weekDates[0]);
+        weekStart.setHours(0, 0, 0, 0);
+        const weekEnd = new Date(weekDates[6]);
+        weekEnd.setHours(23, 59, 59, 999);
         
-        const weekDate = weekDates[nextRunDayIndex];
-        const weekDateOnly = new Date(weekDate);
-        weekDateOnly.setHours(0, 0, 0, 0);
+        // Find all occurrences within the week by iterating from nextRun backwards and forwards
+        let checkDate = new Date(job.nextRun);
         
-        if (nextRunDateOnly.getTime() === weekDateOnly.getTime()) {
-          for (const time of times) {
-            tasks.push({
-              job,
-              dayIndex: nextRunDayIndex,
-              hour: time.hour,
-              minute: time.minute,
-            });
+        // Go backwards to find occurrences before nextRun
+        while (checkDate.getTime() > weekStart.getTime()) {
+          checkDate = new Date(checkDate.getTime() - intervalMs);
+        }
+        // Now move forward through the week
+        checkDate = new Date(checkDate.getTime() + intervalMs);
+        
+        while (checkDate.getTime() <= weekEnd.getTime()) {
+          const checkDateOnly = new Date(checkDate);
+          checkDateOnly.setHours(0, 0, 0, 0);
+          
+          // Find which day of the week this falls on
+          for (let dayIndex = 0; dayIndex < 7; dayIndex++) {
+            const weekDateOnly = new Date(weekDates[dayIndex]);
+            weekDateOnly.setHours(0, 0, 0, 0);
+            
+            if (checkDateOnly.getTime() === weekDateOnly.getTime()) {
+              for (const time of times) {
+                tasks.push({
+                  job,
+                  dayIndex,
+                  hour: time.hour,
+                  minute: time.minute,
+                });
+              }
+              break;
+            }
           }
+          checkDate = new Date(checkDate.getTime() + intervalMs);
         }
       } else {
         // Regular daily/weekly schedules
