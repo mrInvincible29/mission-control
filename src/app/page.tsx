@@ -5,6 +5,11 @@ import { Component, type ReactNode } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SetupGuide } from "@/components/SetupGuide";
 
+const ThemeToggle = dynamic(
+  () => import("@/components/ThemeToggle").then((mod) => ({ default: mod.ThemeToggle })),
+  { ssr: false }
+);
+
 class TabErrorBoundary extends Component<
   { children: ReactNode; fallbackLabel: string },
   { hasError: boolean; error?: Error }
@@ -63,7 +68,7 @@ function DashboardContent() {
 
   return (
     <Tabs defaultValue="activity" className="space-y-6">
-      <TabsList className="grid w-full grid-cols-3 max-w-md">
+      <TabsList className="grid w-full grid-cols-3 max-w-[280px] sm:max-w-md">
         <TabsTrigger value="activity">Activity</TabsTrigger>
         <TabsTrigger value="calendar">Calendar</TabsTrigger>
         <TabsTrigger value="search">Search</TabsTrigger>
@@ -95,12 +100,17 @@ export default function Home() {
     <main className="min-h-screen bg-gradient-to-b from-background to-background/95">
       <div className="container mx-auto px-4 py-6">
         <header className="mb-8">
-          <h1 className="text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
-            Mission Control
-          </h1>
-          <p className="text-muted-foreground mt-1">
-            AJ&apos;s personal command center
-          </p>
+          <div className="flex items-center justify-between">
+            <div>
+              <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
+                Mission Control
+              </h1>
+              <p className="text-muted-foreground mt-1 text-sm sm:text-base">
+                AJ&apos;s personal command center
+              </p>
+            </div>
+            <ThemeToggle />
+          </div>
         </header>
 
         <DashboardContent />

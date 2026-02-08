@@ -163,23 +163,23 @@ export function ActivityFeed() {
           <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
             <div className="rounded-lg bg-muted/50 p-2.5">
               <div className="text-xs text-muted-foreground">{dateLabel} Activities</div>
-              <div className="text-lg font-semibold mt-0.5">{stats.total}</div>
+              <div className="text-base sm:text-lg font-semibold mt-0.5">{stats.total}</div>
             </div>
             <div className="rounded-lg bg-purple-500/5 border border-purple-500/10 p-2.5">
               <div className="text-xs text-purple-400">Tokens</div>
-              <div className="text-lg font-semibold text-purple-300 mt-0.5">
+              <div className="text-base sm:text-lg font-semibold text-purple-400 dark:text-purple-300 mt-0.5">
                 {stats.totalTokens > 0 ? formatTokens(stats.totalTokens) : "—"}
               </div>
             </div>
             <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
               <div className="text-xs text-emerald-400">Cost</div>
-              <div className="text-lg font-semibold text-emerald-300 mt-0.5">
+              <div className="text-base sm:text-lg font-semibold text-emerald-400 dark:text-emerald-300 mt-0.5">
                 {stats.totalCost > 0 ? formatCost(stats.totalCost) : "—"}
               </div>
             </div>
             <div className="rounded-lg bg-blue-500/5 border border-blue-500/10 p-2.5">
               <div className="text-xs text-blue-400">Categories</div>
-              <div className="flex flex-wrap gap-1 mt-1">
+              <div className="flex flex-wrap gap-1 mt-1 min-h-[24px]">
                 {Object.entries(stats.byCategory).map(([cat, count]) => (
                   <Badge
                     key={cat}
@@ -195,8 +195,8 @@ export function ActivityFeed() {
         )}
 
         {/* Filters */}
-        <div className="flex items-center gap-2 mt-3 flex-wrap">
-          <div className="flex items-center gap-1">
+        <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-3">
+          <div className="flex flex-wrap items-center gap-1">
             {CATEGORIES.map(cat => (
               <Button
                 key={cat.value}
@@ -205,11 +205,12 @@ export function ActivityFeed() {
                 className="text-xs h-7 px-2"
                 onClick={() => setCategory(cat.value)}
               >
-                {cat.label}
+                <span className="sm:hidden">{cat.value ? cat.label.split(" ")[0] : "All"}</span>
+                <span className="hidden sm:inline">{cat.label}</span>
               </Button>
             ))}
           </div>
-          <div className="flex items-center gap-1 ml-auto">
+          <div className="flex items-center gap-1 sm:ml-auto">
             {DATE_RANGES.map(range => (
               <Button
                 key={range.value}
@@ -382,7 +383,7 @@ function ActivityItem({ activity }: { activity: Activity }) {
               {meta.error && (
                 <div className="rounded-md bg-red-500/10 border border-red-500/20 p-2.5">
                   <div className="text-[10px] font-medium text-red-400 mb-1">Error</div>
-                  <pre className="text-xs text-red-300/90 whitespace-pre-wrap break-words font-mono">
+                  <pre className="text-xs text-red-500 dark:text-red-300/90 whitespace-pre-wrap break-words font-mono">
                     {meta.error}
                   </pre>
                 </div>

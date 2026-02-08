@@ -39,7 +39,7 @@ function highlightMatch(text: string, query: string): React.ReactNode {
 
   return parts.map((part, i) =>
     testRegex.test(part) ? (
-      <mark key={i} className="bg-yellow-500/30 text-yellow-200 rounded px-0.5">
+      <mark key={i} className="bg-yellow-400/30 dark:bg-yellow-500/30 text-yellow-700 dark:text-yellow-200 rounded px-0.5">
         {part}
       </mark>
     ) : (
@@ -113,7 +113,7 @@ function FileViewerDialog({
 
   return (
     <Dialog open={!!file} onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-4xl h-[80vh] flex flex-col p-0">
+      <DialogContent className="max-w-4xl w-[95vw] h-[80vh] flex flex-col p-0">
         <DialogHeader className="p-6 pb-2">
           <div className="flex items-center justify-between">
             <DialogTitle className="flex items-center gap-2">

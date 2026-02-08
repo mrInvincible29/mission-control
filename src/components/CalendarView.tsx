@@ -249,8 +249,21 @@ export function CalendarView() {
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const [referenceDate, setReferenceDate] = useState<Date>(() => new Date());
   const [viewMode, setViewMode] = useState<"week" | "day">("week");
+  const [isMobile, setIsMobile] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
+
+  // Auto-switch to day view on small screens
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 640px)");
+    const handler = (e: MediaQueryListEvent | MediaQueryList) => {
+      setIsMobile(e.matches);
+      if (e.matches) setViewMode("day");
+    };
+    handler(mq);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
 
   const weekDates = useMemo(() => {
     if (!currentTime) return [];
@@ -450,7 +463,8 @@ export function CalendarView() {
   }, [currentTime, visibleDates]);
 
   const colCount = visibleDates.length;
-  const gridCols = `60px repeat(${colCount}, 1fr)`;
+  const gutterWidth = isMobile ? 44 : 60;
+  const gridCols = `${gutterWidth}px repeat(${colCount}, 1fr)`;
 
   if (!currentTime || weekDates.length === 0) {
     return (
@@ -467,7 +481,7 @@ export function CalendarView() {
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
       {/* Navigation header */}
       <CardHeader className="pb-2 flex-shrink-0 px-4 pt-4">
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* Today button */}
           <Button
             variant="outline"
@@ -489,9 +503,11 @@ export function CalendarView() {
           </div>
 
           {/* Month / Year label */}
-          <span className="text-lg font-semibold select-none">
+          <span className="text-sm sm:text-lg font-semibold select-none truncate">
             {viewMode === "day"
-              ? referenceDate.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
+              ? referenceDate.toLocaleDateString(undefined, isMobile
+                  ? { month: "short", day: "numeric", year: "numeric" }
+                  : { weekday: "long", month: "long", day: "numeric", year: "numeric" })
               : formatMonthYear(weekDates)}
           </span>
 
@@ -538,9 +554,9 @@ export function CalendarView() {
                     {DAY_NAMES_SHORT[date.getDay()]}
                   </div>
                   <div
-                    className={`text-2xl font-medium mt-0.5 leading-none inline-flex items-center justify-center ${
+                    className={`text-xl sm:text-2xl font-medium mt-0.5 leading-none inline-flex items-center justify-center ${
                       isToday
-                        ? "bg-primary text-primary-foreground rounded-full w-10 h-10"
+                        ? "bg-primary text-primary-foreground rounded-full w-8 h-8 sm:w-10 sm:h-10"
                         : ""
                     }`}
                   >
@@ -597,7 +613,7 @@ export function CalendarView() {
               className="grid relative"
               style={{
                 gridTemplateColumns: gridCols,
-                minWidth: viewMode === "week" ? "800px" : "400px",
+                ...(viewMode === "week" && !isMobile ? { minWidth: "800px" } : {}),
               }}
             >
               {/* Time labels and grid */}
@@ -655,7 +671,7 @@ export function CalendarView() {
 
                   const visibleCount = Math.min(groupSize, maxVisible);
                   const topPosition = (task.hour * HOUR_HEIGHT) + 2;
-                  const cellWidth = `((100% - 60px) / ${colCount})`;
+                  const cellWidth = `((100% - ${gutterWidth}px) / ${colCount})`;
                   const taskWidthPercent = 100 / visibleCount;
                   const leftOffset = taskWidthPercent * indexInGroup;
 
@@ -673,7 +689,7 @@ export function CalendarView() {
                           }`}
                           style={{
                             top: `${topPosition}px`,
-                            left: `calc(60px + ${cellWidth} * ${task.colIndex} + ${cellWidth} * ${leftOffset / 100})`,
+                            left: `calc(${gutterWidth}px + ${cellWidth} * ${task.colIndex} + ${cellWidth} * ${leftOffset / 100})`,
                             width: `calc(${cellWidth} * ${taskWidthPercent / 100} - 3px)`,
                             height: `${HOUR_HEIGHT - 6}px`,
                           }}
@@ -724,7 +740,7 @@ export function CalendarView() {
                   .map(([key, group]) => {
                     const [colIndex, hour] = key.split('-').map(Number);
                     const extraCount = group.length - 3;
-                    const cellWidth = `((100% - 60px) / ${colCount})`;
+                    const cellWidth = `((100% - ${gutterWidth}px) / ${colCount})`;
 
                     return (
                       <div
@@ -732,7 +748,7 @@ export function CalendarView() {
                         className="absolute text-[9px] bg-background/80 px-1 rounded text-muted-foreground font-medium z-[4]"
                         style={{
                           top: `${hour * HOUR_HEIGHT + HOUR_HEIGHT - 16}px`,
-                          left: `calc(60px + ${cellWidth} * ${colIndex} + ${cellWidth} - 45px)`,
+                          left: `calc(${gutterWidth}px + ${cellWidth} * ${colIndex} + ${cellWidth} - 45px)`,
                         }}
                       >
                         +{extraCount}
@@ -746,9 +762,10 @@ export function CalendarView() {
                 <>
                   {/* Red line */}
                   <div
-                    className="absolute left-[60px] right-0 h-[2px] bg-red-500 z-[3] pointer-events-none"
+                    className="absolute right-0 h-[2px] bg-red-500 z-[3] pointer-events-none"
                     style={{
                       top: `${currentTimePosition.topPosition}px`,
+                      left: `${gutterWidth}px`,
                     }}
                   />
                   {/* Red dot at the left edge of time gutter */}
@@ -756,7 +773,7 @@ export function CalendarView() {
                     className="absolute w-3 h-3 bg-red-500 rounded-full z-[3] pointer-events-none"
                     style={{
                       top: `${currentTimePosition.topPosition - 5}px`,
-                      left: `54px`,
+                      left: `${gutterWidth - 6}px`,
                     }}
                   />
                 </>
