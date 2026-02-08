@@ -21,11 +21,48 @@ function scheduleToString(schedule) {
     case 'cron':
       const expr = schedule.expr;
       const tz = schedule.tz || 'UTC';
-      // Common patterns
-      if (expr === '0 23 * * *' && tz === 'Asia/Kolkata') return 'daily 11:00pm IST';
-      if (expr === '0 10 * * *' && tz === 'Asia/Kolkata') return 'daily 10:00am IST';
-      if (expr === '30 14 * * *') return 'daily 8:00pm IST';
-      if (expr === '0 18 * * 0') return 'Sunday 11:30pm IST';
+      // Parse cron: minute hour day month weekday
+      const parts = expr.split(' ');
+      if (parts.length === 5) {
+        const [minute, hour, day, month, weekday] = parts;
+        const tzSuffix = tz === 'Asia/Kolkata' ? ' IST' : tz === 'UTC' ? ' UTC' : ` ${tz}`;
+        
+        // Daily at specific time(s)
+        if (day === '*' && month === '*' && weekday === '*') {
+          // Multiple hours (e.g., "0 0,6,12,18 * * *")
+          if (hour.includes(',')) {
+            const hours = hour.split(',').map(h => {
+              const hr = parseInt(h);
+              if (hr === 0) return '12:00am';
+              if (hr === 12) return '12:00pm';
+              if (hr < 12) return `${hr}:${minute.padStart(2, '0')}am`;
+              return `${hr - 12}:${minute.padStart(2, '0')}pm`;
+            });
+            return `daily ${hours.join(', ')}${tzSuffix}`;
+          }
+          // Single hour
+          const hr = parseInt(hour);
+          const min = minute.padStart(2, '0');
+          if (hr === 0) return `daily 12:${min}am${tzSuffix}`;
+          if (hr === 12) return `daily 12:${min}pm${tzSuffix}`;
+          if (hr < 12) return `daily ${hr}:${min}am${tzSuffix}`;
+          return `daily ${hr - 12}:${min}pm${tzSuffix}`;
+        }
+        
+        // Weekly (specific weekday)
+        if (day === '*' && month === '*' && weekday !== '*') {
+          const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+          const dayName = dayNames[parseInt(weekday)] || weekday;
+          const hr = parseInt(hour);
+          const min = minute.padStart(2, '0');
+          let timeStr;
+          if (hr === 0) timeStr = `12:${min}am`;
+          else if (hr === 12) timeStr = `12:${min}pm`;
+          else if (hr < 12) timeStr = `${hr}:${min}am`;
+          else timeStr = `${hr - 12}:${min}pm`;
+          return `${dayName} ${timeStr}${tzSuffix}`;
+        }
+      }
       return `cron: ${expr} (${tz})`;
       
     case 'every':
@@ -51,8 +88,8 @@ function scheduleToString(schedule) {
 }
 
 function extractCommand(job) {
-  if (job.payload?.text) return job.payload.text.slice(0, 100);
-  if (job.payload?.message) return job.payload.message.slice(0, 100);
+  if (job.payload?.text) return job.payload.text;
+  if (job.payload?.message) return job.payload.message;
   return 'No command';
 }
 
@@ -104,6 +141,7 @@ async function main() {
     
     const needsUpdate = !existing || 
       existing.schedule !== scheduleStr ||
+      existing.command !== command ||
       existing.enabled !== enabled ||
       existing.model !== model ||
       existing.lastRun !== lastRun ||

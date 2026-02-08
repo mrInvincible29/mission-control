@@ -102,15 +102,20 @@ function getTimesFromSchedule(
     return [{ hour: nextRunDate.getHours(), minute: nextRunDate.getMinutes() }];
   }
   
-  // Extract explicit time from schedule string (handles "10:00am", "11:00pm", "14:30")
-  const timeMatch = schedule.match(/(\d{1,2}):(\d{2})\s*(am|pm)?/i);
-  if (timeMatch) {
-    let hour = parseInt(timeMatch[1]);
-    const minute = parseInt(timeMatch[2]);
-    const meridian = timeMatch[3]?.toLowerCase();
+  // Extract explicit time(s) from schedule string (handles "10:00am", "11:00pm", "14:30")
+  // Also handles multiple times like "12:00am, 6:00am, 12:00pm, 6:00pm"
+  const timeMatches = schedule.matchAll(/(\d{1,2}):(\d{2})\s*(am|pm)?/gi);
+  const times: { hour: number; minute: number }[] = [];
+  for (const match of timeMatches) {
+    let hour = parseInt(match[1]);
+    const minute = parseInt(match[2]);
+    const meridian = match[3]?.toLowerCase();
     if (meridian === "pm" && hour !== 12) hour += 12;
     if (meridian === "am" && hour === 12) hour = 0;
-    return [{ hour, minute }];
+    times.push({ hour, minute });
+  }
+  if (times.length > 0) {
+    return times;
   }
   
   // Handle "10am" / "11pm" without colon
@@ -187,18 +192,21 @@ interface BannerTask {
 export function CalendarView() {
   const cronJobs = useQuery(api.cronJobs.list) as CronJob[] | undefined;
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
-  const [currentTime, setCurrentTime] = useState(new Date());
+  const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
   
-  const weekDates = useMemo(() => getWeekDates(), []);
+  const weekDates = useMemo(() => {
+    if (!currentTime) return [];
+    return getWeekDates();
+  }, [currentTime ? currentTime.toDateString() : null]);
   
-  // Update current time every minute
+  // Initialize time on client only (avoids hydration mismatch)
   useEffect(() => {
+    setCurrentTime(new Date());
     const interval = setInterval(() => {
       setCurrentTime(new Date());
-    }, 60000); // Update every minute
-    
+    }, 60000);
     return () => clearInterval(interval);
   }, []);
   
@@ -332,6 +340,7 @@ export function CalendarView() {
   
   // Calculate current time indicator position
   const currentTimePosition = useMemo(() => {
+    if (!currentTime) return { dayIndex: 0, topPosition: 0 };
     const now = currentTime;
     const dayIndex = now.getDay();
     const hour = now.getHours();
@@ -340,6 +349,19 @@ export function CalendarView() {
     
     return { dayIndex, topPosition };
   }, [currentTime]);
+
+  if (!currentTime || weekDates.length === 0) {
+    return (
+      <Card className="h-full flex flex-col">
+        <CardHeader className="pb-3 flex-shrink-0">
+          <CardTitle className="text-lg font-semibold">Weekly Schedule</CardTitle>
+        </CardHeader>
+        <CardContent className="flex-1 flex items-center justify-center">
+          <p className="text-muted-foreground">Loading...</p>
+        </CardContent>
+      </Card>
+    );
+  }
 
   return (
     <Card className="h-full flex flex-col">
@@ -376,7 +398,7 @@ export function CalendarView() {
           <div className="grid grid-cols-[60px_repeat(7,1fr)] border-b bg-background sticky top-0 z-10">
             <div className="border-r" /> {/* Empty corner */}
             {weekDates.map((date, dayIndex) => {
-              const isToday = date.toDateString() === new Date().toDateString();
+              const isToday = currentTime && date.toDateString() === currentTime.toDateString();
               
               return (
                 <div
@@ -413,7 +435,7 @@ export function CalendarView() {
                   
                   {/* Day cells */}
                   {weekDates.map((date, dayIndex) => {
-                    const isToday = date.toDateString() === new Date().toDateString();
+                    const isToday = currentTime && date.toDateString() === currentTime.toDateString();
                     
                     return (
                       <div
@@ -515,7 +537,7 @@ export function CalendarView() {
               })()}
               
               {/* Current time indicator */}
-              {weekDates.some(date => date.toDateString() === new Date().toDateString()) && (
+              {weekDates.some(date => currentTime && date.toDateString() === currentTime.toDateString()) && (
                 <>
                   {/* Red line */}
                   <div
@@ -541,7 +563,7 @@ export function CalendarView() {
       
       {/* Task details dialog */}
       <Dialog open={!!selectedJob} onOpenChange={(open) => !open && setSelectedJob(null)}>
-        <DialogContent>
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
           <DialogHeader>
             <DialogTitle>{selectedJob?.name}</DialogTitle>
           </DialogHeader>
@@ -553,7 +575,7 @@ export function CalendarView() {
               </div>
               <div>
                 <label className="text-sm font-medium text-muted-foreground">Command</label>
-                <pre className="text-sm bg-muted p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap break-all">
+                <pre className="text-sm bg-muted p-2 rounded mt-1 whitespace-pre-wrap break-words max-h-[50vh] overflow-y-auto">
                   {selectedJob.command}
                 </pre>
               </div>

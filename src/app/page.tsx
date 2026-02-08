@@ -1,8 +1,42 @@
 "use client";
 
 import dynamic from "next/dynamic";
+import { Component, type ReactNode } from "react";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SetupGuide } from "@/components/SetupGuide";
+
+class TabErrorBoundary extends Component<
+  { children: ReactNode; fallbackLabel: string },
+  { hasError: boolean; error?: Error }
+> {
+  state = { hasError: false, error: undefined as Error | undefined };
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="p-8 text-center">
+          <p className="text-red-400 font-medium">
+            {this.props.fallbackLabel} failed to load
+          </p>
+          <p className="text-sm text-muted-foreground mt-1">
+            {this.state.error?.message}
+          </p>
+          <button
+            className="mt-3 text-sm text-primary underline"
+            onClick={() => this.setState({ hasError: false, error: undefined })}
+          >
+            Retry
+          </button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
 
 // Dynamically import components that use Convex hooks
 const ActivityFeed = dynamic(
@@ -36,15 +70,21 @@ function DashboardContent() {
       </TabsList>
 
       <TabsContent value="activity" className="mt-6">
-        <ActivityFeed />
+        <TabErrorBoundary fallbackLabel="Activity Feed">
+          <ActivityFeed />
+        </TabErrorBoundary>
       </TabsContent>
 
       <TabsContent value="calendar" className="mt-6">
-        <CalendarView />
+        <TabErrorBoundary fallbackLabel="Calendar">
+          <CalendarView />
+        </TabErrorBoundary>
       </TabsContent>
 
       <TabsContent value="search" className="mt-6">
-        <GlobalSearch />
+        <TabErrorBoundary fallbackLabel="Search">
+          <GlobalSearch />
+        </TabErrorBoundary>
       </TabsContent>
     </Tabs>
   );

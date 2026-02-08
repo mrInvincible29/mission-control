@@ -6,7 +6,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
-import { useState, useMemo } from "react";
+import { useState, useMemo, useCallback, useEffect } from "react";
 import type { Activity } from "@/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -81,21 +81,51 @@ function formatCost(cost: number): string {
   return `$${cost.toFixed(2)}`;
 }
 
+const PAGE_SIZE = 50;
+
 export function ActivityFeed() {
   const [category, setCategory] = useState<string>("");
   const [dateRange, setDateRange] = useState<number>(1); // Default to today
+  const [cursors, setCursors] = useState<(number | undefined)[]>([undefined]); // stack of cursors per page
   
-  // Memoize to prevent recalculating on every render (Date.now() changes)
+  const [mounted, setMounted] = useState(false);
+  useEffect(() => { setMounted(true); }, []);
+
+  // Reset cursors when filters change
+  useEffect(() => {
+    setCursors([undefined]);
+  }, [dateRange, category]);
+
   const sinceTimestamp = useMemo(() => {
+    if (!mounted) return 0;
     return Date.now() - dateRange * 24 * 60 * 60 * 1000;
-  }, [dateRange]);
+  }, [dateRange, mounted]);
   
-  const activities = useQuery(api.activities.list, {
-    limit: 100,
+  const currentCursor = cursors[cursors.length - 1];
+  
+  const result = useQuery(api.activities.listPaginated, {
+    limit: PAGE_SIZE,
     category: category || undefined,
     excludeCategories: category ? undefined : ["noise"],
     sinceTimestamp,
-  }) as Activity[] | undefined;
+    cursor: currentCursor,
+  });
+  
+  const activities = result?.items as Activity[] | undefined;
+  const hasMore = result?.hasMore ?? false;
+  const nextCursor = result?.nextCursor;
+  const currentPage = cursors.length;
+  const hasPrev = cursors.length > 1;
+  
+  const loadNext = useCallback(() => {
+    if (nextCursor !== undefined) {
+      setCursors(prev => [...prev, nextCursor]);
+    }
+  }, [nextCursor]);
+  
+  const loadPrev = useCallback(() => {
+    setCursors(prev => prev.length > 1 ? prev.slice(0, -1) : prev);
+  }, []);
   
   const stats = useQuery(api.activities.stats);
 
@@ -151,8 +181,8 @@ export function ActivityFeed() {
         </div>
       </CardHeader>
       
-      <CardContent className="flex-1 overflow-hidden">
-        <ScrollArea className="h-full pr-4">
+      <CardContent className="flex-1 overflow-hidden flex flex-col">
+        <ScrollArea className="flex-1 pr-4">
           {!activities ? (
             <div className="flex items-center justify-center h-32 text-muted-foreground">
               Loading activities...
@@ -169,6 +199,33 @@ export function ActivityFeed() {
             </div>
           )}
         </ScrollArea>
+        
+        {/* Pagination controls */}
+        {(hasPrev || hasMore) && (
+          <div className="flex items-center justify-between pt-3 mt-2 border-t border-border flex-shrink-0">
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-7"
+              onClick={loadPrev}
+              disabled={!hasPrev}
+            >
+              ← Newer
+            </Button>
+            <span className="text-xs text-muted-foreground">
+              Page {currentPage}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="text-xs h-7"
+              onClick={loadNext}
+              disabled={!hasMore}
+            >
+              Older →
+            </Button>
+          </div>
+        )}
       </CardContent>
     </Card>
   );

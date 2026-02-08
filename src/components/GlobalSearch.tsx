@@ -19,12 +19,14 @@ import type { SearchResult, IndexedDocument } from "@/types";
 
 function highlightMatch(text: string, query: string): React.ReactNode {
   if (!query.trim()) return text;
-  
-  const regex = new RegExp(`(${query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")})`, "gi");
-  const parts = text.split(regex);
-  
+
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const splitRegex = new RegExp(`(${escaped})`, "gi");
+  const testRegex = new RegExp(`^${escaped}$`, "i");
+  const parts = text.split(splitRegex);
+
   return parts.map((part, i) =>
-    regex.test(part) ? (
+    testRegex.test(part) ? (
       <mark key={i} className="bg-yellow-500/30 text-yellow-200 rounded px-0.5">
         {part}
       </mark>
@@ -265,7 +267,7 @@ export function GlobalSearch() {
           </div>
           <div className="flex justify-between items-center p-4 border-t text-xs text-muted-foreground">
             <span>Size: {selectedFile?.size ? `${(selectedFile.size / 1024).toFixed(1)} KB` : '—'}</span>
-            <span>Indexed: {selectedFile?.lastIndexed ? new Date(selectedFile.lastIndexed).toLocaleString() : '—'}</span>
+            <span suppressHydrationWarning>Indexed: {selectedFile?.lastIndexed ? new Date(selectedFile.lastIndexed).toLocaleString() : '—'}</span>
           </div>
         </DialogContent>
       </Dialog>

@@ -52,5 +52,6 @@ export default defineSchema({
     enabled: v.boolean(),
     model: v.optional(v.string()),
   })
+    .index("by_name", ["name"])
     .index("by_nextRun", ["nextRun"]),
 });

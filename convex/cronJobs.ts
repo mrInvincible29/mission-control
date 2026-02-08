@@ -21,9 +21,9 @@ export const upsert = mutation({
   handler: async (ctx, args) => {
     const existing = await ctx.db
       .query("cron_jobs")
-      .filter((q) => q.eq(q.field("name"), args.name))
+      .withIndex("by_name", (q) => q.eq("name", args.name))
       .first();
-    
+
     if (existing) {
       await ctx.db.patch(existing._id, args);
       return existing._id;
@@ -42,9 +42,9 @@ export const updateLastRun = mutation({
   handler: async (ctx, args) => {
     const job = await ctx.db
       .query("cron_jobs")
-      .filter((q) => q.eq(q.field("name"), args.name))
+      .withIndex("by_name", (q) => q.eq("name", args.name))
       .first();
-    
+
     if (job) {
       await ctx.db.patch(job._id, {
         lastRun: args.lastRun,
@@ -61,9 +61,9 @@ export const remove = mutation({
   handler: async (ctx, args) => {
     const job = await ctx.db
       .query("cron_jobs")
-      .filter((q) => q.eq(q.field("name"), args.name))
+      .withIndex("by_name", (q) => q.eq("name", args.name))
       .first();
-    
+
     if (job) {
       await ctx.db.delete(job._id);
       return true;
