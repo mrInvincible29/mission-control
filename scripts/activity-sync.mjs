@@ -6,27 +6,20 @@
 
 import { createReadStream, watchFile, statSync } from 'fs';
 import { createInterface } from 'readline';
+import { ConvexHttpClient } from 'convex/browser';
+import { api } from '../convex/_generated/api.js';
 
-const CONVEX_URL = 'https://accomplished-rabbit-353.convex.cloud';
-const LOG_FILE = '/tmp/openclaw/openclaw-2026-02-07.log';
+const CONVEX_URL = process.env.CONVEX_URL || 'https://accomplished-rabbit-353.convex.cloud';
+const today = new Date().toISOString().slice(0, 10); // YYYY-MM-DD
+const LOG_FILE = process.argv[2] || `/tmp/openclaw/openclaw-${today}.log`;
+const client = new ConvexHttpClient(CONVEX_URL);
 
 let lastPosition = 0;
 
 async function postActivity(activity) {
   try {
-    const response = await fetch(`${CONVEX_URL}/api/mutation`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        path: 'activities:create',
-        args: activity,
-        format: 'json'
-      })
-    });
-    const result = await response.json();
-    if (result.status === 'success') {
-      console.log(`[✓] Logged: ${activity.actionType} - ${activity.description.slice(0, 50)}...`);
-    }
+    await client.mutation(api.activities.create, activity);
+    console.log(`[✓] Logged: ${activity.actionType} - ${activity.description.slice(0, 50)}...`);
   } catch (err) {
     console.error('[✗] Failed to post activity:', err.message);
   }

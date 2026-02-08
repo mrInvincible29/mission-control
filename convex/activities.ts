@@ -44,6 +44,59 @@ export const list = query({
   },
 });
 
+// Paginated list: returns { items, nextCursor, hasMore }
+export const listPaginated = query({
+  args: {
+    limit: v.optional(v.number()),
+    actionType: v.optional(v.string()),
+    category: v.optional(v.string()),
+    excludeCategories: v.optional(v.array(v.string())),
+    sinceTimestamp: v.optional(v.number()),
+    cursor: v.optional(v.number()), // timestamp cursor: fetch items older than this
+  },
+  handler: async (ctx, args) => {
+    const limit = args.limit ?? 50;
+    const twoWeeksAgo = Date.now() - TWO_WEEKS_MS;
+    const sinceTimestamp = args.sinceTimestamp ?? twoWeeksAgo;
+    const cursor = args.cursor ?? Date.now() + 1;
+    
+    // Fetch extra to filter and detect hasMore
+    const fetchCount = limit * 3;
+    
+    let activities = await ctx.db
+      .query("activities")
+      .withIndex("by_timestamp")
+      .order("desc")
+      .filter((q) =>
+        q.and(
+          q.gte(q.field("timestamp"), sinceTimestamp),
+          q.lt(q.field("timestamp"), cursor)
+        )
+      )
+      .take(fetchCount);
+    
+    if (args.category) {
+      activities = activities.filter(a => a.category === args.category);
+    }
+    if (args.actionType) {
+      activities = activities.filter(a => a.actionType === args.actionType);
+    }
+    if (args.excludeCategories && args.excludeCategories.length > 0) {
+      activities = activities.filter(a =>
+        !args.excludeCategories!.includes(a.category ?? "")
+      );
+    }
+    
+    const hasMore = activities.length > limit;
+    const items = activities.slice(0, limit);
+    const nextCursor = items.length > 0
+      ? items[items.length - 1].timestamp
+      : undefined;
+    
+    return { items, nextCursor, hasMore };
+  },
+});
+
 export const create = mutation({
   args: {
     actionType: v.string(),
@@ -129,8 +182,9 @@ export const stats = query({
     const recentActivities = await ctx.db
       .query("activities")
       .withIndex("by_timestamp")
+      .order("desc")
       .filter((q) => q.gte(q.field("timestamp"), oneDayAgo))
-      .collect();
+      .take(1000);
     
     const byCategory: Record<string, number> = {};
     const byStatus: Record<string, number> = {};
