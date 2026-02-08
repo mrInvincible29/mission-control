@@ -175,15 +175,18 @@ export const cleanup = mutation({
 
 // Get activity stats for dashboard
 export const stats = query({
-  args: {},
-  handler: async (ctx) => {
-    const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
-    
+  args: {
+    sinceTimestamp: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const defaultSince = Date.now() - 24 * 60 * 60 * 1000;
+    const sinceTimestamp = args.sinceTimestamp ?? defaultSince;
+
     const recentActivities = await ctx.db
       .query("activities")
       .withIndex("by_timestamp")
       .order("desc")
-      .filter((q) => q.gte(q.field("timestamp"), oneDayAgo))
+      .filter((q) => q.gte(q.field("timestamp"), sinceTimestamp))
       .take(1000);
     
     const byCategory: Record<string, number> = {};

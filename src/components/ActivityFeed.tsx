@@ -6,7 +6,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { useState, useMemo, useCallback, useEffect } from "react";
+import { Search, X, ChevronDown } from "lucide-react";
 import type { Activity } from "@/types";
 
 const CATEGORY_COLORS: Record<string, string> = {
@@ -57,11 +59,11 @@ function formatTime(timestamp: number): string {
   const date = new Date(timestamp);
   const now = new Date();
   const diff = now.getTime() - date.getTime();
-  
+
   if (diff < 60000) return "just now";
   if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
   if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  
+
   return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
@@ -81,28 +83,35 @@ function formatCost(cost: number): string {
   return `$${cost.toFixed(2)}`;
 }
 
+function getDateLabel(days: number): string {
+  if (days === 1) return "Today";
+  return `${days}-day`;
+}
+
 const PAGE_SIZE = 50;
 
 export function ActivityFeed() {
   const [category, setCategory] = useState<string>("");
-  const [dateRange, setDateRange] = useState<number>(1); // Default to today
-  const [cursors, setCursors] = useState<(number | undefined)[]>([undefined]); // stack of cursors per page
-  
+  const [dateRange, setDateRange] = useState<number>(1);
+  const [cursors, setCursors] = useState<(number | undefined)[]>([undefined]);
+  const [searchText, setSearchText] = useState("");
+
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  // Reset cursors when filters change
+  // Reset cursors and search when filters change
   useEffect(() => {
     setCursors([undefined]);
+    setSearchText("");
   }, [dateRange, category]);
 
   const sinceTimestamp = useMemo(() => {
     if (!mounted) return 0;
     return Date.now() - dateRange * 24 * 60 * 60 * 1000;
   }, [dateRange, mounted]);
-  
+
   const currentCursor = cursors[cursors.length - 1];
-  
+
   const result = useQuery(api.activities.listPaginated, {
     limit: PAGE_SIZE,
     category: category || undefined,
@@ -110,46 +119,83 @@ export function ActivityFeed() {
     sinceTimestamp,
     cursor: currentCursor,
   });
-  
-  const activities = result?.items as Activity[] | undefined;
+
+  const stats = useQuery(api.activities.stats, { sinceTimestamp });
+
+  const rawActivities = result?.items as Activity[] | undefined;
   const hasMore = result?.hasMore ?? false;
   const nextCursor = result?.nextCursor;
   const currentPage = cursors.length;
   const hasPrev = cursors.length > 1;
-  
+
+  // Client-side text search filter
+  const activities = useMemo(() => {
+    if (!rawActivities) return undefined;
+    if (!searchText.trim()) return rawActivities;
+    const lower = searchText.toLowerCase();
+    return rawActivities.filter(a =>
+      a.description.toLowerCase().includes(lower) ||
+      a.actionType.toLowerCase().includes(lower)
+    );
+  }, [rawActivities, searchText]);
+
   const loadNext = useCallback(() => {
     if (nextCursor !== undefined) {
       setCursors(prev => [...prev, nextCursor]);
     }
   }, [nextCursor]);
-  
+
   const loadPrev = useCallback(() => {
     setCursors(prev => prev.length > 1 ? prev.slice(0, -1) : prev);
   }, []);
-  
-  const stats = useQuery(api.activities.stats);
+
+  const dateLabel = getDateLabel(dateRange);
 
   return (
-    <Card className="h-full flex flex-col">
-      <CardHeader className="pb-3 flex-shrink-0">
+    <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
+      <CardHeader className="pb-2 flex-shrink-0 px-4 pt-4">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg font-semibold">Activity Feed</CardTitle>
-          {stats && (
-            <div className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span>{stats.total} today</span>
-              {stats.totalTokens > 0 && (
-                <span>• {formatTokens(stats.totalTokens)} tokens</span>
-              )}
-              {stats.totalCost > 0 && (
-                <span>• {formatCost(stats.totalCost)}</span>
-              )}
-            </div>
-          )}
         </div>
-        
+
+        {/* Stats Banner */}
+        {stats && (
+          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
+            <div className="rounded-lg bg-muted/50 p-2.5">
+              <div className="text-xs text-muted-foreground">{dateLabel} Activities</div>
+              <div className="text-lg font-semibold mt-0.5">{stats.total}</div>
+            </div>
+            <div className="rounded-lg bg-purple-500/5 border border-purple-500/10 p-2.5">
+              <div className="text-xs text-purple-400">Tokens</div>
+              <div className="text-lg font-semibold text-purple-300 mt-0.5">
+                {stats.totalTokens > 0 ? formatTokens(stats.totalTokens) : "—"}
+              </div>
+            </div>
+            <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
+              <div className="text-xs text-emerald-400">Cost</div>
+              <div className="text-lg font-semibold text-emerald-300 mt-0.5">
+                {stats.totalCost > 0 ? formatCost(stats.totalCost) : "—"}
+              </div>
+            </div>
+            <div className="rounded-lg bg-blue-500/5 border border-blue-500/10 p-2.5">
+              <div className="text-xs text-blue-400">Categories</div>
+              <div className="flex flex-wrap gap-1 mt-1">
+                {Object.entries(stats.byCategory).map(([cat, count]) => (
+                  <Badge
+                    key={cat}
+                    variant="outline"
+                    className={`text-[9px] px-1 py-0 ${CATEGORY_COLORS[cat] ?? CATEGORY_COLORS.system}`}
+                  >
+                    {cat} {count}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
         {/* Filters */}
-        <div className="flex items-center gap-2 mt-2 flex-wrap">
-          {/* Category filter */}
+        <div className="flex items-center gap-2 mt-3 flex-wrap">
           <div className="flex items-center gap-1">
             {CATEGORIES.map(cat => (
               <Button
@@ -163,8 +209,6 @@ export function ActivityFeed() {
               </Button>
             ))}
           </div>
-          
-          {/* Date range */}
           <div className="flex items-center gap-1 ml-auto">
             {DATE_RANGES.map(range => (
               <Button
@@ -179,9 +223,29 @@ export function ActivityFeed() {
             ))}
           </div>
         </div>
+
+        {/* Text Search */}
+        <div className="relative mt-2">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            type="text"
+            placeholder="Filter activities..."
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            className="pl-8 pr-8 h-8 text-xs"
+          />
+          {searchText && (
+            <button
+              onClick={() => setSearchText("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
       </CardHeader>
-      
-      <CardContent className="flex-1 overflow-hidden flex flex-col">
+
+      <CardContent className="flex-1 overflow-hidden flex flex-col px-4">
         <ScrollArea className="flex-1 pr-4">
           {!activities ? (
             <div className="flex items-center justify-center h-32 text-muted-foreground">
@@ -189,20 +253,20 @@ export function ActivityFeed() {
             </div>
           ) : activities.length === 0 ? (
             <div className="flex items-center justify-center h-32 text-muted-foreground">
-              No activities in this period
+              {searchText ? `No activities matching "${searchText}"` : "No activities in this period"}
             </div>
           ) : (
-            <div className="space-y-2">
+            <div className="space-y-1.5">
               {activities.map((activity: Activity) => (
                 <ActivityItem key={activity._id} activity={activity} />
               ))}
             </div>
           )}
         </ScrollArea>
-        
+
         {/* Pagination controls */}
         {(hasPrev || hasMore) && (
-          <div className="flex items-center justify-between pt-3 mt-2 border-t border-border flex-shrink-0">
+          <div className="flex items-center justify-between pt-3 mt-2 border-t border-border/50 flex-shrink-0">
             <Button
               variant="outline"
               size="sm"
@@ -210,7 +274,7 @@ export function ActivityFeed() {
               onClick={loadPrev}
               disabled={!hasPrev}
             >
-              ← Newer
+              Newer
             </Button>
             <span className="text-xs text-muted-foreground">
               Page {currentPage}
@@ -222,7 +286,7 @@ export function ActivityFeed() {
               onClick={loadNext}
               disabled={!hasMore}
             >
-              Older →
+              Older
             </Button>
           </div>
         )}
@@ -232,15 +296,25 @@ export function ActivityFeed() {
 }
 
 function ActivityItem({ activity }: { activity: Activity }) {
+  const [expanded, setExpanded] = useState(false);
   const icon = ACTION_TYPE_ICONS[activity.actionType] || "📌";
   const categoryColor = CATEGORY_COLORS[activity.category ?? "system"] || CATEGORY_COLORS.system;
-  
+
+  const meta = activity.metadata;
+  const hasExpandableContent = meta && (
+    meta.error || meta.tool || meta.session || meta.sessionKey || meta.channel ||
+    meta.model || meta.tokens || meta.cost || meta.duration
+  );
+
   return (
-    <div className={`p-2.5 rounded-lg border transition-colors ${
-      activity.status === "error" 
-        ? "border-red-500/30 bg-red-500/5" 
-        : "border-border bg-card/50 hover:bg-card/80"
-    }`}>
+    <div
+      className={`p-2.5 rounded-lg border transition-colors cursor-pointer ${
+        activity.status === "error"
+          ? "border-red-500/30 bg-red-500/5"
+          : "border-border/50 bg-card/50 hover:bg-card/80"
+      }`}
+      onClick={() => setExpanded(e => !e)}
+    >
       <div className="flex items-start gap-2">
         <span className="text-base mt-0.5">{icon}</span>
         <div className="flex-1 min-w-0">
@@ -256,46 +330,114 @@ function ActivityItem({ activity }: { activity: Activity }) {
                 error
               </Badge>
             )}
-            <span className="text-xs text-muted-foreground ml-auto">
+            <span className="text-xs text-muted-foreground ml-auto flex items-center gap-1">
               {formatTime(activity.timestamp)}
+              {hasExpandableContent && (
+                <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+              )}
             </span>
           </div>
-          
-          <p className="text-sm text-foreground/90 mt-1 line-clamp-2">
+
+          <p className={`text-sm text-foreground/90 mt-1 ${expanded ? "" : "line-clamp-2"}`}>
             {activity.description}
           </p>
-          
-          {/* Metadata row */}
-          {activity.metadata && (
+
+          {/* Collapsed: inline metadata badges */}
+          {!expanded && meta && (
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
-              {activity.metadata.model && (
+              {meta.model && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400">
-                  {activity.metadata.model}
+                  {meta.model}
                 </span>
               )}
-              {activity.metadata.tokens && (
+              {meta.tokens && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/10 text-blue-400">
-                  {formatTokens(activity.metadata.tokens)} tokens
+                  {formatTokens(meta.tokens)} tokens
                 </span>
               )}
-              {activity.metadata.cost && (
+              {meta.cost && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-green-500/10 text-green-400">
-                  {formatCost(activity.metadata.cost)}
+                  {formatCost(meta.cost)}
                 </span>
               )}
-              {activity.metadata.duration && (
+              {meta.duration && (
                 <span className="text-[10px] text-muted-foreground">
-                  {activity.metadata.duration > 1000 
-                    ? `${(activity.metadata.duration / 1000).toFixed(1)}s`
-                    : `${activity.metadata.duration}ms`
+                  {meta.duration > 1000
+                    ? `${(meta.duration / 1000).toFixed(1)}s`
+                    : `${meta.duration}ms`
                   }
                 </span>
               )}
-              {activity.metadata.channel && (
+              {meta.channel && (
                 <span className="text-[10px] text-muted-foreground">
-                  via {activity.metadata.channel}
+                  via {meta.channel}
                 </span>
               )}
+            </div>
+          )}
+
+          {/* Expanded: error block + full metadata grid */}
+          {expanded && meta && (
+            <div className="mt-3 space-y-3">
+              {meta.error && (
+                <div className="rounded-md bg-red-500/10 border border-red-500/20 p-2.5">
+                  <div className="text-[10px] font-medium text-red-400 mb-1">Error</div>
+                  <pre className="text-xs text-red-300/90 whitespace-pre-wrap break-words font-mono">
+                    {meta.error}
+                  </pre>
+                </div>
+              )}
+
+              <div className="grid grid-cols-2 gap-x-4 gap-y-1.5 text-xs">
+                {meta.model && (
+                  <>
+                    <span className="text-muted-foreground">Model</span>
+                    <span className="text-purple-400">{meta.model}</span>
+                  </>
+                )}
+                {meta.tokens != null && (
+                  <>
+                    <span className="text-muted-foreground">Tokens</span>
+                    <span className="text-blue-400">{formatTokens(meta.tokens)}</span>
+                  </>
+                )}
+                {meta.cost != null && (
+                  <>
+                    <span className="text-muted-foreground">Cost</span>
+                    <span className="text-green-400">{formatCost(meta.cost)}</span>
+                  </>
+                )}
+                {meta.duration != null && (
+                  <>
+                    <span className="text-muted-foreground">Duration</span>
+                    <span>{meta.duration > 1000 ? `${(meta.duration / 1000).toFixed(1)}s` : `${meta.duration}ms`}</span>
+                  </>
+                )}
+                {meta.tool && (
+                  <>
+                    <span className="text-muted-foreground">Tool</span>
+                    <span className="font-mono">{meta.tool}</span>
+                  </>
+                )}
+                {meta.session && (
+                  <>
+                    <span className="text-muted-foreground">Session</span>
+                    <span className="font-mono truncate">{meta.session}</span>
+                  </>
+                )}
+                {meta.sessionKey && (
+                  <>
+                    <span className="text-muted-foreground">Session Key</span>
+                    <span className="font-mono truncate">{meta.sessionKey}</span>
+                  </>
+                )}
+                {meta.channel && (
+                  <>
+                    <span className="text-muted-foreground">Channel</span>
+                    <span>{meta.channel}</span>
+                  </>
+                )}
+              </div>
             </div>
           )}
         </div>
