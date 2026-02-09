@@ -134,12 +134,13 @@ async function main() {
   for (const job of openclawJobs) {
     const name = job.name;
     if (!name) continue;
+    if (job.enabled === false) continue; // skip disabled — they get deleted below
     openclawNames.add(name);
     
     const scheduleStr = scheduleToString(job.schedule);
     const command = extractCommand(job);
     const model = extractModel(job);
-    const enabled = job.enabled !== false;
+    const enabled = true;
     const lastRun = job.state?.lastRunAtMs;
     const nextRun = job.state?.nextRunAtMs || job.nextRun;
     
@@ -169,19 +170,21 @@ async function main() {
     }
   }
   
-  // Disable removed jobs
+  // Delete disabled/removed jobs from Convex
+  for (const job of openclawJobs) {
+    if (job.name && job.enabled === false) {
+      const existing = existingByName.get(job.name);
+      if (existing) {
+        await client.mutation(api.cronJobs.remove, { name: job.name });
+        console.log(`🗑️ Deleted (disabled): ${job.name}`);
+      }
+      openclawNames.delete(job.name);
+    }
+  }
   for (const [name, job] of existingByName) {
-    if (!openclawNames.has(name) && job.enabled) {
-      await client.mutation(api.cronJobs.upsert, {
-        name: job.name,
-        schedule: job.schedule,
-        command: job.command,
-        enabled: false,
-        model: job.model,
-        lastRun: job.lastRun,
-        nextRun: job.nextRun,
-      });
-      console.log(`🗑️ Disabled: ${name}`);
+    if (!openclawNames.has(name)) {
+      await client.mutation(api.cronJobs.remove, { name });
+      console.log(`🗑️ Deleted (removed): ${name}`);
     }
   }
   
@@ -192,7 +195,7 @@ async function main() {
   let errors = 0;
 
   for (const job of openclawJobs) {
-    if (!job.name) continue;
+    if (!job.name || job.enabled === false) continue;
     const synced = verifyByName.get(job.name);
     const srcCommand = extractCommand(job);
     const srcModel = extractModel(job);
