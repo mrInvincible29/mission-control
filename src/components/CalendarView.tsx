@@ -166,11 +166,12 @@ function getTimesFromSchedule(
   return [];
 }
 
-function formatTime12h(hour: number): string {
-  if (hour === 0) return "12 AM";
-  if (hour < 12) return `${hour} AM`;
-  if (hour === 12) return "12 PM";
-  return `${hour - 12} PM`;
+function formatTime12h(hour: number, minute?: number): string {
+  const minStr = minute ? `:${String(minute).padStart(2, '0')}` : '';
+  if (hour === 0) return `12${minStr} AM`;
+  if (hour < 12) return `${hour}${minStr} AM`;
+  if (hour === 12) return `12${minStr} PM`;
+  return `${hour - 12}${minStr} PM`;
 }
 
 // Format time label with IST suffix for clarity
@@ -728,7 +729,8 @@ export function CalendarView() {
                   if (indexInGroup >= maxVisible) return null;
 
                   const visibleCount = Math.min(groupSize, maxVisible);
-                  const topPosition = (task.hour * HOUR_HEIGHT) + 2;
+                  const minuteOffset = (task.minute / 60) * HOUR_HEIGHT;
+                  const topPosition = (task.hour * HOUR_HEIGHT) + minuteOffset + 2;
                   const cellWidth = `((100% - ${gutterWidth}px) / ${colCount})`;
                   const taskWidthPercent = 100 / visibleCount;
                   const leftOffset = taskWidthPercent * indexInGroup;
@@ -749,7 +751,7 @@ export function CalendarView() {
                             top: `${topPosition}px`,
                             left: `calc(${gutterWidth}px + ${cellWidth} * ${task.colIndex} + ${cellWidth} * ${leftOffset / 100})`,
                             width: `calc(${cellWidth} * ${taskWidthPercent / 100} - 3px)`,
-                            height: `${HOUR_HEIGHT - 6}px`,
+                            height: `${Math.max(HOUR_HEIGHT - minuteOffset - 6, 20)}px`,
                           }}
                         >
                           <div className={`text-[10px] font-semibold truncate leading-tight ${
@@ -771,7 +773,7 @@ export function CalendarView() {
                             </>
                           ) : (
                             <div className="text-[9px] opacity-70 truncate">
-                              {formatTime12h(task.hour)}
+                              {formatTime12h(task.hour, task.minute)}
                             </div>
                           )}
                         </button>
