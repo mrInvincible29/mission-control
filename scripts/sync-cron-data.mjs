@@ -185,7 +185,42 @@ async function main() {
     }
   }
   
-  console.log('\n✅ Sync complete!');
+  // ── Verification ──
+  console.log('\n🔍 Verifying sync...');
+  const verifyJobs = await client.query(api.cronJobs.list);
+  const verifyByName = new Map(verifyJobs.map(j => [j.name, j]));
+  let errors = 0;
+
+  for (const job of openclawJobs) {
+    if (!job.name) continue;
+    const synced = verifyByName.get(job.name);
+    const srcCommand = extractCommand(job);
+    const srcModel = extractModel(job);
+
+    if (!synced) {
+      console.error(`  ❌ ${job.name}: missing from Convex`);
+      errors++;
+      continue;
+    }
+    if (synced.command !== srcCommand) {
+      console.error(`  ❌ ${job.name}: command mismatch (src=${srcCommand.length} chars, convex=${(synced.command||'').length} chars)`);
+      errors++;
+    }
+    if (synced.model !== srcModel) {
+      console.error(`  ❌ ${job.name}: model mismatch (src=${srcModel}, convex=${synced.model})`);
+      errors++;
+    }
+    if (synced.enabled !== (job.enabled !== false)) {
+      console.error(`  ❌ ${job.name}: enabled mismatch (src=${job.enabled !== false}, convex=${synced.enabled})`);
+      errors++;
+    }
+  }
+
+  if (errors) {
+    console.error(`\n⚠️ Sync completed with ${errors} verification error(s)`);
+    process.exit(1);
+  }
+  console.log(`  ✅ All ${openclawNames.size} jobs verified — models, commands, and state match`);
 }
 
 main().catch(console.error);
