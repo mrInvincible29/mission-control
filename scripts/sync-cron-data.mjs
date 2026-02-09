@@ -12,7 +12,9 @@ import { ConvexHttpClient } from 'convex/browser';
 import { api } from '../convex/_generated/api.js';
 
 const CONVEX_URL = process.env.CONVEX_URL || 'https://accomplished-rabbit-353.convex.cloud';
-const INPUT_FILE = process.argv[2] || '/tmp/openclaw-crons.json';
+const HOME = process.env.HOME || '/home/h2';
+// Prefer the authoritative source (OpenClaw's internal cron store) over agent-written exports
+const INPUT_FILE = process.argv[2] || `${HOME}/.openclaw/cron/jobs.json`;
 
 function scheduleToString(schedule) {
   if (!schedule || typeof schedule === 'string') return schedule || 'unknown';
@@ -95,13 +97,17 @@ function extractCommand(job) {
 
 function extractModel(job) {
   if (job.payload?.model) {
-    const m = job.payload.model.toLowerCase();
-    if (m.includes('haiku')) return 'claude-haiku-4-5';
-    if (m.includes('opus')) return 'claude-opus-4-5';
-    if (m.includes('sonnet')) return 'claude-sonnet-4-5';
-    return job.payload.model;
+    // Use the actual model string — strip provider prefix if present
+    const m = job.payload.model;
+    const stripped = m.includes('/') ? m.split('/').pop() : m;
+    return stripped;
   }
-  return 'claude-haiku-4-5';
+  // systemEvent jobs run in main session (whatever the default model is)
+  if (job.payload?.kind === 'systemEvent' || job.sessionTarget === 'main') {
+    return 'main-session';
+  }
+  // agentTurn without explicit model — uses gateway default
+  return 'default';
 }
 
 async function main() {

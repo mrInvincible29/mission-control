@@ -59,10 +59,44 @@ function parseScheduleToDay(schedule: string): number[] {
   return days.length > 0 ? days : [0, 1, 2, 3, 4, 5, 6];
 }
 
+// Convert a time from its source timezone to IST (UTC+5:30)
+function convertToIST(hour: number, minute: number, sourceTimezone: string): { hour: number; minute: number } {
+  const tz = sourceTimezone.toLowerCase();
+  
+  // If already IST, no conversion needed
+  if (tz.includes('ist') || tz.includes('kolkata') || tz.includes('mumbai')) {
+    return { hour, minute };
+  }
+  
+  // If UTC, add 5:30
+  if (tz.includes('utc') || tz === '') {
+    let newMinute = minute + 30;
+    let newHour = hour + 5;
+    if (newMinute >= 60) {
+      newMinute -= 60;
+      newHour += 1;
+    }
+    if (newHour >= 24) newHour -= 24;
+    return { hour: newHour, minute: newMinute };
+  }
+  
+  // Unknown timezone, return as-is
+  return { hour, minute };
+}
+
+// Detect timezone from schedule string
+function detectTimezone(schedule: string): string {
+  if (/\bIST\b/i.test(schedule) || /kolkata/i.test(schedule)) return 'IST';
+  if (/\bUTC\b/i.test(schedule)) return 'UTC';
+  return 'UTC'; // default to UTC
+}
+
 function getTimesFromSchedule(
   schedule: string,
   nextRun?: number
 ): { hour: number; minute: number; isBanner?: boolean }[] {
+  const sourceTz = detectTimezone(schedule);
+  
   const everyHoursMatch = schedule.match(/every\s+(\d+)\s*(?:hours?|h)\b/i);
   if (everyHoursMatch) {
     const interval = parseInt(everyHoursMatch[1]);
@@ -71,7 +105,8 @@ function getTimesFromSchedule(
     }
     const times: { hour: number; minute: number }[] = [];
     for (let hour = 0; hour < 24; hour += interval) {
-      times.push({ hour, minute: 0 });
+      const ist = convertToIST(hour, 0, sourceTz);
+      times.push(ist);
     }
     return times;
   }
@@ -85,7 +120,8 @@ function getTimesFromSchedule(
     const times: { hour: number; minute: number }[] = [];
     for (let hour = 0; hour < 24; hour++) {
       for (let minute = 0; minute < 60; minute += interval) {
-        times.push({ hour, minute });
+        const ist = convertToIST(hour, minute, sourceTz);
+        times.push(ist);
       }
     }
     return times;
@@ -93,8 +129,14 @@ function getTimesFromSchedule(
 
   const everyDaysMatch = schedule.match(/every\s+(\d+)\s+days?/i);
   if (everyDaysMatch && nextRun) {
+    // nextRun is Unix timestamp — convert to IST directly
     const nextRunDate = new Date(nextRun);
-    return [{ hour: nextRunDate.getHours(), minute: nextRunDate.getMinutes() }];
+    const istOffset = 5.5 * 60; // IST = UTC+5:30 in minutes
+    const utcMinutes = nextRunDate.getUTCHours() * 60 + nextRunDate.getUTCMinutes();
+    const istMinutes = utcMinutes + istOffset;
+    const hour = Math.floor((istMinutes % 1440) / 60);
+    const minute = istMinutes % 60;
+    return [{ hour, minute }];
   }
 
   const timeMatches = schedule.matchAll(/(\d{1,2}):(\d{2})\s*(am|pm)?/gi);
@@ -105,7 +147,8 @@ function getTimesFromSchedule(
     const meridian = match[3]?.toLowerCase();
     if (meridian === "pm" && hour !== 12) hour += 12;
     if (meridian === "am" && hour === 12) hour = 0;
-    times.push({ hour, minute });
+    const ist = convertToIST(hour, minute, sourceTz);
+    times.push(ist);
   }
   if (times.length > 0) {
     return times;
@@ -116,7 +159,8 @@ function getTimesFromSchedule(
     let hour = parseInt(hourMatch[1]);
     if (hourMatch[2].toLowerCase() === "pm" && hour !== 12) hour += 12;
     if (hourMatch[2].toLowerCase() === "am" && hour === 12) hour = 0;
-    return [{ hour, minute: 0 }];
+    const ist = convertToIST(hour, 0, sourceTz);
+    return [{ hour: ist.hour, minute: ist.minute }];
   }
 
   return [];
@@ -127,6 +171,11 @@ function formatTime12h(hour: number): string {
   if (hour < 12) return `${hour} AM`;
   if (hour === 12) return "12 PM";
   return `${hour - 12} PM`;
+}
+
+// Format time label with IST suffix for clarity
+function formatTimeIST(hour: number): string {
+  return formatTime12h(hour);
 }
 
 function getWeekDates(referenceDate: Date): Date[] {
@@ -233,7 +282,7 @@ function TaskCardPopover({ job }: { job: CronJob }) {
       )}
       {job.nextRun && (
         <div className="text-xs text-muted-foreground">
-          Next: {new Date(job.nextRun).toLocaleString()}
+          Next: {new Date(job.nextRun).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST
         </div>
       )}
       <div className="text-[10px] text-muted-foreground/60 pt-1 border-t border-border/30">
@@ -313,12 +362,14 @@ export function CalendarView() {
     return () => clearInterval(interval);
   }, []);
 
-  // Scroll to current hour on mount or when navigating to current week
+  // Scroll to current IST hour on mount or when navigating to current week
   useEffect(() => {
     if (scrollContainerRef.current && !hasScrolledRef.current) {
       const now = new Date();
-      const currentHour = now.getHours();
-      const scrollTarget = Math.max(0, currentHour - 2) * HOUR_HEIGHT;
+      const istOffset = 5.5 * 60;
+      const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+      const istHour = Math.floor(((utcMinutes + istOffset) % 1440) / 60);
+      const scrollTarget = Math.max(0, istHour - 2) * HOUR_HEIGHT;
       scrollContainerRef.current.scrollTop = scrollTarget;
       hasScrolledRef.current = true;
     }
@@ -451,10 +502,15 @@ export function CalendarView() {
   const currentTimePosition = useMemo(() => {
     if (!currentTime) return { dayIndex: 0, topPosition: 0, visibleColIndex: -1 };
     const now = currentTime;
+    // Convert current time to IST for positioning on the grid
+    const istOffset = 5.5 * 60; // IST = UTC+5:30 in minutes
+    const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+    const istTotalMinutes = (utcMinutes + istOffset) % 1440;
+    const istHour = Math.floor(istTotalMinutes / 60);
+    const istMinute = Math.floor(istTotalMinutes % 60);
+    
     const dayIndex = now.getDay();
-    const hour = now.getHours();
-    const minute = now.getMinutes();
-    const topPosition = (hour * HOUR_HEIGHT) + (minute / 60 * HOUR_HEIGHT);
+    const topPosition = (istHour * HOUR_HEIGHT) + (istMinute / 60 * HOUR_HEIGHT);
 
     // Find if today is in visible dates
     const visibleColIndex = visibleDates.findIndex(d => d.toDateString() === now.toDateString());
@@ -541,7 +597,9 @@ export function CalendarView() {
             className="grid border-b border-border/50 bg-background sticky top-0 z-10"
             style={{ gridTemplateColumns: gridCols }}
           >
-            <div className="border-r border-border/50" /> {/* Empty corner */}
+            <div className="border-r border-border/50 flex items-end justify-center pb-1">
+              <span className="text-[9px] text-muted-foreground/60 font-medium">IST</span>
+            </div>
             {visibleDates.map((date, i) => {
               const isToday = date.toDateString() === currentTime.toDateString();
 
@@ -823,13 +881,13 @@ export function CalendarView() {
               {selectedJob.lastRun && (
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Last Run</label>
-                  <p className="text-sm">{new Date(selectedJob.lastRun).toLocaleString()}</p>
+                  <p className="text-sm">{new Date(selectedJob.lastRun).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST</p>
                 </div>
               )}
               {selectedJob.nextRun && (
                 <div>
                   <label className="text-sm font-medium text-muted-foreground">Next Run</label>
-                  <p className="text-sm">{new Date(selectedJob.nextRun).toLocaleString()}</p>
+                  <p className="text-sm">{new Date(selectedJob.nextRun).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST</p>
                 </div>
               )}
             </div>
