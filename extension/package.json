@@ -1,5 +1,5 @@
 {
-  "name": "@mission-control/activity-sync",
+  "name": "@mission-control/mission-control-sync",
   "version": "1.0.0",
   "description": "OpenClaw activity sync to Mission Control dashboard",
   "type": "module",

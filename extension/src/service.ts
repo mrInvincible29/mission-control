@@ -122,11 +122,9 @@ function processEvent(evt: DiagnosticEventPayload): ActivityPayload | null {
       const usage = evt.usage;
       const totalTokens = (usage.input ?? 0) + (usage.output ?? 0);
       
-      // Skip small token counts (likely just heartbeats)
-      if (totalTokens < 100) return null;
-      
-      const eventKey = `model:${evt.sessionKey}:${Math.floor(now / 30000)}`; // 30s buckets
-      if (!shouldLog(eventKey)) return null;
+      // Log all model usage (no filtering)
+      const eventKey = `model:${evt.sessionKey}:${now}`; // unique key, no dedup
+      if (totalTokens < 50) return null; // only skip truly tiny
       
       return {
         actionType: "model_usage",

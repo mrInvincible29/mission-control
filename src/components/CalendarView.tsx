@@ -17,8 +17,9 @@ import {
   HoverCardContent,
 } from "@/components/ui/hover-card";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { ChevronLeft, ChevronRight } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, RefreshCw } from "lucide-react";
 import type { CronJob } from "@/types";
+import { CreateCronDialog } from "@/components/CreateCronDialog";
 
 function parseScheduleToDay(schedule: string): number[] {
   const lower = schedule.toLowerCase();
@@ -296,6 +297,9 @@ function TaskCardPopover({ job }: { job: CronJob }) {
 export function CalendarView() {
   const cronJobs = useQuery(api.cronJobs.list) as CronJob[] | undefined;
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
+  const [showCreateDialog, setShowCreateDialog] = useState(false);
+  const [createPrefill, setCreatePrefill] = useState<{ scheduleType: string; scheduleValue: string } | null>(null);
+  const [syncing, setSyncing] = useState(false);
   const [currentTime, setCurrentTime] = useState<Date | null>(null);
   const [referenceDate, setReferenceDate] = useState<Date>(() => new Date());
   const [viewMode, setViewMode] = useState<"week" | "day">("week");
@@ -352,6 +356,37 @@ export function CalendarView() {
   const goToToday = useCallback(() => {
     setReferenceDate(new Date());
     hasScrolledRef.current = false;
+  }, []);
+
+  const handleSync = useCallback(async () => {
+    setSyncing(true);
+    try {
+      await fetch("/api/sync", { method: "POST" });
+    } catch {
+      // silent fail
+    } finally {
+      setSyncing(false);
+    }
+  }, []);
+
+  const handleSlotClick = useCallback((date: Date, hour: number, clickY: number, cellTop: number) => {
+    // Calculate minute from click position within the cell
+    const minuteFraction = Math.max(0, Math.min(1, (clickY - cellTop) / HOUR_HEIGHT));
+    const minute = Math.round(minuteFraction * 60 / 15) * 15; // snap to 15-min
+    const clampedMinute = minute >= 60 ? 45 : minute;
+
+    // Build datetime-local value in IST (the dialog handles IST→UTC conversion)
+    const yyyy = date.getFullYear();
+    const mm = String(date.getMonth() + 1).padStart(2, "0");
+    const dd = String(date.getDate()).padStart(2, "0");
+    const hh = String(hour).padStart(2, "0");
+    const min = String(clampedMinute).padStart(2, "0");
+
+    setCreatePrefill({
+      scheduleType: "once",
+      scheduleValue: `${yyyy}-${mm}-${dd}T${hh}:${min}`,
+    });
+    setShowCreateDialog(true);
   }, []);
 
   // Initialize time on client only (avoids hydration mismatch)
@@ -568,6 +603,30 @@ export function CalendarView() {
               : formatMonthYear(weekDates)}
           </span>
 
+          {/* Create button */}
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => { setCreatePrefill(null); setShowCreateDialog(true); }}
+            className="text-xs gap-1"
+          >
+            <Plus className="size-3.5" />
+            <span className="hidden sm:inline">New</span>
+          </Button>
+
+          {/* Sync button */}
+          <Button
+            variant="ghost"
+            size="sm"
+            onClick={handleSync}
+            disabled={syncing}
+            className="text-xs gap-1"
+            title="Sync cron jobs with OpenClaw"
+          >
+            <RefreshCw className={`size-3.5 ${syncing ? "animate-spin" : ""}`} />
+            <span className="hidden sm:inline">Sync</span>
+          </Button>
+
           {/* Spacer */}
           <div className="flex-1" />
 
@@ -693,14 +752,18 @@ export function CalendarView() {
                     return (
                       <div
                         key={`${hour}-${colIdx}`}
-                        className={`border-r border-b border-border/50 relative overflow-hidden ${
+                        className={`border-r border-b border-border/50 relative overflow-hidden cursor-pointer hover:bg-primary/10 transition-colors ${
                           isToday ? "bg-primary/5" : ""
                         }`}
                         style={{ height: `${HOUR_HEIGHT}px` }}
+                        onClick={(e) => {
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          handleSlotClick(date, hour, e.clientY, rect.top);
+                        }}
                       >
                         {/* Half-hour dashed line */}
                         <div
-                          className="absolute left-0 right-0 border-t border-dashed border-border/20"
+                          className="absolute left-0 right-0 border-t border-dashed border-border/20 pointer-events-none"
                           style={{ top: `${HOUR_HEIGHT / 2}px` }}
                         />
                       </div>
@@ -842,6 +905,14 @@ export function CalendarView() {
           </div>
         </div>
       </CardContent>
+
+      {/* Create cron dialog */}
+      <CreateCronDialog
+        open={showCreateDialog}
+        onOpenChange={setShowCreateDialog}
+        prefill={createPrefill}
+        onCreated={handleSync}
+      />
 
       {/* Task details dialog */}
       <Dialog open={!!selectedJob} onOpenChange={(open) => !open && setSelectedJob(null)}>

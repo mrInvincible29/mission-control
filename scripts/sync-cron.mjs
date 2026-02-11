@@ -77,7 +77,8 @@ async function main() {
   let openclawJobs;
   try {
     const result = execSync('openclaw cron list --json 2>/dev/null', { encoding: 'utf-8' });
-    openclawJobs = JSON.parse(result);
+    const parsed = JSON.parse(result);
+    openclawJobs = Array.isArray(parsed) ? parsed : parsed.jobs || [];
   } catch (e) {
     console.error('Failed to fetch OpenClaw cron jobs:', e.message);
     process.exit(1);
