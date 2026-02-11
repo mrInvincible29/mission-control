@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev -H 172.29.0.1 -p 39151",
-    "build": "next build",
+    "build": "next build && cp -r .next/static .next/standalone/.next/static && [ -d public ] && cp -r public .next/standalone/public || true",
     "start": "next start -H 172.29.0.1 -p 39151",
     "lint": "eslint"
   },

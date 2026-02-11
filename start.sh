@@ -10,9 +10,11 @@ if [ ! -f "$STANDALONE/server.js" ]; then
   echo "No standalone build found. Building..."
   cd "$DIR"
   npm run build
-  cp -r .next/static .next/standalone/.next/static
-  [ -d public ] && cp -r public .next/standalone/public
 fi
+
+# Always sync static assets (build may have generated new chunks)
+cp -r "$DIR/.next/static" "$STANDALONE/.next/static"
+[ -d "$DIR/public" ] && cp -r "$DIR/public" "$STANDALONE/public"
 
 cd "$STANDALONE"
 exec node server.js

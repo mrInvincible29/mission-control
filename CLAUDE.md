@@ -56,11 +56,10 @@ scripts/
 
 ```bash
 npm run dev          # Dev server on 172.29.0.1:39151
-npm run build        # Production build (standalone)
+npm run build        # Production build (standalone) — auto-copies static assets
 npm run start        # Start production server
 npx convex dev       # Start Convex dev backend
 npx convex typecheck # Typecheck Convex functions (tsc --noEmit)
-npx next build       # Verify no TS/build errors (same as npm run build)
 ```
 
 ## Environment
@@ -85,7 +84,6 @@ All endpoints require basic auth (via Traefik).
 ## When Modifying
 
 - Run `npx convex typecheck` after changing any `convex/*.ts` file.
-- Run `npx next build` (or `npm run build`) after changing frontend code to catch TS errors.
+- Run `npm run build` after changing frontend code — this builds, copies static assets to `.next/standalone/`, and copies `public/`. Then restart the server.
 - Convex schema changes require `npx convex dev` to push — schema is the source of truth, not migrations.
 - shadcn/ui components live in `src/components/ui/`. Add new ones with `npx shadcn@latest add <component>`.
-- The standalone `server.js` reads from `.next/standalone/` — rebuild after changes.
