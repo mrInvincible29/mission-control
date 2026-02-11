@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { Sparkles, Loader2, Plus, Clock, Repeat, Calendar } from "lucide-react";
+import { useToast } from "@/components/Toast";
 
 const MODELS = [
   { value: "", label: "Default (inherit)" },
@@ -54,6 +55,7 @@ interface CreateCronDialogProps {
 }
 
 export function CreateCronDialog({ open, onOpenChange, onCreated, prefill }: CreateCronDialogProps) {
+  const { toast } = useToast();
   const [name, setName] = useState("");
   const [scheduleType, setScheduleType] = useState("every");
   const [scheduleValue, setScheduleValue] = useState("");
@@ -145,9 +147,12 @@ export function CreateCronDialog({ open, onOpenChange, onCreated, prefill }: Cre
       });
       const data = await res.json();
       if (data.error) {
-        setError(typeof data.error === "string" ? data.error : JSON.stringify(data.error));
+        const errMsg = typeof data.error === "string" ? data.error : JSON.stringify(data.error);
+        setError(errMsg);
+        toast(errMsg, "error");
       } else {
         setSuccess(true);
+        toast(`Cron job "${name.trim()}" created`, "success");
         onCreated?.();
         setTimeout(() => {
           onOpenChange(false);

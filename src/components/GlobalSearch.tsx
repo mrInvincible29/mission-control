@@ -28,6 +28,7 @@ import {
 import { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import { ChevronRight, Copy, Check, Search, X } from "lucide-react";
 import type { SearchResult, IndexedDocument } from "@/types";
+import { useToast } from "@/components/Toast";
 
 function highlightMatch(text: string, query: string): React.ReactNode {
   if (!query.trim()) return text;
@@ -173,6 +174,7 @@ function FileViewerDialog({
 // --- Main Component ---
 
 export function GlobalSearch() {
+  const { toast } = useToast();
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [isIndexing, setIsIndexing] = useState(false);
@@ -336,8 +338,9 @@ export function GlobalSearch() {
     try {
       const response = await fetch("/api/index", { method: "POST" });
       if (!response.ok) throw new Error("Failed to index");
-    } catch (error) {
-      console.error("Indexing failed:", error);
+      toast("File index refreshed", "success");
+    } catch {
+      toast("Indexing failed", "error");
     } finally {
       setIsIndexing(false);
     }
@@ -395,6 +398,18 @@ export function GlobalSearch() {
                 {!allDocs ? (
                   <div className="flex items-center justify-center h-32 text-muted-foreground">
                     Loading files...
+                  </div>
+                ) : allDocs.length === 0 ? (
+                  <div className="flex flex-col items-center justify-center h-32 text-muted-foreground gap-2">
+                    <span>No files indexed yet</span>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleRefreshIndex}
+                      disabled={isIndexing}
+                    >
+                      {isIndexing ? "Indexing..." : "Index files now"}
+                    </Button>
                   </div>
                 ) : (
                   <div className="space-y-1">

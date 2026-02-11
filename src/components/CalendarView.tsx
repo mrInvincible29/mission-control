@@ -20,6 +20,7 @@ import { useState, useMemo, useEffect, useRef, useCallback } from "react";
 import { ChevronLeft, ChevronRight, Plus, RefreshCw } from "lucide-react";
 import type { CronJob } from "@/types";
 import { CreateCronDialog } from "@/components/CreateCronDialog";
+import { useToast } from "@/components/Toast";
 
 function parseScheduleToDay(schedule: string): number[] {
   const lower = schedule.toLowerCase();
@@ -168,16 +169,11 @@ function getTimesFromSchedule(
 }
 
 function formatTime12h(hour: number, minute?: number): string {
-  const minStr = minute ? `:${String(minute).padStart(2, '0')}` : '';
+  const minStr = minute != null && minute > 0 ? `:${String(minute).padStart(2, '0')}` : '';
   if (hour === 0) return `12${minStr} AM`;
   if (hour < 12) return `${hour}${minStr} AM`;
   if (hour === 12) return `12${minStr} PM`;
   return `${hour - 12}${minStr} PM`;
-}
-
-// Format time label with IST suffix for clarity
-function formatTimeIST(hour: number): string {
-  return formatTime12h(hour);
 }
 
 function getWeekDates(referenceDate: Date): Date[] {
@@ -296,6 +292,7 @@ function TaskCardPopover({ job }: { job: CronJob }) {
 
 export function CalendarView() {
   const cronJobs = useQuery(api.cronJobs.list) as CronJob[] | undefined;
+  const { toast } = useToast();
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
   const [createPrefill, setCreatePrefill] = useState<{ scheduleType: string; scheduleValue: string } | null>(null);
@@ -361,13 +358,18 @@ export function CalendarView() {
   const handleSync = useCallback(async () => {
     setSyncing(true);
     try {
-      await fetch("/api/sync", { method: "POST" });
+      const res = await fetch("/api/sync", { method: "POST" });
+      if (res.ok) {
+        toast("Cron jobs synced", "success");
+      } else {
+        toast("Sync failed", "error");
+      }
     } catch {
-      // silent fail
+      toast("Sync failed — network error", "error");
     } finally {
       setSyncing(false);
     }
-  }, []);
+  }, [toast]);
 
   const handleSlotClick = useCallback((date: Date, hour: number, clickY: number, cellTop: number) => {
     // Calculate minute from click position within the cell

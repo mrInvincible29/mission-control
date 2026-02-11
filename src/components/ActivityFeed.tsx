@@ -45,6 +45,7 @@ const DATE_RANGES = [
   { label: "Today", value: 1 },
   { label: "7 days", value: 7 },
   { label: "14 days", value: 14 },
+  { label: "30 days", value: 30 },
 ];
 
 const CATEGORIES = [
@@ -53,6 +54,7 @@ const CATEGORIES = [
   { label: "🤖 Model", value: "model" },
   { label: "💬 Messages", value: "message" },
   { label: "⚙️ System", value: "system" },
+  { label: "🔇 Noise", value: "noise" },
 ];
 
 function formatTime(timestamp: number): string {
@@ -98,6 +100,13 @@ export function ActivityFeed() {
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
+
+  // Auto-refresh relative timestamps every 60 seconds
+  const [, setTick] = useState(0);
+  useEffect(() => {
+    const interval = setInterval(() => setTick(t => t + 1), 60000);
+    return () => clearInterval(interval);
+  }, []);
 
   // Reset cursors and search when filters change
   useEffect(() => {
