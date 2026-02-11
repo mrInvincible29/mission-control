@@ -114,6 +114,17 @@ export function ActivityFeed() {
     setSearchText("");
   }, [dateRange, category]);
 
+  // Listen for command palette filter events
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail?.category !== undefined) setCategory(detail.category);
+      if (detail?.dateRange !== undefined) setDateRange(detail.dateRange);
+    };
+    window.addEventListener("set-activity-filter", handler);
+    return () => window.removeEventListener("set-activity-filter", handler);
+  }, []);
+
   const sinceTimestamp = useMemo(() => {
     if (!mounted) return 0;
     return Date.now() - dateRange * 24 * 60 * 60 * 1000;

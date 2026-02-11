@@ -12,6 +12,11 @@ const ThemeToggle = dynamic(
   { ssr: false }
 );
 
+const CommandPalette = dynamic(
+  () => import("@/components/CommandPalette").then((mod) => ({ default: mod.CommandPalette })),
+  { ssr: false }
+);
+
 const VALID_TABS = ["activity", "calendar", "search"] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
@@ -144,6 +149,7 @@ function DashboardContent() {
 export default function Home() {
   return (
     <ToastProvider>
+      <CommandPalette />
       <main className="min-h-screen bg-gradient-to-b from-background to-background/95">
         <div className="container mx-auto px-4 py-6">
           <header className="mb-8">
@@ -156,7 +162,18 @@ export default function Home() {
                   AJ&apos;s personal command center
                 </p>
               </div>
-              <ThemeToggle />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))}
+                  className="hidden sm:flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+                >
+                  <span>Search commands...</span>
+                  <kbd className="rounded border border-border/40 bg-background/50 px-1 py-0.5 text-[10px] font-mono">
+                    ⌘K
+                  </kbd>
+                </button>
+                <ThemeToggle />
+              </div>
             </div>
           </header>
 

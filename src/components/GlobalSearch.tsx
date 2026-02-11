@@ -282,17 +282,9 @@ export function GlobalSearch() {
     setSelectedIndex(-1);
   }, [debouncedQuery]);
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts (Cmd+K now handled by CommandPalette)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Cmd+K / Ctrl+K: switch to search tab + focus input
-      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
-        e.preventDefault();
-        setActiveTab("search");
-        setTimeout(() => searchInputRef.current?.focus(), 50);
-        return;
-      }
-
       // Only handle arrow/escape/enter when search tab is active
       if (activeTab !== "search") return;
 

@@ -400,6 +400,16 @@ export function CalendarView() {
     return () => clearInterval(interval);
   }, []);
 
+  // Listen for command palette "open-create-cron" event
+  useEffect(() => {
+    const handler = () => {
+      setCreatePrefill(null);
+      setShowCreateDialog(true);
+    };
+    window.addEventListener("open-create-cron", handler);
+    return () => window.removeEventListener("open-create-cron", handler);
+  }, []);
+
   // Scroll to current IST hour on mount or when navigating to current week
   useEffect(() => {
     if (scrollContainerRef.current && !hasScrolledRef.current) {
