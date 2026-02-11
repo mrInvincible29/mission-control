@@ -54,7 +54,11 @@ function scheduleToString(schedule) {
         // Weekly (specific weekday)
         if (day === '*' && month === '*' && weekday !== '*') {
           const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-          const dayName = dayNames[parseInt(weekday)] || weekday;
+          const dayNamesShort = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+          const weekdays = weekday.split(',').map(w => w.trim());
+          const dayName = weekdays.length > 1
+            ? weekdays.map(w => dayNamesShort[parseInt(w)] || w).join(', ')
+            : dayNames[parseInt(weekdays[0])] || weekdays[0];
           const hr = parseInt(hour);
           const min = minute.padStart(2, '0');
           let timeStr;
