@@ -17,7 +17,7 @@ const CommandPalette = dynamic(
   { ssr: false }
 );
 
-const VALID_TABS = ["activity", "calendar", "search"] as const;
+const VALID_TABS = ["activity", "calendar", "search", "agents"] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
 class TabErrorBoundary extends Component<
@@ -69,6 +69,11 @@ const GlobalSearch = dynamic(
   { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
 );
 
+const AgentSessions = dynamic(
+  () => import("@/components/AgentSessions").then((mod) => ({ default: mod.AgentSessions })),
+  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+);
+
 function DashboardContent() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   const searchParams = useSearchParams();
@@ -81,7 +86,7 @@ function DashboardContent() {
     : "activity";
   const [activeTab, setActiveTab] = useState<TabValue>(initialTab);
 
-  // Keyboard shortcuts: 1/2/3 to switch tabs
+  // Keyboard shortcuts: 1/2/3/4 to switch tabs
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       // Don't trigger when typing in inputs
@@ -91,6 +96,7 @@ function DashboardContent() {
       if (e.key === "1") setActiveTab("activity");
       else if (e.key === "2") setActiveTab("calendar");
       else if (e.key === "3") setActiveTab("search");
+      else if (e.key === "4") setActiveTab("agents");
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -110,7 +116,7 @@ function DashboardContent() {
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-      <TabsList className="grid w-full grid-cols-3 max-w-[280px] sm:max-w-md">
+      <TabsList className="grid w-full grid-cols-4 max-w-[380px] sm:max-w-2xl">
         <TabsTrigger value="activity">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">1</span>
           Activity
@@ -122,6 +128,10 @@ function DashboardContent() {
         <TabsTrigger value="search">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">3</span>
           Search
+        </TabsTrigger>
+        <TabsTrigger value="agents">
+          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">4</span>
+          Agents
         </TabsTrigger>
       </TabsList>
 
@@ -140,6 +150,12 @@ function DashboardContent() {
       <TabsContent value="search" className="mt-6">
         <TabErrorBoundary fallbackLabel="Search">
           <GlobalSearch />
+        </TabErrorBoundary>
+      </TabsContent>
+
+      <TabsContent value="agents" className="mt-6">
+        <TabErrorBoundary fallbackLabel="Agents">
+          <AgentSessions />
         </TabErrorBoundary>
       </TabsContent>
     </Tabs>
