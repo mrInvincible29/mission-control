@@ -1,0 +1,524 @@
+"use client";
+
+import { useQuery } from "convex/react";
+import { api } from "../../convex/_generated/api";
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import { useState, useMemo } from "react";
+import { TrendingUp, TrendingDown, Minus, Zap, DollarSign, Activity, AlertTriangle } from "lucide-react";
+
+const TIME_RANGES = [
+  { label: "7d", value: 7 },
+  { label: "14d", value: 14 },
+  { label: "30d", value: 30 },
+];
+
+function formatTokens(tokens: number): string {
+  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
+  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
+  return tokens.toString();
+}
+
+function formatCost(cost: number): string {
+  if (cost === 0) return "$0";
+  if (cost < 0.01) return `$${cost.toFixed(4)}`;
+  if (cost < 1) return `$${cost.toFixed(2)}`;
+  return `$${cost.toFixed(2)}`;
+}
+
+function formatShortDay(dayStr: string): string {
+  const date = new Date(dayStr + "T00:00:00");
+  return date.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+}
+
+function formatHour(hour: number): string {
+  if (hour === 0) return "12a";
+  if (hour < 12) return `${hour}a`;
+  if (hour === 12) return "12p";
+  return `${hour - 12}p`;
+}
+
+const MODEL_COLORS: Record<string, { bg: string; bar: string; text: string; dot: string }> = {
+  haiku: { bg: "bg-green-500/15", bar: "bg-green-500", text: "text-green-400", dot: "bg-green-500" },
+  sonnet: { bg: "bg-blue-500/15", bar: "bg-blue-500", text: "text-blue-400", dot: "bg-blue-500" },
+  opus: { bg: "bg-purple-500/15", bar: "bg-purple-500", text: "text-purple-400", dot: "bg-purple-500" },
+};
+
+function getModelColorSet(model: string): { bg: string; bar: string; text: string; dot: string } {
+  const lower = model.toLowerCase();
+  for (const [key, colors] of Object.entries(MODEL_COLORS)) {
+    if (lower.includes(key)) return colors;
+  }
+  return { bg: "bg-gray-500/15", bar: "bg-gray-500", text: "text-gray-400", dot: "bg-gray-500" };
+}
+
+// Pure SVG bar chart
+function BarChart({
+  data,
+  valueKey,
+  labelKey,
+  formatValue,
+  formatLabel,
+  color = "var(--color-primary)",
+  height = 120,
+}: {
+  data: Array<Record<string, any>>;
+  valueKey: string;
+  labelKey: string;
+  formatValue: (v: number) => string;
+  formatLabel: (v: string) => string;
+  color?: string;
+  height?: number;
+}) {
+  const maxVal = Math.max(...data.map((d) => d[valueKey] as number), 1);
+  const barWidth = Math.max(4, Math.min(24, (600 - data.length * 2) / data.length));
+  const chartWidth = data.length * (barWidth + 2) + 20;
+
+  return (
+    <TooltipProvider>
+      <div className="w-full overflow-x-auto">
+        <svg
+          viewBox={`0 0 ${chartWidth} ${height + 20}`}
+          className="w-full"
+          style={{ minWidth: `${Math.min(chartWidth, 400)}px` }}
+        >
+          {/* Grid lines */}
+          {[0.25, 0.5, 0.75, 1].map((frac) => (
+            <line
+              key={frac}
+              x1={10}
+              y1={height - height * frac}
+              x2={chartWidth - 10}
+              y2={height - height * frac}
+              stroke="currentColor"
+              strokeOpacity={0.06}
+              strokeWidth={1}
+            />
+          ))}
+
+          {/* Bars */}
+          {data.map((d, i) => {
+            const val = d[valueKey] as number;
+            const barHeight = (val / maxVal) * (height - 10);
+            const x = 10 + i * (barWidth + 2);
+
+            return (
+              <Tooltip key={i}>
+                <TooltipTrigger asChild>
+                  <g className="cursor-pointer">
+                    {/* Hover area */}
+                    <rect
+                      x={x}
+                      y={0}
+                      width={barWidth}
+                      height={height}
+                      fill="transparent"
+                    />
+                    {/* Bar */}
+                    <rect
+                      x={x}
+                      y={height - barHeight}
+                      width={barWidth}
+                      height={Math.max(barHeight, 1)}
+                      fill={color}
+                      rx={Math.min(barWidth / 4, 3)}
+                      opacity={val > 0 ? 0.8 : 0.15}
+                      className="transition-opacity hover:opacity-100"
+                    />
+                  </g>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  <div className="font-medium">{formatLabel(d[labelKey])}</div>
+                  <div>{formatValue(val)}</div>
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
+
+          {/* X-axis labels (show subset) */}
+          {data.map((d, i) => {
+            const showLabel =
+              data.length <= 10 ||
+              i === 0 ||
+              i === data.length - 1 ||
+              i % Math.ceil(data.length / 6) === 0;
+            if (!showLabel) return null;
+            const x = 10 + i * (barWidth + 2) + barWidth / 2;
+            return (
+              <text
+                key={`label-${i}`}
+                x={x}
+                y={height + 14}
+                textAnchor="middle"
+                fill="currentColor"
+                opacity={0.4}
+                fontSize={9}
+                fontFamily="monospace"
+              >
+                {formatLabel(d[labelKey])}
+              </text>
+            );
+          })}
+        </svg>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+// Hourly activity heatmap
+function HourlyHeatmap({
+  data,
+  valueKey,
+}: {
+  data: Array<{ hour: number; count: number; tokens: number; cost: number }>;
+  valueKey: "count" | "tokens" | "cost";
+}) {
+  const maxVal = Math.max(...data.map((d) => d[valueKey]), 1);
+
+  return (
+    <TooltipProvider>
+      <div className="flex gap-[3px] flex-wrap">
+        {data.map((d) => {
+          const intensity = d[valueKey] / maxVal;
+          const opacity = d[valueKey] === 0 ? 0.05 : 0.15 + intensity * 0.85;
+          return (
+            <Tooltip key={d.hour}>
+              <TooltipTrigger asChild>
+                <div
+                  className="flex flex-col items-center gap-0.5 cursor-pointer"
+                >
+                  <div
+                    className="w-6 h-6 sm:w-7 sm:h-7 rounded-sm bg-primary transition-opacity"
+                    style={{ opacity }}
+                  />
+                  <span className="text-[8px] text-muted-foreground/60 font-mono">
+                    {formatHour(d.hour)}
+                  </span>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                <div className="font-medium">{formatHour(d.hour)} - {formatHour(d.hour + 1)}</div>
+                <div>{d.count} activities</div>
+                {d.tokens > 0 && <div>{formatTokens(d.tokens)} tokens</div>}
+                {d.cost > 0 && <div>{formatCost(d.cost)}</div>}
+              </TooltipContent>
+            </Tooltip>
+          );
+        })}
+      </div>
+    </TooltipProvider>
+  );
+}
+
+// Stat card with optional trend
+function StatCard({
+  label,
+  value,
+  icon: Icon,
+  color,
+  trend,
+  subtitle,
+}: {
+  label: string;
+  value: string;
+  icon: React.ElementType;
+  color: string;
+  trend?: "up" | "down" | "flat";
+  subtitle?: string;
+}) {
+  return (
+    <div className="rounded-xl border border-border/50 bg-card/30 p-4">
+      <div className="flex items-center justify-between mb-2">
+        <span className="text-xs text-muted-foreground">{label}</span>
+        <div className={`rounded-lg p-1.5 ${color}`}>
+          <Icon className="h-3.5 w-3.5" />
+        </div>
+      </div>
+      <div className="flex items-end gap-2">
+        <span className="text-2xl font-bold tracking-tight">{value}</span>
+        {trend && (
+          <span className={`flex items-center gap-0.5 text-xs pb-0.5 ${
+            trend === "up" ? "text-emerald-400" : trend === "down" ? "text-red-400" : "text-muted-foreground"
+          }`}>
+            {trend === "up" ? <TrendingUp className="h-3 w-3" /> :
+             trend === "down" ? <TrendingDown className="h-3 w-3" /> :
+             <Minus className="h-3 w-3" />}
+          </span>
+        )}
+      </div>
+      {subtitle && (
+        <div className="text-[11px] text-muted-foreground mt-1">{subtitle}</div>
+      )}
+    </div>
+  );
+}
+
+export function AnalyticsView() {
+  const [days, setDays] = useState(14);
+  const analytics = useQuery(api.activities.analytics, { days });
+
+  // Compute trends: compare first half vs second half
+  const trends = useMemo(() => {
+    if (!analytics || analytics.daily.length < 2) return { cost: "flat" as const, tokens: "flat" as const, errors: "flat" as const };
+
+    const mid = Math.floor(analytics.daily.length / 2);
+    const firstHalf = analytics.daily.slice(0, mid);
+    const secondHalf = analytics.daily.slice(mid);
+
+    const sumCost = (arr: typeof firstHalf) => arr.reduce((s, d) => s + d.cost, 0);
+    const sumTokens = (arr: typeof firstHalf) => arr.reduce((s, d) => s + d.tokens, 0);
+    const sumErrors = (arr: typeof firstHalf) => arr.reduce((s, d) => s + d.errors, 0);
+
+    const costTrend = sumCost(secondHalf) > sumCost(firstHalf) * 1.1 ? "up" as const : sumCost(secondHalf) < sumCost(firstHalf) * 0.9 ? "down" as const : "flat" as const;
+    const tokenTrend = sumTokens(secondHalf) > sumTokens(firstHalf) * 1.1 ? "up" as const : sumTokens(secondHalf) < sumTokens(firstHalf) * 0.9 ? "down" as const : "flat" as const;
+    const errorTrend = sumErrors(secondHalf) > sumErrors(firstHalf) * 1.1 ? "up" as const : sumErrors(secondHalf) < sumErrors(firstHalf) * 0.9 ? "down" as const : "flat" as const;
+
+    return { cost: costTrend, tokens: tokenTrend, errors: errorTrend };
+  }, [analytics]);
+
+  const avgCostPerDay = useMemo(() => {
+    if (!analytics || analytics.days === 0) return 0;
+    return analytics.totalCost / analytics.days;
+  }, [analytics]);
+
+  const peakHour = useMemo(() => {
+    if (!analytics) return null;
+    const max = analytics.hourly.reduce((best, h) => h.count > best.count ? h : best, analytics.hourly[0]);
+    return max.count > 0 ? max : null;
+  }, [analytics]);
+
+  if (!analytics) {
+    return (
+      <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
+        <CardContent className="flex-1 flex items-center justify-center">
+          <p className="text-muted-foreground">Loading analytics...</p>
+        </CardContent>
+      </Card>
+    );
+  }
+
+  return (
+    <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
+      <CardHeader className="pb-2 flex-shrink-0 px-4 pt-4">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-lg font-semibold">Usage Analytics</CardTitle>
+          <div className="flex items-center gap-1">
+            {TIME_RANGES.map((range) => (
+              <Button
+                key={range.value}
+                variant={days === range.value ? "secondary" : "ghost"}
+                size="sm"
+                className="text-xs h-7 px-2"
+                onClick={() => setDays(range.value)}
+              >
+                {range.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+      </CardHeader>
+
+      <CardContent className="flex-1 overflow-y-auto px-4 space-y-6">
+        {/* Summary Stats */}
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+          <StatCard
+            label="Total Cost"
+            value={formatCost(analytics.totalCost)}
+            icon={DollarSign}
+            color="bg-emerald-500/15 text-emerald-400"
+            trend={trends.cost}
+            subtitle={`~${formatCost(avgCostPerDay)}/day avg`}
+          />
+          <StatCard
+            label="Total Tokens"
+            value={formatTokens(analytics.totalTokens)}
+            icon={Zap}
+            color="bg-blue-500/15 text-blue-400"
+            trend={trends.tokens}
+            subtitle={`${analytics.models.length} model${analytics.models.length !== 1 ? "s" : ""} used`}
+          />
+          <StatCard
+            label="Activities"
+            value={analytics.totalActivities.toLocaleString()}
+            icon={Activity}
+            color="bg-purple-500/15 text-purple-400"
+            subtitle={`${days}-day window`}
+          />
+          <StatCard
+            label="Errors"
+            value={analytics.totalErrors.toLocaleString()}
+            icon={AlertTriangle}
+            color={analytics.totalErrors > 0 ? "bg-red-500/15 text-red-400" : "bg-gray-500/15 text-gray-400"}
+            trend={trends.errors}
+            subtitle={analytics.totalActivities > 0 ? `${((analytics.totalErrors / analytics.totalActivities) * 100).toFixed(1)}% error rate` : undefined}
+          />
+        </div>
+
+        {/* Daily Cost Chart */}
+        <div className="rounded-xl border border-border/50 bg-card/30 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium">Daily Cost</h3>
+            <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+              {formatCost(analytics.totalCost)} total
+            </Badge>
+          </div>
+          <BarChart
+            data={analytics.daily}
+            valueKey="cost"
+            labelKey="day"
+            formatValue={formatCost}
+            formatLabel={formatShortDay}
+            color="rgb(16 185 129)" // emerald-500
+          />
+        </div>
+
+        {/* Daily Token Chart */}
+        <div className="rounded-xl border border-border/50 bg-card/30 p-4">
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium">Daily Tokens</h3>
+            <Badge variant="outline" className="text-[10px] bg-blue-500/10 text-blue-400 border-blue-500/20">
+              {formatTokens(analytics.totalTokens)} total
+            </Badge>
+          </div>
+          <BarChart
+            data={analytics.daily}
+            valueKey="tokens"
+            labelKey="day"
+            formatValue={formatTokens}
+            formatLabel={formatShortDay}
+            color="rgb(59 130 246)" // blue-500
+          />
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          {/* Model Breakdown */}
+          <div className="rounded-xl border border-border/50 bg-card/30 p-4">
+            <h3 className="text-sm font-medium mb-3">Model Breakdown</h3>
+            {analytics.models.length === 0 ? (
+              <p className="text-xs text-muted-foreground">No model usage data</p>
+            ) : (
+              <div className="space-y-3">
+                {analytics.models.map((m) => {
+                  const colors = getModelColorSet(m.model);
+                  const pct = analytics.totalTokens > 0 ? (m.tokens / analytics.totalTokens) * 100 : 0;
+                  return (
+                    <div key={m.model} className="space-y-1.5">
+                      <div className="flex items-center justify-between text-xs">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2.5 h-2.5 rounded-full ${colors.dot}`} />
+                          <span className={`font-medium ${colors.text}`}>{m.model}</span>
+                        </div>
+                        <div className="flex items-center gap-3 text-muted-foreground">
+                          <span>{formatTokens(m.tokens)}</span>
+                          <span className="text-emerald-400">{formatCost(m.cost)}</span>
+                        </div>
+                      </div>
+                      <div className="h-2 rounded-full bg-muted/50 overflow-hidden">
+                        <div
+                          className={`h-full rounded-full ${colors.bar} transition-all duration-500`}
+                          style={{ width: `${Math.max(pct, 2)}%` }}
+                        />
+                      </div>
+                      <div className="text-[10px] text-muted-foreground/60">
+                        {pct.toFixed(1)}% of tokens &middot; {m.count} call{m.count !== 1 ? "s" : ""}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Activity by Hour */}
+          <div className="rounded-xl border border-border/50 bg-card/30 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium">Activity by Hour</h3>
+              {peakHour && (
+                <Badge variant="outline" className="text-[10px]">
+                  Peak: {formatHour(peakHour.hour)}
+                </Badge>
+              )}
+            </div>
+            <HourlyHeatmap data={analytics.hourly} valueKey="count" />
+          </div>
+        </div>
+
+        {/* Activity by Category */}
+        <div className="rounded-xl border border-border/50 bg-card/30 p-4">
+          <h3 className="text-sm font-medium mb-3">Activity by Category</h3>
+          {analytics.categories.length === 0 ? (
+            <p className="text-xs text-muted-foreground">No activity data</p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {analytics.categories.map((c) => {
+                const pct = analytics.totalActivities > 0 ? (c.count / analytics.totalActivities) * 100 : 0;
+                return (
+                  <TooltipProvider key={c.category}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="flex items-center gap-2 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 cursor-default">
+                          <span className="text-xs font-medium">{c.category}</span>
+                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
+                            {c.count}
+                          </Badge>
+                          <span className="text-[10px] text-muted-foreground">{pct.toFixed(0)}%</span>
+                        </div>
+                      </TooltipTrigger>
+                      <TooltipContent className="text-xs">
+                        <div>{c.count} activities</div>
+                        {c.tokens > 0 && <div>{formatTokens(c.tokens)} tokens</div>}
+                        {c.cost > 0 && <div>{formatCost(c.cost)} cost</div>}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                );
+              })}
+            </div>
+          )}
+        </div>
+
+        {/* Daily Breakdown Table */}
+        <div className="rounded-xl border border-border/50 bg-card/30 p-4">
+          <h3 className="text-sm font-medium mb-3">Daily Breakdown</h3>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead>
+                <tr className="text-muted-foreground border-b border-border/30">
+                  <th className="text-left py-2 pr-4 font-medium">Date</th>
+                  <th className="text-right py-2 px-2 font-medium">Activities</th>
+                  <th className="text-right py-2 px-2 font-medium">Tokens</th>
+                  <th className="text-right py-2 px-2 font-medium">Cost</th>
+                  <th className="text-right py-2 pl-2 font-medium">Errors</th>
+                </tr>
+              </thead>
+              <tbody>
+                {[...analytics.daily].reverse().map((d) => (
+                  <tr key={d.day} className="border-b border-border/10 hover:bg-muted/20 transition-colors">
+                    <td className="py-1.5 pr-4 font-mono text-muted-foreground">{formatShortDay(d.day)}</td>
+                    <td className="py-1.5 px-2 text-right">{d.count}</td>
+                    <td className="py-1.5 px-2 text-right text-blue-400">
+                      {d.tokens > 0 ? formatTokens(d.tokens) : "—"}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-emerald-400">
+                      {d.cost > 0 ? formatCost(d.cost) : "—"}
+                    </td>
+                    <td className={`py-1.5 pl-2 text-right ${d.errors > 0 ? "text-red-400" : "text-muted-foreground/40"}`}>
+                      {d.errors > 0 ? d.errors : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
+}

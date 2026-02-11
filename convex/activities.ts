@@ -173,6 +173,122 @@ export const cleanup = mutation({
   },
 });
 
+// Analytics: aggregate activities by day and model for charts
+export const analytics = query({
+  args: {
+    days: v.optional(v.number()),
+  },
+  handler: async (ctx, args) => {
+    const days = args.days ?? 14;
+    const sinceTimestamp = Date.now() - days * 24 * 60 * 60 * 1000;
+
+    const activities = await ctx.db
+      .query("activities")
+      .withIndex("by_timestamp")
+      .order("desc")
+      .filter((q) => q.gte(q.field("timestamp"), sinceTimestamp))
+      .take(5000);
+
+    // Aggregate by day (YYYY-MM-DD in UTC)
+    const dailyMap: Record<string, { tokens: number; cost: number; count: number; errors: number }> = {};
+    // Aggregate by model
+    const modelMap: Record<string, { tokens: number; cost: number; count: number }> = {};
+    // Aggregate by hour of day (0-23)
+    const hourlyMap: Record<number, { tokens: number; cost: number; count: number }> = {};
+    // Aggregate by category
+    const categoryMap: Record<string, { tokens: number; cost: number; count: number }> = {};
+
+    for (const a of activities) {
+      const date = new Date(a.timestamp);
+      const dayKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+      const hour = date.getHours();
+      const model = a.metadata?.model || "unknown";
+      const tokens = a.metadata?.tokens || 0;
+      const cost = a.metadata?.cost || 0;
+      const cat = a.category ?? "system";
+
+      // Daily
+      if (!dailyMap[dayKey]) dailyMap[dayKey] = { tokens: 0, cost: 0, count: 0, errors: 0 };
+      dailyMap[dayKey].tokens += tokens;
+      dailyMap[dayKey].cost += cost;
+      dailyMap[dayKey].count += 1;
+      if (a.status === "error") dailyMap[dayKey].errors += 1;
+
+      // Model (only if model usage)
+      if (tokens > 0 || cost > 0) {
+        if (!modelMap[model]) modelMap[model] = { tokens: 0, cost: 0, count: 0 };
+        modelMap[model].tokens += tokens;
+        modelMap[model].cost += cost;
+        modelMap[model].count += 1;
+      }
+
+      // Hourly
+      if (!hourlyMap[hour]) hourlyMap[hour] = { tokens: 0, cost: 0, count: 0 };
+      hourlyMap[hour].tokens += tokens;
+      hourlyMap[hour].cost += cost;
+      hourlyMap[hour].count += 1;
+
+      // Category
+      if (!categoryMap[cat]) categoryMap[cat] = { tokens: 0, cost: 0, count: 0 };
+      categoryMap[cat].tokens += tokens;
+      categoryMap[cat].cost += cost;
+      categoryMap[cat].count += 1;
+    }
+
+    // Build sorted daily array (fill missing days with zeros)
+    const daily: Array<{ day: string; tokens: number; cost: number; count: number; errors: number }> = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = new Date(Date.now() - i * 24 * 60 * 60 * 1000);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+      daily.push({
+        day: key,
+        ...(dailyMap[key] || { tokens: 0, cost: 0, count: 0, errors: 0 }),
+      });
+    }
+
+    // Hourly array (0-23)
+    const hourly: Array<{ hour: number; tokens: number; cost: number; count: number }> = [];
+    for (let h = 0; h < 24; h++) {
+      hourly.push({
+        hour: h,
+        ...(hourlyMap[h] || { tokens: 0, cost: 0, count: 0 }),
+      });
+    }
+
+    // Model breakdown sorted by cost desc
+    const models = Object.entries(modelMap)
+      .map(([model, data]) => ({ model, ...data }))
+      .sort((a, b) => b.cost - a.cost);
+
+    // Category breakdown
+    const categories = Object.entries(categoryMap)
+      .map(([category, data]) => ({ category, ...data }))
+      .sort((a, b) => b.count - a.count);
+
+    // Totals
+    let totalTokens = 0;
+    let totalCost = 0;
+    let totalErrors = 0;
+    for (const d of daily) {
+      totalTokens += d.tokens;
+      totalCost += d.cost;
+      totalErrors += d.errors;
+    }
+
+    return {
+      daily,
+      hourly,
+      models,
+      categories,
+      totalActivities: activities.length,
+      totalTokens,
+      totalCost,
+      totalErrors,
+      days,
+    };
+  },
+});
+
 // Get activity stats for dashboard
 export const stats = query({
   args: {

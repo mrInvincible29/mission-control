@@ -163,6 +163,26 @@ export function CommandPalette() {
         action: () => navigateToTab("search"),
         shortcut: "3",
       },
+      {
+        id: "nav-agents",
+        label: "Go to Agent Sessions",
+        description: "Browse agent session history and timelines",
+        icon: <Zap className="h-4 w-4" />,
+        section: "Navigation",
+        keywords: ["agents", "sessions", "agent", "timeline", "history"],
+        action: () => navigateToTab("agents"),
+        shortcut: "4",
+      },
+      {
+        id: "nav-analytics",
+        label: "Go to Analytics",
+        description: "View token usage, costs, and trends",
+        icon: <Activity className="h-4 w-4" />,
+        section: "Navigation",
+        keywords: ["analytics", "usage", "tokens", "cost", "charts", "trends", "stats"],
+        action: () => navigateToTab("analytics"),
+        shortcut: "5",
+      },
       // Actions
       {
         id: "action-create-cron",

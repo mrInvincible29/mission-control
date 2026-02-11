@@ -17,7 +17,7 @@ const CommandPalette = dynamic(
   { ssr: false }
 );
 
-const VALID_TABS = ["activity", "calendar", "search", "agents"] as const;
+const VALID_TABS = ["activity", "calendar", "search", "agents", "analytics"] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
 class TabErrorBoundary extends Component<
@@ -74,6 +74,11 @@ const AgentSessions = dynamic(
   { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
 );
 
+const AnalyticsView = dynamic(
+  () => import("@/components/AnalyticsView").then((mod) => ({ default: mod.AnalyticsView })),
+  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+);
+
 function DashboardContent() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   const searchParams = useSearchParams();
@@ -97,6 +102,7 @@ function DashboardContent() {
       else if (e.key === "2") setActiveTab("calendar");
       else if (e.key === "3") setActiveTab("search");
       else if (e.key === "4") setActiveTab("agents");
+      else if (e.key === "5") setActiveTab("analytics");
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -116,7 +122,7 @@ function DashboardContent() {
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-      <TabsList className="grid w-full grid-cols-4 max-w-[380px] sm:max-w-2xl">
+      <TabsList className="grid w-full grid-cols-5 max-w-[420px] sm:max-w-2xl">
         <TabsTrigger value="activity">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">1</span>
           Activity
@@ -132,6 +138,10 @@ function DashboardContent() {
         <TabsTrigger value="agents">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">4</span>
           Agents
+        </TabsTrigger>
+        <TabsTrigger value="analytics">
+          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">5</span>
+          Analytics
         </TabsTrigger>
       </TabsList>
 
@@ -156,6 +166,12 @@ function DashboardContent() {
       <TabsContent value="agents" className="mt-6">
         <TabErrorBoundary fallbackLabel="Agents">
           <AgentSessions />
+        </TabErrorBoundary>
+      </TabsContent>
+
+      <TabsContent value="analytics" className="mt-6">
+        <TabErrorBoundary fallbackLabel="Analytics">
+          <AnalyticsView />
         </TabErrorBoundary>
       </TabsContent>
     </Tabs>
