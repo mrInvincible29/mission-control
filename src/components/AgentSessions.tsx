@@ -407,34 +407,31 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
       <div className="space-y-4">
         {/* Header Stats */}
         <div className="rounded-lg bg-muted/50 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="text-xs text-muted-foreground">Session ID</span>
-            <span className="text-xs font-mono">{detail.id}</span>
-          </div>
-          <div className="flex items-center justify-between">
+          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 items-center">
+            <span className="text-xs text-muted-foreground whitespace-nowrap">Session ID</span>
+            <span className="text-xs font-mono truncate text-right">{detail.id}</span>
+
             <span className="text-xs text-muted-foreground">Model</span>
-            <Badge
-              variant="outline"
-              className="text-[10px] px-1.5 py-0 bg-purple-500/20 text-purple-400 border-purple-500/30"
-            >
-              {detail.model}
-            </Badge>
-          </div>
-          <div className="flex items-center justify-between">
+            <div className="text-right">
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0 bg-purple-500/20 text-purple-400 border-purple-500/30"
+              >
+                {detail.model}
+              </Badge>
+            </div>
+
             <span className="text-xs text-muted-foreground">Messages</span>
-            <span className="text-xs">{detail.messageCount}</span>
-          </div>
-          <div className="flex items-center justify-between">
+            <span className="text-xs text-right">{detail.messageCount}</span>
+
             <span className="text-xs text-muted-foreground">Tool Calls</span>
-            <span className="text-xs">{detail.toolCallCount}</span>
-          </div>
-          <div className="flex items-center justify-between">
+            <span className="text-xs text-right">{detail.toolCallCount}</span>
+
             <span className="text-xs text-muted-foreground">Total Cost</span>
-            <span className="text-xs text-emerald-400">{formatCost(detail.totalCost)}</span>
-          </div>
-          <div className="flex items-center justify-between">
+            <span className="text-xs text-emerald-400 text-right">{formatCost(detail.totalCost)}</span>
+
             <span className="text-xs text-muted-foreground">Total Tokens</span>
-            <span className="text-xs text-blue-400">{formatTokens(detail.totalTokens)}</span>
+            <span className="text-xs text-blue-400 text-right">{formatTokens(detail.totalTokens)}</span>
           </div>
         </div>
 
