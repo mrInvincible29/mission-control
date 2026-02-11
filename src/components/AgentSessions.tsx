@@ -189,7 +189,7 @@ export function AgentSessions() {
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-200px)]">
       {/* Session List - hidden on mobile when detail is selected */}
-      <Card className={`border-border/60 bg-muted/30 shadow-sm flex flex-col ${selectedId ? "hidden lg:flex" : "flex"}`}>
+      <Card className={`border-border/60 bg-muted/30 shadow-sm flex flex-col min-h-0 ${selectedId ? "hidden lg:flex" : "flex"}`}>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-lg font-semibold">Sessions</CardTitle>
@@ -303,7 +303,7 @@ export function AgentSessions() {
       </Card>
 
       {/* Detail View - hidden on mobile when no selection */}
-      <Card className={`border-border/60 bg-muted/30 shadow-sm flex flex-col ${!selectedId ? "hidden lg:flex" : "flex"}`}>
+      <Card className={`border-border/60 bg-muted/30 shadow-sm flex flex-col min-h-0 ${!selectedId ? "hidden lg:flex" : "flex"}`}>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-lg font-semibold">Detail</CardTitle>
@@ -415,48 +415,46 @@ function SessionListItem({
 
 function SessionDetailView({ detail }: { detail: SessionDetail }) {
   return (
-    <ScrollArea className="h-full pr-4">
-      <div className="space-y-4 min-w-0 overflow-hidden">
+    <ScrollArea className="h-full pr-1 sm:pr-4">
+      <div className="space-y-4 min-w-0">
         {/* Header Stats */}
-        <div className="rounded-lg bg-muted/50 p-3 space-y-2 overflow-hidden">
-          <div className="space-y-1.5">
-            <div className="flex justify-between items-center gap-2">
-              <span className="text-xs text-muted-foreground shrink-0">Session ID</span>
-              <span className="text-xs font-mono truncate min-w-0">{detail.id}</span>
-            </div>
-            <div className="flex justify-between items-center gap-2">
-              <span className="text-xs text-muted-foreground shrink-0">Model</span>
-              <Badge
-                variant="outline"
-                className="text-[10px] px-1.5 py-0 bg-purple-500/20 text-purple-400 border-purple-500/30 truncate max-w-[60%]"
-              >
-                {detail.model}
-              </Badge>
-            </div>
-            <div className="flex justify-between items-center gap-2">
-              <span className="text-xs text-muted-foreground shrink-0">Messages</span>
-              <span className="text-xs">{detail.messageCount}</span>
-            </div>
-            <div className="flex justify-between items-center gap-2">
-              <span className="text-xs text-muted-foreground shrink-0">Tool Calls</span>
-              <span className="text-xs">{detail.toolCallCount}</span>
-            </div>
-            <div className="flex justify-between items-center gap-2">
-              <span className="text-xs text-muted-foreground shrink-0">Total Cost</span>
-              <span className="text-xs text-emerald-400">{formatCost(detail.totalCost)}</span>
-            </div>
-            <div className="flex justify-between items-center gap-2">
-              <span className="text-xs text-muted-foreground shrink-0">Total Tokens</span>
-              <span className="text-xs text-blue-400">{formatTokens(detail.totalTokens)}</span>
-            </div>
+        <div className="rounded-lg bg-muted/50 p-3 space-y-1.5 overflow-hidden">
+          <div className="flex items-start gap-2">
+            <span className="text-xs text-muted-foreground w-20 shrink-0">Session ID</span>
+            <span className="text-xs font-mono break-all min-w-0">{detail.id}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground w-20 shrink-0">Model</span>
+            <Badge
+              variant="outline"
+              className="text-[10px] px-1.5 py-0 bg-purple-500/20 text-purple-400 border-purple-500/30"
+            >
+              {detail.model}
+            </Badge>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground w-20 shrink-0">Messages</span>
+            <span className="text-xs">{detail.messageCount}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground w-20 shrink-0">Tool Calls</span>
+            <span className="text-xs">{detail.toolCallCount}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground w-20 shrink-0">Total Cost</span>
+            <span className="text-xs text-emerald-400">{formatCost(detail.totalCost)}</span>
+          </div>
+          <div className="flex items-center gap-2">
+            <span className="text-xs text-muted-foreground w-20 shrink-0">Total Tokens</span>
+            <span className="text-xs text-blue-400">{formatTokens(detail.totalTokens)}</span>
           </div>
         </div>
 
         {/* Initial Prompt */}
         {detail.prompt && (
-          <div className="rounded-lg border border-border/60 bg-card/50 p-3">
+          <div className="rounded-lg border border-border/60 bg-card/50 p-2 sm:p-3">
             <div className="text-xs font-medium text-muted-foreground mb-2">Initial Prompt</div>
-            <div className="text-sm text-foreground/90 whitespace-pre-wrap break-words overflow-hidden">
+            <div className="text-sm text-foreground/90 whitespace-pre-wrap break-words">
               {detail.prompt}
             </div>
           </div>
@@ -483,7 +481,7 @@ function TimelineMessage({ item }: { item: TimelineItem }) {
       : "border-border/60";
 
   return (
-    <div className={`rounded-lg border-2 ${borderColor} bg-card/50 p-3 space-y-2`}>
+    <div className={`rounded-lg border-2 ${borderColor} bg-card/50 p-2 sm:p-3 space-y-2 min-w-0`}>
       {/* Header */}
       <div className="flex items-center justify-between">
         <Badge
@@ -526,12 +524,12 @@ function TimelineMessage({ item }: { item: TimelineItem }) {
           {item.tools.map((tool, toolIdx) => (
             <div
               key={toolIdx}
-              className="rounded bg-cyan-500/10 border border-cyan-500/20 p-2"
+              className="rounded bg-cyan-500/10 border border-cyan-500/20 p-1.5 sm:p-2"
             >
               <div className="text-[10px] font-medium text-cyan-400 mb-1">
                 🔧 {tool.name}
               </div>
-              <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono">
+              <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono overflow-x-auto">
                 {tool.arguments}
               </pre>
             </div>
