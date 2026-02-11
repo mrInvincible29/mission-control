@@ -419,31 +419,36 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
       <div className="space-y-4 min-w-0 overflow-hidden">
         {/* Header Stats */}
         <div className="rounded-lg bg-muted/50 p-3 space-y-2 overflow-hidden">
-          <div className="grid grid-cols-[90px_1fr] gap-x-3 gap-y-1.5 items-center min-w-0">
-            <span className="text-xs text-muted-foreground whitespace-nowrap">Session ID</span>
-            <span className="text-xs font-mono truncate text-right min-w-0">{detail.id}</span>
-
-            <span className="text-xs text-muted-foreground">Model</span>
-            <div className="text-right">
+          <div className="space-y-1.5">
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-xs text-muted-foreground shrink-0">Session ID</span>
+              <span className="text-xs font-mono truncate min-w-0">{detail.id}</span>
+            </div>
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-xs text-muted-foreground shrink-0">Model</span>
               <Badge
                 variant="outline"
-                className="text-[10px] px-1.5 py-0 bg-purple-500/20 text-purple-400 border-purple-500/30"
+                className="text-[10px] px-1.5 py-0 bg-purple-500/20 text-purple-400 border-purple-500/30 truncate max-w-[60%]"
               >
                 {detail.model}
               </Badge>
             </div>
-
-            <span className="text-xs text-muted-foreground">Messages</span>
-            <span className="text-xs text-right">{detail.messageCount}</span>
-
-            <span className="text-xs text-muted-foreground">Tool Calls</span>
-            <span className="text-xs text-right">{detail.toolCallCount}</span>
-
-            <span className="text-xs text-muted-foreground">Total Cost</span>
-            <span className="text-xs text-emerald-400 text-right">{formatCost(detail.totalCost)}</span>
-
-            <span className="text-xs text-muted-foreground">Total Tokens</span>
-            <span className="text-xs text-blue-400 text-right">{formatTokens(detail.totalTokens)}</span>
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-xs text-muted-foreground shrink-0">Messages</span>
+              <span className="text-xs">{detail.messageCount}</span>
+            </div>
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-xs text-muted-foreground shrink-0">Tool Calls</span>
+              <span className="text-xs">{detail.toolCallCount}</span>
+            </div>
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-xs text-muted-foreground shrink-0">Total Cost</span>
+              <span className="text-xs text-emerald-400">{formatCost(detail.totalCost)}</span>
+            </div>
+            <div className="flex justify-between items-center gap-2">
+              <span className="text-xs text-muted-foreground shrink-0">Total Tokens</span>
+              <span className="text-xs text-blue-400">{formatTokens(detail.totalTokens)}</span>
+            </div>
           </div>
         </div>
 
@@ -451,7 +456,7 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
         {detail.prompt && (
           <div className="rounded-lg border border-border/60 bg-card/50 p-3">
             <div className="text-xs font-medium text-muted-foreground mb-2">Initial Prompt</div>
-            <div className="text-sm text-foreground/90 whitespace-pre-wrap break-words">
+            <div className="text-sm text-foreground/90 whitespace-pre-wrap break-words overflow-hidden">
               {detail.prompt}
             </div>
           </div>
