@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -86,35 +86,73 @@ export function AgentSessions() {
   const [lastFetch, setLastFetch] = useState<number>(0);
   const [page, setPage] = useState(0);
 
-  // Fetch sessions list
+  // Abort controllers to prevent request pileup
+  const sessionsAbortRef = useRef<AbortController | null>(null);
+  const detailAbortRef = useRef<AbortController | null>(null);
+  const sessionsEtagRef = useRef<string>("");
+
+  // Fetch sessions list (with AbortController + ETag)
   const fetchSessions = useCallback(async () => {
+    if (sessionsAbortRef.current) sessionsAbortRef.current.abort();
+    const controller = new AbortController();
+    sessionsAbortRef.current = controller;
+
     try {
-      const res = await fetch("/api/agents?action=list");
-      const data: SessionMeta[] = await res.json();
-      
-      // Only update if data actually changed (compare JSON stringified)
-      setSessions(prev => {
-        const prevJson = JSON.stringify(prev);
-        const newJson = JSON.stringify(data);
-        return prevJson === newJson ? prev : data;
+      const headers: HeadersInit = {};
+      if (sessionsEtagRef.current) {
+        headers["If-None-Match"] = sessionsEtagRef.current;
+      }
+
+      const res = await fetch("/api/agents?action=list&limit=50", {
+        signal: controller.signal,
+        headers,
       });
-      
+
+      if (res.status === 304) {
+        setLastFetch(Date.now());
+        return;
+      }
+
+      const etag = res.headers.get("etag");
+      if (etag) sessionsEtagRef.current = etag;
+
+      const data: SessionMeta[] = await res.json();
+
+      setSessions((prev) => {
+        if (prev.length !== data.length) return data;
+        for (let i = 0; i < data.length; i++) {
+          if (prev[i].id !== data[i].id || prev[i].modifiedAt !== data[i].modifiedAt) {
+            return data;
+          }
+        }
+        return prev;
+      });
+
       setLastFetch(Date.now());
-    } catch (err) {
+    } catch (err: any) {
+      if (err.name === "AbortError") return;
       console.error("Failed to fetch sessions:", err);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  // Fetch session detail
+  // Fetch session detail (with AbortController)
   const fetchDetail = useCallback(async (id: string, showLoading = true) => {
+    if (detailAbortRef.current) detailAbortRef.current.abort();
+    const controller = new AbortController();
+    detailAbortRef.current = controller;
+
     if (showLoading) setDetailLoading(true);
     try {
-      const res = await fetch(`/api/agents?action=detail&id=${encodeURIComponent(id)}`);
+      const res = await fetch(
+        `/api/agents?action=detail&id=${encodeURIComponent(id)}`,
+        { signal: controller.signal }
+      );
       const data: SessionDetail = await res.json();
       setDetail(data);
-    } catch (err) {
+    } catch (err: any) {
+      if (err.name === "AbortError") return;
       console.error("Failed to fetch session detail:", err);
       if (showLoading) setDetail(null);
     } finally {
@@ -127,18 +165,27 @@ export function AgentSessions() {
     fetchSessions();
   }, [fetchSessions]);
 
-  // Auto-refresh list AND detail view
+  // Auto-refresh with Page Visibility API (pause when tab hidden / phone locked)
   useEffect(() => {
     if (!autoRefresh) return;
 
-    const interval = setInterval(() => {
+    const poll = () => {
+      if (document.hidden) return;
       fetchSessions();
-      if (selectedId) {
-        fetchDetail(selectedId, false);
-      }
-    }, 10000); // 10 seconds
+      if (selectedId) fetchDetail(selectedId, false);
+    };
 
-    return () => clearInterval(interval);
+    const interval = setInterval(poll, 10000);
+
+    const onVisible = () => {
+      if (!document.hidden) poll();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+
+    return () => {
+      clearInterval(interval);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
   }, [autoRefresh, fetchSessions, fetchDetail, selectedId]);
 
   // Load detail when selection changes

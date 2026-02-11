@@ -7,6 +7,18 @@ const SESSIONS_DIR = join(
   ".openclaw/agents/main/sessions"
 );
 
+// --- In-memory cache ---
+interface CachedSession {
+  meta: SessionMeta;
+  mtimeMs: number;
+  size: number;
+}
+
+const sessionCache = new Map<string, CachedSession>();
+let cachedSortedList: SessionMeta[] | null = null;
+let cacheVersion = 0;
+let listETag = "";
+
 interface JsonlEvent {
   type: string;
   id?: string;
@@ -80,7 +92,7 @@ function parseJsonl(filePath: string): JsonlEvent[] {
   }
 }
 
-function getSessionMeta(events: JsonlEvent[]): SessionMeta {
+function getSessionMeta(events: JsonlEvent[], promptLimit = 2000): SessionMeta {
   const session = events.find((e) => e.type === "session");
   const modelChange = events.findLast((e) => e.type === "model_change");
   const messages = events.filter((e) => e.type === "message");
@@ -137,7 +149,7 @@ function getSessionMeta(events: JsonlEvent[]): SessionMeta {
     provider: modelChange?.provider || providerFromMessages,
     messageCount: messages.length,
     toolCallCount: toolCalls.length,
-    prompt: prompt.slice(0, 2000),
+    prompt: prompt.slice(0, promptLimit),
     totalCost: Math.round(totalCost * 1000000) / 1000000,
     totalTokens,
     lastActivity: lastMsg?.timestamp,
@@ -206,36 +218,79 @@ function getSessionDetail(events: JsonlEvent[]): SessionDetail {
   return { ...meta, timeline };
 }
 
-function listSessions(): SessionMeta[] {
+function listSessionsCached(limit: number): { sessions: SessionMeta[]; etag: string } {
   try {
     const files = readdirSync(SESSIONS_DIR).filter((f) =>
       f.endsWith(".jsonl")
     );
-    const sessions: SessionMeta[] = [];
+    const currentFiles = new Set(files);
+    let changed = false;
 
-    for (const file of files) {
-      const filePath = join(SESSIONS_DIR, file);
-      const stat = statSync(filePath);
-      const events = parseJsonl(filePath);
-      if (events.length === 0) continue;
-
-      const meta = getSessionMeta(events);
-      sessions.push({
-        ...meta,
-        file,
-        fileSize: stat.size,
-        modifiedAt: stat.mtime.toISOString(),
-      });
+    // Remove cache entries for deleted files
+    for (const key of sessionCache.keys()) {
+      if (!currentFiles.has(key)) {
+        sessionCache.delete(key);
+        changed = true;
+      }
     }
 
-    // Sort by modification time, newest first
-    sessions.sort(
-      (a, b) =>
-        new Date(b.modifiedAt!).getTime() - new Date(a.modifiedAt!).getTime()
-    );
-    return sessions;
+    // Check each file — only re-parse if mtime/size changed
+    for (const file of files) {
+      const filePath = join(SESSIONS_DIR, file);
+      let stat;
+      try {
+        stat = statSync(filePath);
+      } catch {
+        continue;
+      }
+
+      const cached = sessionCache.get(file);
+      if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) {
+        continue; // cache hit
+      }
+
+      // Cache miss — parse this file
+      const events = parseJsonl(filePath);
+      if (events.length === 0) {
+        if (cached) {
+          sessionCache.delete(file);
+          changed = true;
+        }
+        continue;
+      }
+
+      const meta = getSessionMeta(events, 200);
+      sessionCache.set(file, {
+        meta: {
+          ...meta,
+          file,
+          fileSize: stat.size,
+          modifiedAt: stat.mtime.toISOString(),
+        },
+        mtimeMs: stat.mtimeMs,
+        size: stat.size,
+      });
+      changed = true;
+    }
+
+    // Rebuild sorted list only when cache changed
+    if (changed || !cachedSortedList) {
+      const all = Array.from(sessionCache.values()).map((c) => c.meta);
+      all.sort(
+        (a, b) =>
+          new Date(b.modifiedAt!).getTime() - new Date(a.modifiedAt!).getTime()
+      );
+      cachedSortedList = all;
+      cacheVersion++;
+      listETag = `W/"v${cacheVersion}-${all.length}"`;
+    }
+
+    return {
+      sessions: cachedSortedList.slice(0, limit),
+      etag: listETag,
+    };
   } catch (e: any) {
-    return [];
+    return { sessions: [], etag: "" };
   }
 }
 
@@ -256,8 +311,28 @@ export async function GET(request: NextRequest) {
   const id = searchParams.get("id");
 
   if (action === "list") {
-    const sessions = listSessions();
-    return NextResponse.json(sessions);
+    const limit = Math.min(
+      Math.max(parseInt(searchParams.get("limit") || "50", 10) || 50, 1),
+      500
+    );
+
+    const { sessions, etag } = listSessionsCached(limit);
+
+    // ETag / 304 support
+    const ifNoneMatch = request.headers.get("if-none-match");
+    if (etag && ifNoneMatch === etag) {
+      return new NextResponse(null, {
+        status: 304,
+        headers: { ETag: etag },
+      });
+    }
+
+    return NextResponse.json(sessions, {
+      headers: {
+        ETag: etag,
+        "Cache-Control": "no-cache",
+      },
+    });
   }
 
   if (action === "detail" && id) {
