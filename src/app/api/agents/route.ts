@@ -90,10 +90,10 @@ function getSessionMeta(events: JsonlEvent[]): SessionMeta {
   let providerFromMessages = "unknown";
   if (!modelChange) {
     for (const msg of messages) {
-      const m = msg.message || msg;
-      if (m.role === "assistant" && m.model && m.model !== "delivery-mirror") {
-        modelFromMessages = m.model;
-        providerFromMessages = m.provider || "unknown";
+      const m = (msg as any).message || msg;
+      if ((m as any).role === "assistant" && (m as any).model && (m as any).model !== "delivery-mirror") {
+        modelFromMessages = (m as any).model;
+        providerFromMessages = (m as any).provider || "unknown";
         break;
       }
     }
