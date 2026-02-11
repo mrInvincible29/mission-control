@@ -404,10 +404,10 @@ function SessionListItem({
 function SessionDetailView({ detail }: { detail: SessionDetail }) {
   return (
     <ScrollArea className="h-full pr-4">
-      <div className="space-y-4">
+      <div className="space-y-4 min-w-0 overflow-hidden">
         {/* Header Stats */}
-        <div className="rounded-lg bg-muted/50 p-3 space-y-2">
-          <div className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 items-center">
+        <div className="rounded-lg bg-muted/50 p-3 space-y-2 overflow-hidden">
+          <div className="grid grid-cols-[80px_1fr] gap-x-3 gap-y-1.5 items-center min-w-0">
             <span className="text-xs text-muted-foreground whitespace-nowrap">Session ID</span>
             <span className="text-xs font-mono truncate text-right">{detail.id}</span>
 
