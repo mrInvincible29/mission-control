@@ -239,6 +239,7 @@ export function ActivityFeed() {
             <button
               onClick={() => setSearchText("")}
               className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
             >
               <X className="h-3.5 w-3.5" />
             </button>
@@ -309,12 +310,21 @@ function ActivityItem({ activity }: { activity: Activity }) {
 
   return (
     <div
+      role="button"
+      tabIndex={0}
       className={`p-2.5 rounded-lg border transition-colors cursor-pointer ${
         activity.status === "error"
           ? "border-red-500/30 bg-red-500/5"
           : "border-border/50 bg-card/50 hover:bg-card/80"
-      }`}
+      } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
       onClick={() => setExpanded(e => !e)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          setExpanded(prev => !prev);
+        }
+      }}
+      aria-expanded={expanded}
     >
       <div className="flex items-start gap-2">
         <span className="text-base mt-0.5">{icon}</span>
