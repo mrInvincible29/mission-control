@@ -108,17 +108,17 @@ export function AgentSessions() {
   }, []);
 
   // Fetch session detail
-  const fetchDetail = useCallback(async (id: string) => {
-    setDetailLoading(true);
+  const fetchDetail = useCallback(async (id: string, showLoading = true) => {
+    if (showLoading) setDetailLoading(true);
     try {
       const res = await fetch(`/api/agents?action=detail&id=${encodeURIComponent(id)}`);
       const data: SessionDetail = await res.json();
       setDetail(data);
     } catch (err) {
       console.error("Failed to fetch session detail:", err);
-      setDetail(null);
+      if (showLoading) setDetail(null);
     } finally {
-      setDetailLoading(false);
+      if (showLoading) setDetailLoading(false);
     }
   }, []);
 
@@ -127,16 +127,19 @@ export function AgentSessions() {
     fetchSessions();
   }, [fetchSessions]);
 
-  // Auto-refresh list only (NOT detail view)
+  // Auto-refresh list AND detail view
   useEffect(() => {
     if (!autoRefresh) return;
 
     const interval = setInterval(() => {
       fetchSessions();
+      if (selectedId) {
+        fetchDetail(selectedId, false);
+      }
     }, 10000); // 10 seconds
 
     return () => clearInterval(interval);
-  }, [autoRefresh, fetchSessions]);
+  }, [autoRefresh, fetchSessions, fetchDetail, selectedId]);
 
   // Load detail when selection changes
   useEffect(() => {
