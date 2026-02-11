@@ -188,8 +188,8 @@ export function AgentSessions() {
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-200px)]">
-      {/* Session List */}
-      <Card className="border-border/60 bg-muted/30 shadow-sm flex flex-col">
+      {/* Session List - hidden on mobile when detail is selected */}
+      <Card className={`border-border/60 bg-muted/30 shadow-sm flex flex-col ${selectedId ? "hidden lg:flex" : "flex"}`}>
         <CardHeader className="pb-3">
           <div className="flex items-center justify-between">
             <CardTitle className="text-lg font-semibold">Sessions</CardTitle>
@@ -302,10 +302,22 @@ export function AgentSessions() {
         </CardContent>
       </Card>
 
-      {/* Detail View */}
-      <Card className="border-border/60 bg-muted/30 shadow-sm flex flex-col">
+      {/* Detail View - hidden on mobile when no selection */}
+      <Card className={`border-border/60 bg-muted/30 shadow-sm flex flex-col ${!selectedId ? "hidden lg:flex" : "flex"}`}>
         <CardHeader className="pb-3">
-          <CardTitle className="text-lg font-semibold">Detail</CardTitle>
+          <div className="flex items-center justify-between">
+            <CardTitle className="text-lg font-semibold">Detail</CardTitle>
+            {selectedId && (
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs h-7 px-2 lg:hidden"
+                onClick={() => setSelectedId(null)}
+              >
+                ← Back
+              </Button>
+            )}
+          </div>
         </CardHeader>
 
         <CardContent className="flex-1 overflow-hidden">
@@ -407,9 +419,9 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
       <div className="space-y-4 min-w-0 overflow-hidden">
         {/* Header Stats */}
         <div className="rounded-lg bg-muted/50 p-3 space-y-2 overflow-hidden">
-          <div className="grid grid-cols-[80px_1fr] gap-x-3 gap-y-1.5 items-center min-w-0">
+          <div className="grid grid-cols-[90px_1fr] gap-x-3 gap-y-1.5 items-center min-w-0">
             <span className="text-xs text-muted-foreground whitespace-nowrap">Session ID</span>
-            <span className="text-xs font-mono truncate text-right">{detail.id}</span>
+            <span className="text-xs font-mono truncate text-right min-w-0">{detail.id}</span>
 
             <span className="text-xs text-muted-foreground">Model</span>
             <div className="text-right">
