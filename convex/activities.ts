@@ -173,6 +173,21 @@ export const cleanup = mutation({
   },
 });
 
+// Blended $/token rate (avg of input+output) by model family
+const MODEL_COST_PER_TOKEN: Record<string, number> = {
+  "haiku": 2.4 / 1_000_000,    // ~$0.80 in + $4 out, blended
+  "sonnet": 9 / 1_000_000,     // ~$3 in + $15 out, blended
+  "opus": 45 / 1_000_000,      // ~$15 in + $75 out, blended
+};
+
+function estimateCost(model: string, tokens: number): number {
+  const lower = model.toLowerCase();
+  for (const [key, rate] of Object.entries(MODEL_COST_PER_TOKEN)) {
+    if (lower.includes(key)) return tokens * rate;
+  }
+  return tokens * (9 / 1_000_000); // default to sonnet-tier
+}
+
 // Analytics: aggregate activities by day and model for charts
 export const analytics = query({
   args: {
@@ -204,7 +219,7 @@ export const analytics = query({
       const hour = date.getHours();
       const model = a.metadata?.model || "unknown";
       const tokens = a.metadata?.tokens || 0;
-      const cost = a.metadata?.cost || 0;
+      const cost = a.metadata?.cost || (tokens > 0 ? estimateCost(model, tokens) : 0);
       const cat = a.category ?? "system";
 
       // Daily

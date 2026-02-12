@@ -83,7 +83,7 @@ All endpoints require basic auth (via Traefik).
 
 ## When Modifying
 
-- Run `npx convex typecheck` after changing any `convex/*.ts` file.
-- Run `npm run build` after changing frontend code — this builds, copies static assets to `.next/standalone/`, and copies `public/`. Then restart the server.
+- **After changing `convex/*.ts` files**: Run `npx convex deploy -y` to push functions to production. Without this, new/modified queries will 404 at runtime. Run `npx convex typecheck` to verify types.
+- **After changing frontend code**: Run `npx convex deploy --cmd 'npm run build' -y` (deploys Convex + builds frontend in one step), then restart the server with `kill $(ss -tlnp | grep 39151 | grep -oP 'pid=\K[0-9]+')` — systemd (`mission-control.service`, `Restart=always`) auto-restarts it within 5s. **The server must be restarted after every build** — the standalone server caches its file manifest at startup and won't serve new chunks without a restart.
 - Convex schema changes require `npx convex dev` to push — schema is the source of truth, not migrations.
 - shadcn/ui components live in `src/components/ui/`. Add new ones with `npx shadcn@latest add <component>`.

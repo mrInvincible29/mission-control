@@ -78,28 +78,33 @@ function BarChart({
   height?: number;
 }) {
   const maxVal = Math.max(...data.map((d) => d[valueKey] as number), 1);
-  const barWidth = Math.max(4, Math.min(24, (600 - data.length * 2) / data.length));
-  const chartWidth = data.length * (barWidth + 2) + 20;
+  // Use a wider viewBox so SVG text doesn't scale up when stretched to fill container
+  const vbWidth = 700;
+  const barGap = 4;
+  const padding = 30;
+  const barWidth = Math.max(8, (vbWidth - padding * 2 - data.length * barGap) / data.length);
+  const totalBarsWidth = data.length * (barWidth + barGap);
+  const chartWidth = totalBarsWidth + padding * 2;
 
   return (
     <TooltipProvider>
       <div className="w-full overflow-x-auto">
         <svg
-          viewBox={`0 0 ${chartWidth} ${height + 20}`}
+          viewBox={`0 0 ${chartWidth} ${height + 24}`}
           className="w-full"
-          style={{ minWidth: `${Math.min(chartWidth, 400)}px` }}
+          preserveAspectRatio="xMidYMid meet"
         >
           {/* Grid lines */}
           {[0.25, 0.5, 0.75, 1].map((frac) => (
             <line
               key={frac}
-              x1={10}
+              x1={padding}
               y1={height - height * frac}
-              x2={chartWidth - 10}
+              x2={chartWidth - padding}
               y2={height - height * frac}
               stroke="currentColor"
               strokeOpacity={0.06}
-              strokeWidth={1}
+              strokeWidth={0.5}
             />
           ))}
 
@@ -107,7 +112,7 @@ function BarChart({
           {data.map((d, i) => {
             const val = d[valueKey] as number;
             const barHeight = (val / maxVal) * (height - 10);
-            const x = 10 + i * (barWidth + 2);
+            const x = padding + i * (barWidth + barGap);
 
             return (
               <Tooltip key={i}>
@@ -142,24 +147,25 @@ function BarChart({
             );
           })}
 
-          {/* X-axis labels (show subset) */}
+          {/* X-axis labels (show subset to avoid overlap) */}
           {data.map((d, i) => {
+            const maxLabels = Math.max(5, Math.floor(chartWidth / 80));
+            const step = Math.ceil(data.length / maxLabels);
             const showLabel =
-              data.length <= 10 ||
               i === 0 ||
               i === data.length - 1 ||
-              i % Math.ceil(data.length / 6) === 0;
+              i % step === 0;
             if (!showLabel) return null;
-            const x = 10 + i * (barWidth + 2) + barWidth / 2;
+            const x = padding + i * (barWidth + barGap) + barWidth / 2;
             return (
               <text
                 key={`label-${i}`}
                 x={x}
-                y={height + 14}
+                y={height + 16}
                 textAnchor="middle"
                 fill="currentColor"
                 opacity={0.4}
-                fontSize={9}
+                fontSize={10}
                 fontFamily="monospace"
               >
                 {formatLabel(d[labelKey])}
