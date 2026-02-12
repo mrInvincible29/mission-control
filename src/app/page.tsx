@@ -17,7 +17,7 @@ const CommandPalette = dynamic(
   { ssr: false }
 );
 
-const VALID_TABS = ["activity", "calendar", "search", "agents", "analytics"] as const;
+const VALID_TABS = ["activity", "calendar", "search", "agents", "analytics", "health"] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
 class TabErrorBoundary extends Component<
@@ -79,6 +79,11 @@ const AnalyticsView = dynamic(
   { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
 );
 
+const SystemHealth = dynamic(
+  () => import("@/components/SystemHealth").then((mod) => ({ default: mod.SystemHealth })),
+  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+);
+
 function DashboardContent() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   const searchParams = useSearchParams();
@@ -103,6 +108,7 @@ function DashboardContent() {
       else if (e.key === "3") setActiveTab("search");
       else if (e.key === "4") setActiveTab("agents");
       else if (e.key === "5") setActiveTab("analytics");
+      else if (e.key === "6") setActiveTab("health");
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -122,7 +128,7 @@ function DashboardContent() {
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-      <TabsList className="grid w-full grid-cols-5 max-w-[420px] sm:max-w-2xl">
+      <TabsList className="grid w-full grid-cols-6 max-w-[500px] sm:max-w-3xl">
         <TabsTrigger value="activity">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">1</span>
           Activity
@@ -142,6 +148,10 @@ function DashboardContent() {
         <TabsTrigger value="analytics">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">5</span>
           Analytics
+        </TabsTrigger>
+        <TabsTrigger value="health">
+          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">6</span>
+          Health
         </TabsTrigger>
       </TabsList>
 
@@ -172,6 +182,12 @@ function DashboardContent() {
       <TabsContent value="analytics" className="mt-6">
         <TabErrorBoundary fallbackLabel="Analytics">
           <AnalyticsView />
+        </TabErrorBoundary>
+      </TabsContent>
+
+      <TabsContent value="health" className="mt-6">
+        <TabErrorBoundary fallbackLabel="System Health">
+          <SystemHealth />
         </TabErrorBoundary>
       </TabsContent>
     </Tabs>

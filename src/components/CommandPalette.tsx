@@ -183,6 +183,16 @@ export function CommandPalette() {
         action: () => navigateToTab("analytics"),
         shortcut: "5",
       },
+      {
+        id: "nav-health",
+        label: "Go to System Health",
+        description: "Monitor CPU, memory, disk, Docker, and services",
+        icon: <Monitor className="h-4 w-4" />,
+        section: "Navigation",
+        keywords: ["health", "system", "cpu", "memory", "disk", "docker", "services", "monitor", "server"],
+        action: () => navigateToTab("health"),
+        shortcut: "6",
+      },
       // Actions
       {
         id: "action-create-cron",
