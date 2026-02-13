@@ -8,9 +8,9 @@ test("homepage loads with 200 status", async ({ page }) => {
   await expect(page.locator("h1")).toContainText("Mission Control");
 });
 
-test("all 6 tabs are visible", async ({ page }) => {
+test("all 7 tabs are visible", async ({ page }) => {
   await page.goto("/");
-  for (const tab of ["Activity", "Calendar", "Search", "Agents", "Analytics", "Health"]) {
+  for (const tab of ["Activity", "Calendar", "Search", "Agents", "Analytics", "Health", "Runs"]) {
     await expect(page.getByRole("tab", { name: new RegExp(tab) })).toBeVisible();
   }
 });
@@ -252,4 +252,130 @@ test("command palette shows Health navigation item", async ({ page }) => {
   // Type "health"
   await page.fill('input[placeholder="Type a command or search..."]', "health");
   await expect(page.getByText("Go to System Health")).toBeVisible();
+});
+
+// === NEW FEATURE TESTS: Cron Run History Tab ===
+
+test("Cron Runs tab loads via URL", async ({ page }) => {
+  await page.goto("/?tab=cron-runs");
+  const runsTab = page.getByRole("tab", { name: /Runs/ });
+  await expect(runsTab).toHaveAttribute("data-state", "active");
+  const tabContent = page.getByRole("tabpanel");
+  await expect(tabContent).toBeVisible();
+});
+
+test("Cron Runs tab shows header and stats", async ({ page }) => {
+  await page.goto("/?tab=cron-runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Stats banner should show Total Runs
+  await expect(page.getByText("Total Runs")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Succeeded")).toBeVisible({ timeout: 10000 });
+});
+
+test("Cron Runs tab shows job list", async ({ page }) => {
+  await page.goto("/?tab=cron-runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Should show at least one job name (e.g. Nightly Build)
+  await expect(page.getByText("Nightly Build").first()).toBeVisible({ timeout: 10000 });
+});
+
+test("Cron Runs tab expand job shows run list", async ({ page }) => {
+  await page.goto("/?tab=cron-runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Click on a job to expand it
+  const jobButton = page.getByText("Nightly Build").first();
+  await expect(jobButton).toBeVisible({ timeout: 10000 });
+  await jobButton.click();
+  // Expanded view should show a run timestamp or status icon
+  await expect(page.locator('svg.text-emerald-500, svg.text-red-500').first()).toBeVisible({ timeout: 5000 });
+});
+
+test("Cron Runs tab status filter works", async ({ page }) => {
+  await page.goto("/?tab=cron-runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Click "Success" filter — use exact match to avoid matching timeline entries
+  const successBtn = page.getByRole("button", { name: "Success", exact: true });
+  await expect(successBtn).toBeVisible({ timeout: 5000 });
+  await successBtn.click();
+  // Button should be highlighted (secondary variant)
+  await expect(successBtn).toBeVisible();
+  // Click "All" to reset
+  await page.getByRole("button", { name: "All", exact: true }).click();
+});
+
+test("Cron Runs tab sort buttons work", async ({ page }) => {
+  await page.goto("/?tab=cron-runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Click "Name" sort — use exact match to avoid matching timeline entries
+  const nameBtn = page.getByRole("button", { name: "Name", exact: true });
+  await expect(nameBtn).toBeVisible({ timeout: 5000 });
+  await nameBtn.click();
+  // Click back to "Recent"
+  await page.getByRole("button", { name: "Recent", exact: true }).click();
+});
+
+test("Cron Runs tab shows timeline section", async ({ page }) => {
+  await page.goto("/?tab=cron-runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Timeline heading should be visible
+  await expect(page.getByText("Timeline")).toBeVisible({ timeout: 10000 });
+});
+
+test("Cron Runs keyboard shortcut 7 works", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.keyboard.press("7");
+  await expect(page.getByRole("tab", { name: /Runs/ })).toHaveAttribute("data-state", "active");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+});
+
+test("Cron Runs API returns valid JSON", async ({ request }) => {
+  const response = await request.get("/api/cron-runs");
+  expect(response.status()).toBe(200);
+  const data = await response.json();
+  expect(data).toHaveProperty("runs");
+  expect(data).toHaveProperty("jobs");
+  expect(data).toHaveProperty("totalRuns");
+  expect(Array.isArray(data.runs)).toBe(true);
+  expect(Array.isArray(data.jobs)).toBe(true);
+  expect(data.totalRuns).toBeGreaterThan(0);
+});
+
+test("Cron Runs API supports jobId filter", async ({ request }) => {
+  // First get the list to find a job ID
+  const listResponse = await request.get("/api/cron-runs?limit=1");
+  const listData = await listResponse.json();
+  if (listData.runs.length > 0) {
+    const jobId = listData.runs[0].jobId;
+    const filteredResponse = await request.get(`/api/cron-runs?jobId=${jobId}`);
+    const filteredData = await filteredResponse.json();
+    expect(filteredData.runs.every((r: any) => r.jobId === jobId)).toBe(true);
+  }
+});
+
+test("Cron Runs tab refresh button exists", async ({ page }) => {
+  await page.goto("/?tab=cron-runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  const refreshBtn = page.getByRole("button", { name: "Refresh", exact: true });
+  await expect(refreshBtn).toBeVisible({ timeout: 5000 });
+});
+
+test("command palette shows Cron Run History navigation item", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => {
+    const event = new KeyboardEvent("keydown", {
+      key: "k",
+      code: "KeyK",
+      metaKey: true,
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+  });
+  await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
+  await page.fill('input[placeholder="Type a command or search..."]', "cron runs");
+  await expect(page.getByText("Go to Cron Run History")).toBeVisible();
 });
