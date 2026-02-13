@@ -17,7 +17,7 @@ const CommandPalette = dynamic(
   { ssr: false }
 );
 
-const VALID_TABS = ["activity", "calendar", "search", "agents", "analytics", "health"] as const;
+const VALID_TABS = ["activity", "calendar", "search", "agents", "analytics", "health", "cron-runs"] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
 class TabErrorBoundary extends Component<
@@ -84,6 +84,11 @@ const SystemHealth = dynamic(
   { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
 );
 
+const CronHistory = dynamic(
+  () => import("@/components/CronHistory").then((mod) => ({ default: mod.CronHistory })),
+  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+);
+
 function DashboardContent() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   const searchParams = useSearchParams();
@@ -109,6 +114,7 @@ function DashboardContent() {
       else if (e.key === "4") setActiveTab("agents");
       else if (e.key === "5") setActiveTab("analytics");
       else if (e.key === "6") setActiveTab("health");
+      else if (e.key === "7") setActiveTab("cron-runs");
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -128,7 +134,7 @@ function DashboardContent() {
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-      <TabsList className="grid w-full grid-cols-6 max-w-[500px] sm:max-w-3xl">
+      <TabsList className="grid w-full grid-cols-7 max-w-[580px] sm:max-w-4xl">
         <TabsTrigger value="activity">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">1</span>
           Activity
@@ -152,6 +158,10 @@ function DashboardContent() {
         <TabsTrigger value="health">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">6</span>
           Health
+        </TabsTrigger>
+        <TabsTrigger value="cron-runs">
+          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">7</span>
+          Runs
         </TabsTrigger>
       </TabsList>
 
@@ -188,6 +198,12 @@ function DashboardContent() {
       <TabsContent value="health" className="mt-6">
         <TabErrorBoundary fallbackLabel="System Health">
           <SystemHealth />
+        </TabErrorBoundary>
+      </TabsContent>
+
+      <TabsContent value="cron-runs" className="mt-6">
+        <TabErrorBoundary fallbackLabel="Cron Runs">
+          <CronHistory />
         </TabErrorBoundary>
       </TabsContent>
     </Tabs>

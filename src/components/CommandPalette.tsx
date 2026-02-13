@@ -193,6 +193,16 @@ export function CommandPalette() {
         action: () => navigateToTab("health"),
         shortcut: "6",
       },
+      {
+        id: "nav-cron-runs",
+        label: "Go to Cron Run History",
+        description: "View execution history and logs for all cron jobs",
+        icon: <Clock className="h-4 w-4" />,
+        section: "Navigation",
+        keywords: ["cron", "runs", "history", "execution", "logs", "jobs", "timeline"],
+        action: () => navigateToTab("cron-runs"),
+        shortcut: "7",
+      },
       // Actions
       {
         id: "action-create-cron",
