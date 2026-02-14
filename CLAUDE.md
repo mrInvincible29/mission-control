@@ -7,7 +7,7 @@ Personal command center dashboard for monitoring AI agent activity, scheduled ta
 - **Frontend**: Next.js 16 (App Router, `output: "standalone"`), React 19, Tailwind CSS v4, shadcn/ui (Radix primitives)
 - **Backend**: Convex (real-time serverless DB — queries, mutations, full-text search)
 - **Deployment**: Standalone `server.js` on `172.29.0.1:39151`, behind Traefik at `mission-control.quota.wtf` with basic auth
-- **Testing**: Playwright (51 smoke tests against `http://localhost:39151`)
+- **Testing**: Playwright (67 smoke tests against `http://localhost:39151`)
 - **Icons**: lucide-react
 
 ## Architecture
@@ -20,10 +20,11 @@ convex/           # Backend: schema, queries, mutations
   cronJobs.ts     # Cron job upsert/list/remove
 src/
   app/
-    page.tsx      # Main dashboard — 7 tabs (Activity, Calendar, Search, Agents, Analytics, Health, Runs)
+    page.tsx      # Main dashboard — 8 tabs (Activity, Calendar, Search, Agents, Analytics, Health, Runs, Logs)
     api/activity/ # POST/GET activities (basic auth)
     api/health/   # GET system metrics (CPU, memory, disk, Docker, services, network, processes)
     api/cron-runs/# GET cron job execution history from ~/.openclaw/cron/runs/*.jsonl
+    api/logs/     # GET service logs from journalctl + OpenClaw log files
     api/index/    # File indexing + cron sync endpoint (basic auth)
   components/
     ActivityFeed.tsx   # Paginated activity list with category/date filters
@@ -31,6 +32,7 @@ src/
     CalendarView.tsx   # Google Calendar-style hourly grid with day/week toggle
     CronHistory.tsx    # Cron run history with job stats, timeline, expandable runs
     GlobalSearch.tsx   # Full-text search + file browser
+    LogViewer.tsx      # Live service log viewer with source switching and filtering
     SystemHealth.tsx   # Real-time server monitoring (CPU, memory, disk, Docker, services)
     SetupGuide.tsx     # Convex setup instructions (shown if unconfigured)
     providers/         # ConvexClientProvider
@@ -83,7 +85,7 @@ npm run build        # Production build (standalone) — auto-copies static asse
 npm run start        # Start production server
 npx convex dev       # Start Convex dev backend
 npx convex typecheck # Typecheck Convex functions (tsc --noEmit)
-npx playwright test  # Run all 51 smoke tests against localhost:39151
+npx playwright test  # Run all 67 smoke tests against localhost:39151
 ```
 
 ## Environment
@@ -102,10 +104,11 @@ Basic auth credentials for API endpoints are configured in Traefik (see `~/fast/
 - **GET /api/activity** — Fetch latest 100 activities
 - **GET /api/health** — System metrics (CPU, memory, disk, Docker, services, network, top processes)
 - **GET /api/cron-runs** — Cron job execution history. Params: `limit`, `jobId`, `status`
+- **GET /api/logs** — Service log viewer. No params returns available sources. Params: `source` (required for entries), `lines` (default 100, max 500)
 - **POST /api/index** — Trigger file indexing + cron sync from OpenClaw config
 - **GET /api/index** — List all indexed files
 
-All endpoints require basic auth (via Traefik). Health and cron-runs APIs include `Cache-Control: no-cache` headers.
+All endpoints require basic auth (via Traefik). Health, cron-runs, and logs APIs include `Cache-Control: no-cache` headers.
 
 ## Systemd Services
 
