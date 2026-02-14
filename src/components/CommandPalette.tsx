@@ -203,6 +203,16 @@ export function CommandPalette() {
         action: () => navigateToTab("cron-runs"),
         shortcut: "7",
       },
+      {
+        id: "nav-logs",
+        label: "Go to Log Viewer",
+        description: "Tail live service logs from systemd and OpenClaw",
+        icon: <FileText className="h-4 w-4" />,
+        section: "Navigation",
+        keywords: ["logs", "tail", "systemd", "journal", "service", "terminal", "output", "viewer"],
+        action: () => navigateToTab("logs"),
+        shortcut: "8",
+      },
       // Actions
       {
         id: "action-create-cron",

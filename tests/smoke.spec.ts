@@ -8,9 +8,9 @@ test("homepage loads with 200 status", async ({ page }) => {
   await expect(page.locator("h1")).toContainText("Mission Control");
 });
 
-test("all 7 tabs are visible", async ({ page }) => {
+test("all 8 tabs are visible", async ({ page }) => {
   await page.goto("/");
-  for (const tab of ["Activity", "Calendar", "Search", "Agents", "Analytics", "Health", "Runs"]) {
+  for (const tab of ["Activity", "Calendar", "Search", "Agents", "Analytics", "Health", "Runs", "Logs"]) {
     await expect(page.getByRole("tab", { name: new RegExp(tab) })).toBeVisible();
   }
 });
@@ -542,4 +542,176 @@ test("Health tab visibility change triggers refresh", async ({ page }) => {
   });
   // Tab should still be functional
   await expect(page.getByText("System Health")).toBeVisible();
+});
+
+// === NEW FEATURE TESTS: Log Viewer Tab ===
+
+test("Logs tab loads via URL", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  const logsTab = page.getByRole("tab", { name: /Logs/ });
+  await expect(logsTab).toHaveAttribute("data-state", "active");
+  const tabContent = page.getByRole("tabpanel");
+  await expect(tabContent).toBeVisible();
+});
+
+test("Logs tab shows Log Viewer header", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+});
+
+test("Logs tab shows source selector buttons", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // Should show Mission Control source button
+  await expect(page.getByRole("button", { name: /Mission Control/ })).toBeVisible({ timeout: 10000 });
+});
+
+test("Logs tab shows log entries from default source", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // Wait for logs to load — the log container should have entries with INF/ERR/WRN labels
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+});
+
+test("Logs tab switching source changes log content", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // Wait for initial load
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Switch to Docker source
+  const dockerBtn = page.getByRole("button", { name: /Docker/ });
+  await expect(dockerBtn).toBeVisible({ timeout: 10000 });
+  await dockerBtn.click();
+  // Badge should update to show Docker
+  await expect(page.locator('[class*="font-mono"]').filter({ hasText: "Docker" }).first()).toBeVisible({ timeout: 10000 });
+});
+
+test("Logs tab Live/Paused toggle works", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // Live button should be visible by default
+  const liveBtn = page.getByRole("button", { name: /Live/ });
+  await expect(liveBtn).toBeVisible({ timeout: 10000 });
+  // Click to pause
+  await liveBtn.click();
+  await expect(page.getByRole("button", { name: /Paused/ })).toBeVisible();
+  // Click to resume
+  await page.getByRole("button", { name: /Paused/ }).click();
+  await expect(page.getByRole("button", { name: /Live/ })).toBeVisible();
+});
+
+test("Logs tab filter text input works", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // Type in the filter input
+  const filterInput = page.getByPlaceholder("Filter log messages...");
+  await expect(filterInput).toBeVisible({ timeout: 10000 });
+  await filterInput.fill("nonexistent-filter-string-xyz");
+  // Should show filtered state (0 of N lines)
+  await expect(page.getByText(/0 of \d+ lines/)).toBeVisible({ timeout: 5000 });
+  // Clear the filter
+  await filterInput.fill("");
+});
+
+test("Logs tab line count selector works", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // Click 50 lines button
+  const btn50 = page.getByRole("button", { name: "50", exact: true });
+  await expect(btn50).toBeVisible({ timeout: 10000 });
+  await btn50.click();
+  // Wait for refresh
+  await page.waitForTimeout(1000);
+  // Click 200 lines button
+  await page.getByRole("button", { name: "200", exact: true }).click();
+});
+
+test("Logs tab keyboard shortcut 8 works", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.keyboard.press("8");
+  await expect(page.getByRole("tab", { name: /Logs/ })).toHaveAttribute("data-state", "active");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+});
+
+test("Logs tab shows Updated Xs ago counter", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText(/Updated \d+s ago/)).toBeVisible({ timeout: 10000 });
+});
+
+test("Logs API returns sources listing", async ({ request }) => {
+  const response = await request.get("/api/logs");
+  expect(response.status()).toBe(200);
+  const data = await response.json();
+  expect(data).toHaveProperty("sources");
+  expect(Array.isArray(data.sources)).toBe(true);
+  expect(data.sources.length).toBeGreaterThan(0);
+  // Each source should have id, name, type, description
+  for (const source of data.sources) {
+    expect(source).toHaveProperty("id");
+    expect(source).toHaveProperty("name");
+    expect(source).toHaveProperty("type");
+    expect(source).toHaveProperty("description");
+  }
+});
+
+test("Logs API returns log entries for mission-control", async ({ request }) => {
+  const response = await request.get("/api/logs?source=mission-control&lines=10");
+  expect(response.status()).toBe(200);
+  const data = await response.json();
+  expect(data).toHaveProperty("source", "mission-control");
+  expect(data).toHaveProperty("entries");
+  expect(data).toHaveProperty("count");
+  expect(Array.isArray(data.entries)).toBe(true);
+  expect(data.count).toBeGreaterThan(0);
+  // Each entry should have timestamp, level, message
+  for (const entry of data.entries) {
+    expect(entry).toHaveProperty("timestamp");
+    expect(entry).toHaveProperty("level");
+    expect(entry).toHaveProperty("message");
+  }
+});
+
+test("Logs API returns Cache-Control no-cache header", async ({ request }) => {
+  const response = await request.get("/api/logs?source=mission-control&lines=5");
+  expect(response.status()).toBe(200);
+  const cacheControl = response.headers()["cache-control"];
+  expect(cacheControl).toContain("no-cache");
+  expect(cacheControl).toContain("no-store");
+  expect(cacheControl).toContain("must-revalidate");
+});
+
+test("Logs API returns 400 for invalid source", async ({ request }) => {
+  const response = await request.get("/api/logs?source=nonexistent");
+  expect(response.status()).toBe(400);
+});
+
+test("command palette shows Log Viewer navigation item", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => {
+    const event = new KeyboardEvent("keydown", {
+      key: "k",
+      code: "KeyK",
+      metaKey: true,
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+  });
+  await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
+  await page.fill('input[placeholder="Type a command or search..."]', "log viewer");
+  await expect(page.getByText("Go to Log Viewer")).toBeVisible();
+});
+
+test("Logs tab visibility change triggers refresh", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await page.evaluate(() => {
+    document.dispatchEvent(new Event("visibilitychange"));
+  });
+  await expect(page.getByText("Log Viewer")).toBeVisible();
 });

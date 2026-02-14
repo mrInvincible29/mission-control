@@ -17,7 +17,7 @@ const CommandPalette = dynamic(
   { ssr: false }
 );
 
-const VALID_TABS = ["activity", "calendar", "search", "agents", "analytics", "health", "cron-runs"] as const;
+const VALID_TABS = ["activity", "calendar", "search", "agents", "analytics", "health", "cron-runs", "logs"] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
 class TabErrorBoundary extends Component<
@@ -89,6 +89,11 @@ const CronHistory = dynamic(
   { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
 );
 
+const LogViewer = dynamic(
+  () => import("@/components/LogViewer").then((mod) => ({ default: mod.LogViewer })),
+  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+);
+
 function DashboardContent() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   const searchParams = useSearchParams();
@@ -115,6 +120,7 @@ function DashboardContent() {
       else if (e.key === "5") setActiveTab("analytics");
       else if (e.key === "6") setActiveTab("health");
       else if (e.key === "7") setActiveTab("cron-runs");
+      else if (e.key === "8") setActiveTab("logs");
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -134,7 +140,7 @@ function DashboardContent() {
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-      <TabsList className="grid w-full grid-cols-7 max-w-[580px] sm:max-w-4xl">
+      <TabsList className="grid w-full grid-cols-8 max-w-[640px] sm:max-w-4xl">
         <TabsTrigger value="activity">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">1</span>
           Activity
@@ -162,6 +168,10 @@ function DashboardContent() {
         <TabsTrigger value="cron-runs">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">7</span>
           Runs
+        </TabsTrigger>
+        <TabsTrigger value="logs">
+          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">8</span>
+          Logs
         </TabsTrigger>
       </TabsList>
 
@@ -204,6 +214,12 @@ function DashboardContent() {
       <TabsContent value="cron-runs" className="mt-6">
         <TabErrorBoundary fallbackLabel="Cron Runs">
           <CronHistory />
+        </TabErrorBoundary>
+      </TabsContent>
+
+      <TabsContent value="logs" className="mt-6">
+        <TabErrorBoundary fallbackLabel="Log Viewer">
+          <LogViewer />
         </TabErrorBoundary>
       </TabsContent>
     </Tabs>
