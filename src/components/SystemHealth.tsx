@@ -243,6 +243,7 @@ export function SystemHealth() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const [memHistory, setMemHistory] = useState<number[]>([]);
+  const [, setTick] = useState(0);
 
   const fetchHealth = useCallback(async () => {
     try {
@@ -284,6 +285,13 @@ export function SystemHealth() {
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [fetchHealth]);
 
+  // Tick every second so "Updated Xs ago" counts up in real time
+  useEffect(() => {
+    if (lastRefresh === 0) return;
+    const timer = setInterval(() => setTick((t) => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [lastRefresh]);
+
   if (loading && !data) {
     return (
       <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
@@ -319,6 +327,14 @@ export function SystemHealth() {
 
   return (
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
+      {/* Connection error banner — shown when fetch fails but stale data is displayed */}
+      {error && data && (
+        <div className="mx-4 mt-3 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 flex items-center gap-2 text-xs">
+          <RefreshCw className="h-3.5 w-3.5 text-amber-400 animate-spin flex-shrink-0" />
+          <span className="text-amber-300">Connection lost — retrying...</span>
+          <span className="text-muted-foreground/60 ml-auto">{error}</span>
+        </div>
+      )}
       <CardHeader className="pb-2 flex-shrink-0 px-4 pt-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -665,7 +681,7 @@ export function SystemHealth() {
 function Sparkline({ data, height = 24, color = "currentColor" }: { data: number[]; height?: number; color?: string }) {
   if (data.length < 2) return null;
   const max = Math.max(...data, 1);
-  const min = Math.min(...data, 0);
+  const min = Math.min(...data);
   const range = max - min || 1;
   const w = 200;
   const points = data.map((v, i) => {

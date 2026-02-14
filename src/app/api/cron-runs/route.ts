@@ -143,12 +143,14 @@ export async function GET(request: NextRequest) {
       runs,
       jobs,
       totalRuns: allRuns.length,
+    }, {
+      headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
     });
   } catch (error) {
     console.error("Cron runs error:", error);
     return NextResponse.json(
       { error: "Failed to read cron run history" },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "no-cache, no-store, must-revalidate" } }
     );
   }
 }

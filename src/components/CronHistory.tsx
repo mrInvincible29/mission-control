@@ -72,12 +72,11 @@ function formatRelativeTime(ts: number): string {
   if (hours < 24) return `${hours}h ago`;
   const days = Math.floor(hours / 24);
   if (days < 7) return `${days}d ago`;
-  return new Date(ts).toLocaleDateString("en-IN", { timeZone: "Asia/Kolkata", month: "short", day: "numeric" });
+  return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
 function formatDateTime(ts: number): string {
-  return new Date(ts).toLocaleString("en-IN", {
-    timeZone: "Asia/Kolkata",
+  return new Date(ts).toLocaleString("en-US", {
     month: "short",
     day: "numeric",
     hour: "2-digit",
@@ -187,6 +186,7 @@ export function CronHistory() {
   const [runs, setRuns] = useState<CronRun[]>([]);
   const [jobs, setJobs] = useState<JobInfo[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
   const [selectedJobId, setSelectedJobId] = useState<string | null>(null);
   const [selectedRun, setSelectedRun] = useState<CronRun | null>(null);
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
@@ -201,12 +201,14 @@ export function CronHistory() {
       if (selectedJobId) params.set("jobId", selectedJobId);
 
       const res = await fetch(`/api/cron-runs?${params}`);
-      if (!res.ok) throw new Error("Failed to fetch");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const data = await res.json();
       setRuns(data.runs || []);
       setJobs(data.jobs || []);
+      setError(null);
     } catch (err) {
       console.error("Failed to fetch cron runs:", err);
+      setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
       setLoading(false);
     }
@@ -224,15 +226,14 @@ export function CronHistory() {
     return () => clearInterval(interval);
   }, [autoRefresh, fetchRuns]);
 
-  // Pause auto-refresh when tab hidden
+  // Refresh data when tab becomes visible again
   useEffect(() => {
     const handler = () => {
-      if (document.hidden) setAutoRefresh(false);
-      else setAutoRefresh(true);
+      if (!document.hidden) fetchRuns();
     };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, []);
+  }, [fetchRuns]);
 
   // Group runs by job
   const runsByJob = useMemo(() => {
@@ -267,7 +268,7 @@ export function CronHistory() {
         filtered.sort((a, b) => {
           const aRate = a.stats.total > 0 ? a.stats.ok / a.stats.total : 0;
           const bRate = b.stats.total > 0 ? b.stats.ok / b.stats.total : 0;
-          return aRate - bRate; // Worst first
+          return bRate - aRate; // Best health first
         });
         break;
     }
@@ -299,8 +300,7 @@ export function CronHistory() {
   const runsByDate = useMemo(() => {
     const groups: Record<string, CronRun[]> = {};
     for (const run of filteredRuns) {
-      const dateKey = new Date(run.ts).toLocaleDateString("en-IN", {
-        timeZone: "Asia/Kolkata",
+      const dateKey = new Date(run.ts).toLocaleDateString("en-US", {
         weekday: "short",
         month: "short",
         day: "numeric",
@@ -330,8 +330,32 @@ export function CronHistory() {
     );
   }
 
+  if (error && runs.length === 0) {
+    return (
+      <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
+        <CardContent className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <p className="text-red-400 font-medium">Failed to load cron history</p>
+            <p className="text-sm text-muted-foreground mt-1">{error}</p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={fetchRuns}>
+              Retry
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    );
+  }
+
   return (
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
+      {/* Connection error banner — shown when fetch fails but stale data is displayed */}
+      {error && runs.length > 0 && (
+        <div className="mx-4 mt-3 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 flex items-center gap-2 text-xs">
+          <RefreshCw className="h-3.5 w-3.5 text-amber-400 animate-spin flex-shrink-0" />
+          <span className="text-amber-300">Connection lost — retrying...</span>
+          <span className="text-muted-foreground/60 ml-auto">{error}</span>
+        </div>
+      )}
       {/* Header */}
       <CardHeader className="pb-3 flex-shrink-0 px-4 pt-4">
         <div className="flex items-center gap-3 flex-wrap">
@@ -565,8 +589,7 @@ export function CronHistory() {
                         <div className="rounded-md px-3 py-2 hover:bg-muted/30 transition-colors">
                           <div className="flex items-center gap-2">
                             <span className="text-xs font-medium">
-                              {new Date(run.ts).toLocaleTimeString("en-IN", {
-                                timeZone: "Asia/Kolkata",
+                              {new Date(run.ts).toLocaleTimeString("en-US", {
                                 hour: "2-digit",
                                 minute: "2-digit",
                                 hour12: true,

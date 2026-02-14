@@ -77,6 +77,14 @@ function BarChart({
   color?: string;
   height?: number;
 }) {
+  if (data.length === 0) {
+    return (
+      <div className="w-full flex items-center justify-center text-xs text-muted-foreground" style={{ height }}>
+        No data available
+      </div>
+    );
+  }
+
   const maxVal = Math.max(...data.map((d) => d[valueKey] as number), 1);
   // Use a wider viewBox so SVG text doesn't scale up when stretched to fill container
   const vbWidth = 700;

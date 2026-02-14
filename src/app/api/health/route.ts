@@ -260,11 +260,13 @@ export async function GET(_request: NextRequest) {
       topProcesses: getTopProcesses(),
     };
 
-    return NextResponse.json(data);
+    return NextResponse.json(data, {
+      headers: { "Cache-Control": "no-cache, no-store, must-revalidate" },
+    });
   } catch (error) {
     return NextResponse.json(
       { error: "Failed to gather system metrics" },
-      { status: 500 }
+      { status: 500, headers: { "Cache-Control": "no-cache, no-store, must-revalidate" } }
     );
   }
 }
