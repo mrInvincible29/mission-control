@@ -7,7 +7,7 @@ Personal command center dashboard for monitoring AI agent activity, scheduled ta
 - **Frontend**: Next.js 16 (App Router, `output: "standalone"`), React 19, Tailwind CSS v4, shadcn/ui (Radix primitives)
 - **Backend**: Convex (real-time serverless DB — queries, mutations, full-text search)
 - **Deployment**: Standalone `server.js` on `172.29.0.1:39151`, behind Traefik at `mission-control.quota.wtf` with basic auth
-- **Testing**: Playwright (67 smoke tests against `http://localhost:39151`)
+- **Testing**: Playwright (72 smoke tests against `http://localhost:39151`)
 - **Icons**: lucide-react
 
 ## Architecture
@@ -34,16 +34,20 @@ src/
     GlobalSearch.tsx   # Full-text search + file browser
     LogViewer.tsx      # Live service log viewer with source switching and filtering
     SystemHealth.tsx   # Real-time server monitoring (CPU, memory, disk, Docker, services)
+    Skeletons.tsx      # Shimmer skeleton loaders for all 8 tabs (shown during dynamic import)
     SetupGuide.tsx     # Convex setup instructions (shown if unconfigured)
     providers/         # ConvexClientProvider
     ui/                # shadcn/ui primitives (button, badge, card, dialog, hover-card, etc.)
+  lib/
+    utils.ts           # cn() class merge utility
+    formatters.ts      # Shared formatTokens, formatCost, formatRelativeTime, getModelColor
   types/index.ts       # Activity, CronJob, IndexedDocument, SearchResult interfaces
 scripts/
   activity-sync.mjs   # Watches OpenClaw logs → syncs activities to Convex (handles midnight rollover)
   file-watcher.mjs    # Watches ~/clawd → indexes files to Convex
   sync-cron-data.mjs  # Parses OpenClaw config → upserts cron_jobs
 tests/
-  smoke.spec.ts        # 51 Playwright smoke tests covering all tabs, APIs, and regressions
+  smoke.spec.ts        # 72 Playwright smoke tests covering all tabs, APIs, and regressions
 ```
 
 ## Data Model (Convex)
@@ -85,7 +89,7 @@ npm run build        # Production build (standalone) — auto-copies static asse
 npm run start        # Start production server
 npx convex dev       # Start Convex dev backend
 npx convex typecheck # Typecheck Convex functions (tsc --noEmit)
-npx playwright test  # Run all 67 smoke tests against localhost:39151
+npx playwright test  # Run all 72 smoke tests against localhost:39151
 ```
 
 ## Environment
