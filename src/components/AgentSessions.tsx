@@ -7,6 +7,7 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
 import { Search, X, RefreshCw, Clock } from "lucide-react";
+import { formatTokens, formatCost, formatRelativeTime } from "@/lib/formatters";
 
 interface SessionMeta {
   id: string;
@@ -37,35 +38,7 @@ interface SessionDetail extends SessionMeta {
   timeline: TimelineItem[];
 }
 
-function formatTime(timestamp?: number): string {
-  if (!timestamp) return "unknown";
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-
-  if (diff < 60000) return "just now";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-  if (diff < 604800000) return `${Math.floor(diff / 86400000)}d ago`;
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
-  return tokens.toString();
-}
-
-function formatCost(cost: number): string {
-  if (cost < 0.01) return `$${cost.toFixed(4)}`;
-  return `$${cost.toFixed(2)}`;
-}
+// formatTokens, formatCost, formatRelativeTime imported from @/lib/formatters
 
 function getPromptLabel(prompt: string): string {
   if (!prompt) return "No prompt";
@@ -289,7 +262,7 @@ export function AgentSessions() {
               {lastFetch > 0 && (
                 <>
                   <Clock className="h-3 w-3" />
-                  Updated {formatTime(lastFetch)}
+                  Updated {formatRelativeTime(lastFetch)}
                 </>
               )}
             </span>
@@ -454,7 +427,7 @@ function SessionListItem({
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
         <span>{session.messageCount} messages</span>
-        <span>{formatTime(session.lastActivity || session.timestamp)}</span>
+        <span>{formatRelativeTime(session.lastActivity || session.timestamp)}</span>
       </div>
     </div>
   );
@@ -544,7 +517,7 @@ function TimelineMessage({ item }: { item: TimelineItem }) {
           {item.role}
         </Badge>
         {item.timestamp && (
-          <span className="text-xs text-muted-foreground">{formatTime(item.timestamp)}</span>
+          <span className="text-xs text-muted-foreground">{formatRelativeTime(item.timestamp)}</span>
         )}
       </div>
 

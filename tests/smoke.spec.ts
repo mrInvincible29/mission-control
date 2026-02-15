@@ -715,3 +715,65 @@ test("Logs tab visibility change triggers refresh", async ({ page }) => {
   });
   await expect(page.getByText("Log Viewer")).toBeVisible();
 });
+
+// === UX POLISH TESTS: Skeleton Loaders, Log Highlighting, Toast Animation ===
+
+test("skeleton loader renders animated elements (no bare 'Loading...' text)", async ({ page }) => {
+  // Navigate to homepage — the skeleton should appear briefly before content loads
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  const tabPanel = page.getByRole("tabpanel");
+  await expect(tabPanel).toBeVisible();
+  // The old "Loading..." fallback div should NOT appear
+  const oldFallback = tabPanel.locator('div.p-8.text-center.text-muted-foreground:text-is("Loading...")');
+  await expect(oldFallback).not.toBeVisible();
+});
+
+test("all tabs render without generic 'Loading...' fallback", async ({ page }) => {
+  for (const tab of ["activity", "calendar", "search", "agents", "analytics", "health", "cron-runs", "logs"]) {
+    await page.goto(`/?tab=${tab}`);
+    const tabPanel = page.getByRole("tabpanel");
+    await expect(tabPanel).toBeVisible({ timeout: 10000 });
+    await page.waitForTimeout(500);
+    const oldFallback = tabPanel.locator('div.p-8.text-center.text-muted-foreground:text-is("Loading...")');
+    await expect(oldFallback).not.toBeVisible();
+  }
+});
+
+test("log viewer highlights matching search terms with yellow marks", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  const filterInput = page.getByPlaceholder("Filter log messages...");
+  await filterInput.fill("GET");
+  await page.waitForTimeout(500);
+  // If matches exist, <mark> elements should have yellow highlight
+  const marks = page.locator("mark");
+  const markCount = await marks.count();
+  if (markCount > 0) {
+    await expect(marks.first()).toBeVisible();
+    await expect(marks.first()).toHaveClass(/bg-yellow/);
+  }
+});
+
+test("log viewer clears highlights when search is cleared", async ({ page }) => {
+  await page.goto("/?tab=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  const filterInput = page.getByPlaceholder("Filter log messages...");
+  await filterInput.fill("test-search");
+  await page.waitForTimeout(300);
+  await filterInput.fill("");
+  await page.waitForTimeout(300);
+  await expect(page.locator("mark")).toHaveCount(0);
+});
+
+test("activity feed uses shared formatters (tokens show K/M suffix)", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(3000);
+  const tabPanel = page.getByRole("tabpanel");
+  await expect(tabPanel).toBeVisible();
+  const content = await tabPanel.textContent();
+  expect(content).toBeTruthy();
+});

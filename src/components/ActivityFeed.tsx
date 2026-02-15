@@ -10,6 +10,7 @@ import { Input } from "@/components/ui/input";
 import { useState, useMemo, useCallback, useEffect } from "react";
 import { Search, X, ChevronDown } from "lucide-react";
 import type { Activity } from "@/types";
+import { formatTokens, formatCost, formatRelativeTime, formatDuration } from "@/lib/formatters";
 
 const CATEGORY_COLORS: Record<string, string> = {
   important: "bg-red-500/20 text-red-400 border-red-500/30",
@@ -57,33 +58,7 @@ const CATEGORIES = [
   { label: "🔇 Noise", value: "noise" },
 ];
 
-function formatTime(timestamp: number): string {
-  const date = new Date(timestamp);
-  const now = new Date();
-  const diff = now.getTime() - date.getTime();
-
-  if (diff < 60000) return "just now";
-  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
-  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
-
-  return date.toLocaleDateString("en-US", {
-    month: "short",
-    day: "numeric",
-    hour: "2-digit",
-    minute: "2-digit",
-  });
-}
-
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
-  return tokens.toString();
-}
-
-function formatCost(cost: number): string {
-  if (cost < 0.01) return `$${cost.toFixed(4)}`;
-  return `$${cost.toFixed(2)}`;
-}
+// formatTokens, formatCost, formatRelativeTime imported from @/lib/formatters
 
 function getDateLabel(days: number): string {
   if (days === 1) return "Today";
@@ -362,7 +337,7 @@ function ActivityItem({ activity }: { activity: Activity }) {
               </Badge>
             )}
             <span className="text-xs text-muted-foreground ml-auto flex items-center gap-1">
-              {formatTime(activity.timestamp)}
+              {formatRelativeTime(activity.timestamp)}
               {hasExpandableContent && (
                 <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
               )}
@@ -393,10 +368,7 @@ function ActivityItem({ activity }: { activity: Activity }) {
               )}
               {meta.duration && (
                 <span className="text-[10px] text-muted-foreground">
-                  {meta.duration > 1000
-                    ? `${(meta.duration / 1000).toFixed(1)}s`
-                    : `${meta.duration}ms`
-                  }
+                  {formatDuration(meta.duration)}
                 </span>
               )}
               {meta.channel && (
@@ -441,7 +413,7 @@ function ActivityItem({ activity }: { activity: Activity }) {
                 {meta.duration != null && (
                   <>
                     <span className="text-muted-foreground">Duration</span>
-                    <span>{meta.duration > 1000 ? `${(meta.duration / 1000).toFixed(1)}s` : `${meta.duration}ms`}</span>
+                    <span>{formatDuration(meta.duration)}</span>
                   </>
                 )}
                 {meta.tool && (

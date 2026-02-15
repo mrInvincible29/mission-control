@@ -6,6 +6,16 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SetupGuide } from "@/components/SetupGuide";
 import { ToastProvider } from "@/components/Toast";
+import {
+  ActivitySkeleton,
+  CalendarSkeleton,
+  SearchSkeleton,
+  AgentsSkeleton,
+  AnalyticsSkeleton,
+  HealthSkeleton,
+  CronRunsSkeleton,
+  LogsSkeleton,
+} from "@/components/Skeletons";
 
 const ThemeToggle = dynamic(
   () => import("@/components/ThemeToggle").then((mod) => ({ default: mod.ThemeToggle })),
@@ -53,45 +63,45 @@ class TabErrorBoundary extends Component<
   }
 }
 
-// Dynamically import components that use Convex hooks
+// Dynamically import components that use Convex hooks — each with a tab-specific skeleton loader
 const ActivityFeed = dynamic(
   () => import("@/components/ActivityFeed").then((mod) => ({ default: mod.ActivityFeed })),
-  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+  { ssr: false, loading: () => <ActivitySkeleton /> }
 );
 
 const CalendarView = dynamic(
   () => import("@/components/CalendarView").then((mod) => ({ default: mod.CalendarView })),
-  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+  { ssr: false, loading: () => <CalendarSkeleton /> }
 );
 
 const GlobalSearch = dynamic(
   () => import("@/components/GlobalSearch").then((mod) => ({ default: mod.GlobalSearch })),
-  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+  { ssr: false, loading: () => <SearchSkeleton /> }
 );
 
 const AgentSessions = dynamic(
   () => import("@/components/AgentSessions").then((mod) => ({ default: mod.AgentSessions })),
-  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+  { ssr: false, loading: () => <AgentsSkeleton /> }
 );
 
 const AnalyticsView = dynamic(
   () => import("@/components/AnalyticsView").then((mod) => ({ default: mod.AnalyticsView })),
-  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+  { ssr: false, loading: () => <AnalyticsSkeleton /> }
 );
 
 const SystemHealth = dynamic(
   () => import("@/components/SystemHealth").then((mod) => ({ default: mod.SystemHealth })),
-  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+  { ssr: false, loading: () => <HealthSkeleton /> }
 );
 
 const CronHistory = dynamic(
   () => import("@/components/CronHistory").then((mod) => ({ default: mod.CronHistory })),
-  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+  { ssr: false, loading: () => <CronRunsSkeleton /> }
 );
 
 const LogViewer = dynamic(
   () => import("@/components/LogViewer").then((mod) => ({ default: mod.LogViewer })),
-  { ssr: false, loading: () => <div className="p-8 text-center text-muted-foreground">Loading...</div> }
+  { ssr: false, loading: () => <LogsSkeleton /> }
 );
 
 function DashboardContent() {

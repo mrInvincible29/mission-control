@@ -43,6 +43,26 @@ function getLevelStyle(level: string) {
   return LEVEL_STYLES[level] || LEVEL_STYLES.info;
 }
 
+/** Highlight matching search terms in log messages with a yellow background */
+function HighlightMatch({ text, query }: { text: string; query: string }) {
+  if (!query.trim()) return <>{text}</>;
+  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const regex = new RegExp(`(${escaped})`, "gi");
+  const parts = text.split(regex);
+  if (parts.length === 1) return <>{text}</>;
+  return (
+    <>
+      {parts.map((part, i) =>
+        regex.test(part) ? (
+          <mark key={i} className="bg-yellow-400/30 text-inherit rounded-sm px-px">{part}</mark>
+        ) : (
+          <span key={i}>{part}</span>
+        )
+      )}
+    </>
+  );
+}
+
 export function LogViewer() {
   const [sources, setSources] = useState<LogSourceInfo[]>([]);
   const [selectedSource, setSelectedSource] = useState<string>("mission-control");
@@ -353,7 +373,9 @@ export function LogViewer() {
                      entry.level === "debug" ? "DBG" :
                      "INF"}
                   </span>
-                  <span className="break-all min-w-0">{entry.message}</span>
+                  <span className="break-all min-w-0">
+                    <HighlightMatch text={entry.message} query={filterText} />
+                  </span>
                 </div>
               );
             })}

@@ -13,25 +13,13 @@ import {
 } from "@/components/ui/tooltip";
 import { useState, useMemo } from "react";
 import { TrendingUp, TrendingDown, Minus, Zap, DollarSign, Activity, AlertTriangle } from "lucide-react";
+import { formatTokens, formatCost } from "@/lib/formatters";
 
 const TIME_RANGES = [
   { label: "7d", value: 7 },
   { label: "14d", value: 14 },
   { label: "30d", value: 30 },
 ];
-
-function formatTokens(tokens: number): string {
-  if (tokens >= 1000000) return `${(tokens / 1000000).toFixed(1)}M`;
-  if (tokens >= 1000) return `${(tokens / 1000).toFixed(1)}K`;
-  return tokens.toString();
-}
-
-function formatCost(cost: number): string {
-  if (cost === 0) return "$0";
-  if (cost < 0.01) return `$${cost.toFixed(4)}`;
-  if (cost < 1) return `$${cost.toFixed(2)}`;
-  return `$${cost.toFixed(2)}`;
-}
 
 function formatShortDay(dayStr: string): string {
   const date = new Date(dayStr + "T00:00:00");
