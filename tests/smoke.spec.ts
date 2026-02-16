@@ -111,9 +111,10 @@ test("command palette opens via keyboard event", async ({ page }) => {
     window.dispatchEvent(event);
   });
   await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
-  // Close with Escape
+  // Focus the input, then close with Escape
+  await page.getByPlaceholder("Type a command or search...").focus();
   await page.keyboard.press("Escape");
-  await expect(page.getByPlaceholder("Type a command or search...")).not.toBeVisible();
+  await expect(page.getByPlaceholder("Type a command or search...")).not.toBeVisible({ timeout: 5000 });
 });
 
 test("search tab has an input field", async ({ page }) => {

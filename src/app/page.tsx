@@ -6,6 +6,7 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SetupGuide } from "@/components/SetupGuide";
 import { ToastProvider } from "@/components/Toast";
+import { useTabNotifications } from "@/hooks/useTabNotifications";
 import {
   ActivitySkeleton,
   CalendarSkeleton,
@@ -24,6 +25,11 @@ const ThemeToggle = dynamic(
 
 const CommandPalette = dynamic(
   () => import("@/components/CommandPalette").then((mod) => ({ default: mod.CommandPalette })),
+  { ssr: false }
+);
+
+const StatusStrip = dynamic(
+  () => import("@/components/StatusStrip").then((mod) => ({ default: mod.StatusStrip })),
   { ssr: false }
 );
 
@@ -104,10 +110,36 @@ const LogViewer = dynamic(
   { ssr: false, loading: () => <LogsSkeleton /> }
 );
 
+/** Notification dot for tabs — shows colored dot or count badge */
+function TabDot({ color }: { color: "red" | "amber" | "emerald" }) {
+  const colors = {
+    red: "bg-red-500",
+    amber: "bg-amber-500",
+    emerald: "bg-emerald-500",
+  };
+  return (
+    <span className={`ml-1 inline-block w-1.5 h-1.5 rounded-full ${colors[color]}`} />
+  );
+}
+
+function TabCount({ count, color }: { count: number; color: "red" | "amber" }) {
+  if (count === 0) return null;
+  const colors = {
+    red: "bg-red-500/80 text-white",
+    amber: "bg-amber-500/80 text-white",
+  };
+  return (
+    <span className={`ml-1 inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold ${colors[color]} leading-none px-0.5`}>
+      {count > 99 ? "99+" : count}
+    </span>
+  );
+}
+
 function DashboardContent() {
   const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
   const searchParams = useSearchParams();
   const router = useRouter();
+  const notifications = useTabNotifications();
 
   // Read initial tab from URL, default to "activity"
   const tabParam = searchParams.get("tab");
@@ -150,38 +182,42 @@ function DashboardContent() {
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-      <TabsList className="grid w-full grid-cols-8 max-w-[640px] sm:max-w-4xl">
-        <TabsTrigger value="activity">
+      <TabsList className="flex w-full overflow-x-auto sm:grid sm:grid-cols-8 max-w-[640px] sm:max-w-4xl">
+        <TabsTrigger value="activity" className="shrink-0">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">1</span>
           Activity
         </TabsTrigger>
-        <TabsTrigger value="calendar">
+        <TabsTrigger value="calendar" className="shrink-0">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">2</span>
           Calendar
         </TabsTrigger>
-        <TabsTrigger value="search">
+        <TabsTrigger value="search" className="shrink-0">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">3</span>
           Search
         </TabsTrigger>
-        <TabsTrigger value="agents">
+        <TabsTrigger value="agents" className="shrink-0">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">4</span>
           Agents
         </TabsTrigger>
-        <TabsTrigger value="analytics">
+        <TabsTrigger value="analytics" className="shrink-0">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">5</span>
           Analytics
         </TabsTrigger>
-        <TabsTrigger value="health">
+        <TabsTrigger value="health" className="shrink-0 relative">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">6</span>
           Health
+          {notifications.health === "critical" && <TabDot color="red" />}
+          {notifications.health === "warn" && <TabDot color="amber" />}
         </TabsTrigger>
-        <TabsTrigger value="cron-runs">
+        <TabsTrigger value="cron-runs" className="shrink-0 relative">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">7</span>
           Runs
+          {notifications.cronRuns > 0 && <TabCount count={notifications.cronRuns} color="red" />}
         </TabsTrigger>
-        <TabsTrigger value="logs">
+        <TabsTrigger value="logs" className="shrink-0 relative">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">8</span>
           Logs
+          {notifications.logs > 0 && <TabCount count={notifications.logs} color="amber" />}
         </TabsTrigger>
       </TabsList>
 
@@ -248,7 +284,10 @@ export default function Home() {
                 <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
                   Mission Control
                 </h1>
-                <p className="text-muted-foreground mt-1 text-sm sm:text-base">
+                <div className="mt-1.5 hidden sm:block">
+                  <StatusStrip />
+                </div>
+                <p className="text-muted-foreground mt-1 text-sm sm:hidden">
                   AJ&apos;s personal command center
                 </p>
               </div>
