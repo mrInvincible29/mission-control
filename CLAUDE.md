@@ -34,10 +34,13 @@ src/
     GlobalSearch.tsx   # Full-text search + file browser
     LogViewer.tsx      # Live service log viewer with source switching and filtering
     SystemHealth.tsx   # Real-time server monitoring (CPU, memory, disk, Docker, services)
+    StatusStrip.tsx    # Live header vitals — CPU %, Memory %, Docker count (30s auto-refresh)
     Skeletons.tsx      # Shimmer skeleton loaders for all 8 tabs (shown during dynamic import)
     SetupGuide.tsx     # Convex setup instructions (shown if unconfigured)
     providers/         # ConvexClientProvider
     ui/                # shadcn/ui primitives (button, badge, card, dialog, hover-card, etc.)
+  hooks/
+    useTabNotifications.ts # Lightweight tab badge data (health status, error/failure counts)
   lib/
     utils.ts           # cn() class merge utility
     formatters.ts      # Shared formatTokens, formatCost, formatRelativeTime, getModelColor
@@ -80,6 +83,8 @@ Both APIs return `Cache-Control: no-cache, no-store, must-revalidate` to prevent
 - **Connection error banners** — SystemHealth and CronHistory show an amber "Connection lost — retrying..." banner when fetch fails but stale data is already displayed, rather than silently showing outdated metrics.
 - **CalendarView schedule parsing** converts human-readable strings ("daily 3:00 AM", "every 6 hours", "Monday 2pm") to grid positions. Frequent tasks (interval <= 6h) go to the all-day row instead of the hourly grid.
 - **Model color coding**: Haiku = green, Sonnet = blue, Opus = purple, unknown = gray. Used in CalendarView task cards (left border stripe + dot).
+- **StatusStrip in header** — live CPU/memory/Docker count with mini progress bars (30s polling, pauses when tab hidden). Shows on desktop; mobile sees subtitle text.
+- **Tab notification badges** — Health tab shows colored dot (amber=warn, red=critical), Runs and Logs tabs show count badges for failures/errors. Powered by `useTabNotifications` hook (60s polling).
 
 ## Commands
 
