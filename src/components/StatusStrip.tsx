@@ -1,14 +1,8 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
-import { Cpu, MemoryStick, Container, Activity, Wifi, WifiOff } from "lucide-react";
-
-interface QuickHealth {
-  cpu: number;
-  memPercent: number;
-  containers: number;
-  uptime: number;
-}
+import { useRouter } from "next/navigation";
+import { Cpu, MemoryStick, Container, WifiOff } from "lucide-react";
+import { useHealthData } from "@/hooks/useHealthData";
 
 function getColor(pct: number): string {
   if (pct >= 90) return "text-red-400";
@@ -33,94 +27,59 @@ function MiniBar({ percent, color }: { percent: number; color: string }) {
   );
 }
 
-export function StatusStrip() {
-  const [health, setHealth] = useState<QuickHealth | null>(null);
-  const [connected, setConnected] = useState(true);
-  const [mounted, setMounted] = useState(false);
+export function StatusStrip({ compact = false }: { compact?: boolean }) {
+  const { data, connected } = useHealthData();
+  const router = useRouter();
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
-
-  const fetchHealth = useCallback(async () => {
-    try {
-      const res = await fetch("/api/health");
-      if (!res.ok) throw new Error("fetch failed");
-      const data = await res.json();
-      setHealth({
-        cpu: Math.round(100 - (data.cpu?.idle ?? 100)),
-        memPercent: Math.round(data.memory?.usedPercent ?? 0),
-        containers: data.docker?.length ?? 0,
-        uptime: data.uptime ?? 0,
-      });
-      setConnected(true);
-    } catch {
-      setConnected(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    fetchHealth();
-    const interval = setInterval(fetchHealth, 30000); // 30s refresh
-    return () => clearInterval(interval);
-  }, [fetchHealth]);
-
-  // Pause when hidden
-  useEffect(() => {
-    const handler = () => {
-      if (!document.hidden) fetchHealth();
-    };
-    document.addEventListener("visibilitychange", handler);
-    return () => document.removeEventListener("visibilitychange", handler);
-  }, [fetchHealth]);
-
-  if (!mounted) return null;
+  if (compact) {
+    return (
+      <button
+        onClick={() => router.replace("/?tab=system", { scroll: false })}
+        className="flex items-center gap-1.5 text-[11px] text-muted-foreground hover:text-foreground transition-colors"
+      >
+        {!connected && <WifiOff className="h-3 w-3 text-amber-400" />}
+        {data && (
+          <>
+            <div className={`w-1.5 h-1.5 rounded-full ${getDotColor(Math.max(data.cpu, data.memPercent))} animate-pulse`} />
+            <span className="font-mono tabular-nums">
+              <span className={getColor(data.cpu)}>CPU {data.cpu}%</span>
+              {" · "}
+              <span className={getColor(data.memPercent)}>Mem {data.memPercent}%</span>
+            </span>
+          </>
+        )}
+      </button>
+    );
+  }
 
   return (
     <div className="flex items-center gap-3 text-[11px] text-muted-foreground">
-      {/* Connection status */}
       {!connected && (
         <span className="flex items-center gap-1 text-amber-400" title="Connection lost">
           <WifiOff className="h-3 w-3" />
         </span>
       )}
-
-      {health && (
+      {data && (
         <>
-          {/* CPU */}
-          <span className="flex items-center gap-1.5" title={`CPU: ${health.cpu}%`}>
+          <span className="flex items-center gap-1.5" title={`CPU: ${data.cpu}%`}>
             <Cpu className="h-3 w-3" />
-            <MiniBar percent={health.cpu} color={health.cpu >= 90 ? "bg-red-500" : health.cpu >= 70 ? "bg-amber-500" : "bg-emerald-500"} />
-            <span className={`font-mono tabular-nums ${getColor(health.cpu)}`}>
-              {health.cpu}%
-            </span>
+            <MiniBar percent={data.cpu} color={data.cpu >= 90 ? "bg-red-500" : data.cpu >= 70 ? "bg-amber-500" : "bg-emerald-500"} />
+            <span className={`font-mono tabular-nums ${getColor(data.cpu)}`}>{data.cpu}%</span>
           </span>
-
-          {/* Separator */}
           <span className="text-border">|</span>
-
-          {/* Memory */}
-          <span className="flex items-center gap-1.5" title={`Memory: ${health.memPercent}%`}>
+          <span className="flex items-center gap-1.5" title={`Memory: ${data.memPercent}%`}>
             <MemoryStick className="h-3 w-3" />
-            <MiniBar percent={health.memPercent} color={health.memPercent >= 90 ? "bg-red-500" : health.memPercent >= 70 ? "bg-amber-500" : "bg-emerald-500"} />
-            <span className={`font-mono tabular-nums ${getColor(health.memPercent)}`}>
-              {health.memPercent}%
-            </span>
+            <MiniBar percent={data.memPercent} color={data.memPercent >= 90 ? "bg-red-500" : data.memPercent >= 70 ? "bg-amber-500" : "bg-emerald-500"} />
+            <span className={`font-mono tabular-nums ${getColor(data.memPercent)}`}>{data.memPercent}%</span>
           </span>
-
-          {/* Separator */}
           <span className="text-border">|</span>
-
-          {/* Docker containers */}
-          <span className="flex items-center gap-1" title={`${health.containers} containers running`}>
+          <span className="flex items-center gap-1" title={`${data.containers} containers running`}>
             <Container className="h-3 w-3" />
-            <span className="font-mono tabular-nums">{health.containers}</span>
+            <span className="font-mono tabular-nums">{data.containers}</span>
           </span>
-
-          {/* Overall status dot */}
           <div
-            className={`w-1.5 h-1.5 rounded-full ${getDotColor(Math.max(health.cpu, health.memPercent))} animate-pulse`}
-            title={health.cpu >= 70 || health.memPercent >= 70 ? "High resource usage" : "System healthy"}
+            className={`w-1.5 h-1.5 rounded-full ${getDotColor(Math.max(data.cpu, data.memPercent))} animate-pulse`}
+            title={data.cpu >= 70 || data.memPercent >= 70 ? "High resource usage" : "System healthy"}
           />
         </>
       )}
