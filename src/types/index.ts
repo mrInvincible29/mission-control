@@ -45,3 +45,31 @@ export interface CronJob {
   nextRun?: number;
   model?: string;
 }
+
+export type TaskStatus = "todo" | "in_progress" | "blocked" | "done";
+export type TaskPriority = "low" | "medium" | "high" | "urgent";
+export type TaskSource = "manual" | "cron" | "telegram";
+
+export interface Task {
+  id: string;
+  title: string;
+  description: string | null;
+  status: TaskStatus;
+  assignee: string | null;
+  priority: TaskPriority;
+  tags: string[];
+  source: TaskSource;
+  cronJobId: string | null;
+  position: string;
+  metadata: Record<string, unknown>;
+  archived: boolean;
+  createdAt: number; // epoch ms
+  updatedAt: number;
+  completedAt: number | null;
+}
+
+export interface Assignee {
+  name: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
