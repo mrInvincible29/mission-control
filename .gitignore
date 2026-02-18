@@ -45,3 +45,6 @@ convex/_generated/
 
 # Env
 .env*.local
+
+# worktrees
+.worktrees/
