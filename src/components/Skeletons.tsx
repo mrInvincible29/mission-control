@@ -96,33 +96,6 @@ export function CalendarSkeleton() {
   );
 }
 
-/** Search: tabs + file list or search input */
-export function SearchSkeleton() {
-  return (
-    <div className="px-4 pt-4 space-y-4">
-      {/* Tab bar */}
-      <div className="flex gap-2">
-        <Shimmer className="h-8 w-20 rounded-md" />
-        <Shimmer className="h-8 w-20 rounded-md" />
-      </div>
-      {/* Search input */}
-      <Shimmer className="h-9 w-full rounded-md" />
-      {/* File list */}
-      <div className="space-y-1">
-        {Array.from({ length: 8 }).map((_, i) => (
-          <div key={i} className="flex items-center gap-2 p-2 rounded-lg border border-border/30">
-            <Shimmer className="w-4 h-4 rounded" />
-            <ShimmerText width="w-48" height="h-3" />
-            <div className="ml-auto">
-              <ShimmerText width="w-12" height="h-2.5" />
-            </div>
-          </div>
-        ))}
-      </div>
-    </div>
-  );
-}
-
 /** Agent Sessions: session list + detail panel */
 export function AgentsSkeleton() {
   return (
