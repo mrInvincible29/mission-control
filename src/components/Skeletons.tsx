@@ -307,3 +307,42 @@ export function LogsSkeleton() {
     </div>
   );
 }
+
+/** Kanban Board: 4 columns with card placeholders */
+export function KanbanSkeleton() {
+  return (
+    <div className="px-4 pt-4 space-y-4">
+      {/* Filter bar */}
+      <div className="flex gap-2">
+        {Array.from({ length: 4 }).map((_, i) => (
+          <Shimmer key={i} className="h-7 w-16 rounded-md" />
+        ))}
+      </div>
+      {/* 4-column board */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {Array.from({ length: 4 }).map((_, col) => (
+          <div key={col} className="rounded-lg border border-border/30 p-3 space-y-3">
+            {/* Column header */}
+            <div className="flex items-center justify-between">
+              <ShimmerText width="w-20" height="h-4" />
+              <Shimmer className="w-6 h-6 rounded-full" />
+            </div>
+            {/* Cards */}
+            {Array.from({ length: 3 - (col % 2) }).map((_, card) => (
+              <div key={card} className="rounded-lg border border-border/20 p-3 space-y-2 border-l-4 border-l-muted/40">
+                <ShimmerText width="w-3/4" height="h-3.5" />
+                <div className="flex items-center justify-between">
+                  <div className="flex gap-1">
+                    <Shimmer className="w-10 h-4 rounded" />
+                    <Shimmer className="w-10 h-4 rounded" />
+                  </div>
+                  <Shimmer className="w-6 h-6 rounded-full" />
+                </div>
+              </div>
+            ))}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
