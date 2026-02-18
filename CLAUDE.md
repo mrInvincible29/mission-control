@@ -7,7 +7,7 @@ Personal command center dashboard for monitoring AI agent activity, scheduled ta
 - **Frontend**: Next.js 16 (App Router, `output: "standalone"`), React 19, Tailwind CSS v4, shadcn/ui (Radix primitives)
 - **Backend**: Supabase (PostgreSQL + RPC functions), SWR for client-side data fetching
 - **Deployment**: Standalone `server.js` on `172.29.0.1:39151`, behind Traefik at `mission-control.quota.wtf` with basic auth
-- **Testing**: Playwright (88 smoke tests against `http://localhost:39151`)
+- **Testing**: Playwright (82 smoke tests against `http://localhost:39151`)
 - **Icons**: lucide-react
 
 ## Architecture
@@ -17,7 +17,7 @@ supabase/
   migrations/       # PostgreSQL schema + RPC functions
 src/
   app/
-    page.tsx        # Main dashboard — 9 tabs (Activity, Calendar, Search, Agents, Analytics, Health, Runs, Logs, Tasks)
+    page.tsx        # Main dashboard — 4 tabs with sub-views (Activity, Schedule, Tasks, System)
     api/activity/   # POST/GET activities (basic auth)
     api/health/     # GET system metrics (CPU, memory, disk, Docker, services, network, processes)
     api/cron-runs/  # GET cron job execution history from ~/.openclaw/cron/runs/*.jsonl
@@ -27,21 +27,26 @@ src/
     api/assignees/  # GET assignee list for task board
     api/sync/       # Webhook for external activity ingestion
   components/
-    ActivityFeed.tsx   # Paginated activity list with category/date filters
-    AnalyticsView.tsx  # Token usage, cost estimates, model breakdown charts
-    CalendarView.tsx   # Google Calendar-style hourly grid with day/week toggle
-    CronHistory.tsx    # Cron run history with job stats, timeline, expandable runs
-    GlobalSearch.tsx   # Full-text search + file browser
-    KanbanBoard.tsx    # Drag-and-drop Kanban task board with 4 columns, detail sheet
-    LogViewer.tsx      # Live service log viewer with source switching and filtering
-    SystemHealth.tsx   # Real-time server monitoring (CPU, memory, disk, Docker, services)
-    StatusStrip.tsx    # Live header vitals — CPU %, Memory %, Docker count (30s auto-refresh)
-    Skeletons.tsx      # Shimmer skeleton loaders for all 9 tabs (shown during dynamic import)
+    SubViewToggle.tsx  # Segmented pill control for switching sub-views within a tab
+    ActivityFeed.tsx   # Paginated activity list with category/date filters (Activity > Feed)
+    AnalyticsView.tsx  # Token usage, cost estimates, model breakdown charts (Activity > Analytics)
+    AgentSessions.tsx  # Active agent session monitoring (Activity > Agents)
+    CalendarView.tsx   # Google Calendar-style hourly grid with day/week toggle (Schedule > Calendar)
+    CronHistory.tsx    # Cron run history with job stats, timeline, expandable runs (Schedule > Runs)
+    KanbanBoard.tsx    # Drag-and-drop Kanban task board with 4 columns, detail sheet (Tasks)
+    SystemHealth.tsx   # Real-time server monitoring (CPU, memory, disk, Docker, services) (System > Health)
+    LogViewer.tsx      # Live service log viewer with source switching and filtering (System > Logs)
+    StatusStrip.tsx    # Live header vitals — full mode (desktop) + compact mode (mobile), uses shared health hook
+    CommandPalette.tsx # Cmd+K palette — tab/sub-view navigation, actions, quick filters
+    GlobalSearch.tsx   # Full-text search + file browser (accessible via command palette)
+    Skeletons.tsx      # Shimmer skeleton loaders for all tabs (shown during dynamic import)
     SetupGuide.tsx     # Supabase setup instructions (shown if unconfigured)
+    Toast.tsx          # Toast notification system (success/error/info, 4s auto-dismiss)
     providers/         # SWRProvider, ThemeProvider
     ui/                # shadcn/ui primitives (button, badge, card, dialog, hover-card, etc.)
   hooks/
-    useTabNotifications.ts # Lightweight tab badge data (health status, error/failure counts)
+    useHealthData.ts     # Shared SWR hook for /api/health — single fetch, consumed by StatusStrip, useTabNotifications, SystemHealth
+    useTabNotifications.ts # Tab badge data (health status from shared hook, log errors, cron failures, blocked tasks)
   lib/
     supabase/
       client.ts        # Browser-side Supabase client singleton
@@ -55,7 +60,7 @@ scripts/
   file-watcher.mjs    # Watches ~/clawd → indexes files to Supabase
   sync-cron-data.mjs  # Parses OpenClaw config → upserts cron_jobs to Supabase
 tests/
-  smoke.spec.ts        # 88 Playwright smoke tests covering all tabs, APIs, and regressions
+  smoke.spec.ts        # 82 Playwright smoke tests covering all tabs, sub-views, APIs, and regressions
 ```
 
 ## Data Model (Supabase)
@@ -86,17 +91,32 @@ Health and cron data are fetched on-demand by the frontend:
 
 Both APIs return `Cache-Control: no-cache, no-store, must-revalidate` to prevent stale data.
 
+## Dashboard Layout (4 Tabs)
+
+The dashboard uses 4 top-level tabs, each with sub-views toggled by a `SubViewToggle` segmented pill control:
+
+| Tab | Sub-views | Keyboard |
+|-----|-----------|----------|
+| **Activity** | Feed (default), Analytics, Agents | `1` then `Shift+1/2/3` |
+| **Schedule** | Calendar (default), Run History | `2` then `Shift+1/2` |
+| **Tasks** | Kanban board (single view) | `3` |
+| **System** | Health (default), Logs | `4` then `Shift+1/2` |
+
+URL structure: `/?tab=<tab>&view=<view>` (both optional, defaults to Activity > Feed).
+
 ## Key Patterns
 
 - **Heavy components use `dynamic()` with `ssr: false`** and SWR for data fetching. Each gets a shimmer skeleton loader while loading.
+- **Shared `useHealthData` hook** — single SWR key (`health-data`) for `/api/health`, consumed by StatusStrip, useTabNotifications, and SystemHealth. Smart refresh: 30s default, 10s when System tab active, pauses when browser tab hidden.
 - **Cursor-based pagination** in ActivityFeed (timestamp cursor, `hasMore` flag). Never offset-based.
 - **Each dashboard tab is wrapped in `TabErrorBoundary`** — catches errors per-tab with retry.
 - **Connection error banners** — SystemHealth and CronHistory show an amber "Connection lost — retrying..." banner when fetch fails but stale data is already displayed, rather than silently showing outdated metrics.
 - **CalendarView schedule parsing** converts human-readable strings ("daily 3:00 AM", "every 6 hours", "Monday 2pm") to grid positions. Frequent tasks (interval <= 6h) go to the all-day row instead of the hourly grid.
 - **Model color coding**: Haiku = green, Sonnet = blue, Opus = purple, unknown = gray. Used in CalendarView task cards (left border stripe + dot).
-- **StatusStrip in header** — live CPU/memory/Docker count with mini progress bars (30s polling, pauses when tab hidden). Shows on desktop; mobile sees subtitle text.
-- **Tab notification badges** — Health tab shows colored dot (amber=warn, red=critical), Runs and Logs tabs show count badges for failures/errors, Tasks tab shows blocked count. Powered by `useTabNotifications` hook (60s polling).
-- **Kanban board** — 4 columns (To Do, In Progress, Blocked, Done) with `@dnd-kit` drag-and-drop. Cards use fractional indexing (`fractional-indexing` package) for position. Priority color coding: urgent=red, high=orange, medium=blue, low=gray. Quick-add in To Do column. Detail sheet (shadcn Sheet) opens from right on card click. Auto-archive done tasks after 7 days via `archive_old_tasks()` RPC.
+- **StatusStrip in header** — full mode on desktop (mini bars, docker count), compact mode on mobile (colored dot + CPU/Mem text, tappable to navigate to System tab). Both consume `useHealthData`.
+- **Tab notification badges** — System tab shows colored dot (amber=warn, red=critical) + log error count, Schedule tab shows cron failure count, Tasks tab shows blocked count. Powered by `useTabNotifications` hook.
+- **Kanban board** — 4 columns (To Do, In Progress, Blocked, Done) with `@dnd-kit` drag-and-drop. Cards use fractional indexing (`fractional-indexing` package) for position. Priority color coding: urgent=red, high=orange, medium=blue, low=gray. Quick-add in To Do column. Detail sheet (shadcn Sheet) opens from right on card click. Toast on card moves. Auto-archive done tasks after 7 days via `archive_old_tasks()` RPC.
+- **Command palette (Cmd+K)** — navigates to tabs and sub-views, triggers actions, applies quick filters. Mobile users access via search icon in header.
 
 ## Commands
 
@@ -104,7 +124,7 @@ Both APIs return `Cache-Control: no-cache, no-store, must-revalidate` to prevent
 npm run dev          # Dev server on 172.29.0.1:39151
 npm run build        # Production build (standalone) — auto-copies static assets
 npm run start        # Start production server
-npx playwright test  # Run all 88 smoke tests against localhost:39151
+npx playwright test  # Run all 82 smoke tests against localhost:39151
 
 # Database migrations (Supabase CLI — needs SUPABASE_DB_PASSWORD env var)
 npm run db:new -- <name>  # Create new migration file
@@ -158,3 +178,43 @@ All endpoints require basic auth (via Traefik). Health, cron-runs, logs, and tas
 - **Database schema changes**: Create a migration with `npm run db:new -- <name>`, write SQL in the generated file under `supabase/migrations/`, then apply with `npm run db:push`. Use `npm run db:list` to verify.
 - **After changing frontend code**: Run `npm run build`, copy `.env.local` to `.next/standalone/`, then restart the server with `kill $(ss -tlnp | grep 39151 | grep -oP 'pid=\K[0-9]+')` — systemd (`mission-control.service`, `Restart=always`) auto-restarts it within 5s. **The server must be restarted after every build** — the standalone server caches its file manifest at startup and won't serve new chunks without a restart.
 - shadcn/ui components live in `src/components/ui/`. Add new ones with `npx shadcn@latest add <component>`.
+
+## Adding New Functionality
+
+**Default: add as a sub-view to an existing tab.** The 4-tab structure is intentional — resist adding top-level tabs.
+
+### Where to put new features
+
+| If the feature is about... | Add it to | As a... |
+|----------------------------|-----------|---------|
+| Agent work, usage, costs, sessions | **Activity** tab | New sub-view or section within Feed/Analytics |
+| Cron jobs, scheduling, recurring tasks | **Schedule** tab | New sub-view or section within Calendar/Runs |
+| Work items, projects, tracking | **Tasks** tab | Section within Kanban or new sub-view |
+| Server ops, monitoring, debugging | **System** tab | New sub-view or section within Health/Logs |
+| Quick access / cross-cutting | **Command palette** | New palette item (action or navigation) |
+
+### Decision tree for sub-view vs. section
+
+1. **Does it need its own full-page layout?** → Add as a sub-view (new entry in `VALID_VIEWS` + `SubViewToggle`)
+2. **Is it supplementary to an existing view?** → Add as a collapsible section within that view
+3. **Is it a quick action or shortcut?** → Add to CommandPalette only
+
+### When to add a new top-level tab (rarely)
+
+Only if ALL of these are true:
+- The feature serves a **completely different domain** that doesn't fit any existing tab
+- It would be used **frequently enough** to justify top-level visibility
+- It has **no logical parent** among Activity, Schedule, Tasks, or System
+- You've exhausted sub-view and command palette options first
+
+If you do add a tab: update `VALID_TABS`, `VALID_VIEWS`, keyboard shortcuts, `TabsList`, `CommandPalette` navigation items, `useTabNotifications` (if badges needed), `Skeletons.tsx`, and `smoke.spec.ts`.
+
+### Checklist for any new sub-view
+
+1. Create the component in `src/components/` with `dynamic()` import + skeleton loader
+2. Add entry to `VALID_VIEWS` in `page.tsx`
+3. Add to `SubViewToggle` views array for the parent tab
+4. Add navigation item to `CommandPalette.tsx`
+5. Add skeleton to `Skeletons.tsx` if not reusing an existing one
+6. Add smoke tests to `tests/smoke.spec.ts`
+7. If it fetches `/api/health`, use the shared `useHealthData` hook — never add independent health fetches
