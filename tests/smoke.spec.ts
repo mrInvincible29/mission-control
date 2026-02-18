@@ -8,9 +8,9 @@ test("homepage loads with 200 status", async ({ page }) => {
   await expect(page.locator("h1")).toContainText("Mission Control");
 });
 
-test("all 8 tabs are visible", async ({ page }) => {
+test("all 9 tabs are visible", async ({ page }) => {
   await page.goto("/");
-  for (const tab of ["Activity", "Calendar", "Search", "Agents", "Analytics", "Health", "Runs", "Logs"]) {
+  for (const tab of ["Activity", "Calendar", "Search", "Agents", "Analytics", "Health", "Runs", "Logs", "Tasks"]) {
     await expect(page.getByRole("tab", { name: new RegExp(tab) })).toBeVisible();
   }
 });
@@ -777,4 +777,171 @@ test("activity feed uses shared formatters (tokens show K/M suffix)", async ({ p
   await expect(tabPanel).toBeVisible();
   const content = await tabPanel.textContent();
   expect(content).toBeTruthy();
+});
+
+// === KANBAN TASKS TESTS ===
+
+test("Tasks API GET returns valid JSON with tasks array", async ({ request }) => {
+  const response = await request.get("/api/tasks");
+  expect(response.status()).toBe(200);
+  const data = await response.json();
+  expect(data).toHaveProperty("tasks");
+  expect(data).toHaveProperty("total");
+  expect(Array.isArray(data.tasks)).toBe(true);
+  expect(typeof data.total).toBe("number");
+});
+
+test("Tasks API GET returns Cache-Control no-cache header", async ({ request }) => {
+  const response = await request.get("/api/tasks");
+  expect(response.status()).toBe(200);
+  const cacheControl = response.headers()["cache-control"];
+  expect(cacheControl).toContain("no-cache");
+  expect(cacheControl).toContain("no-store");
+  expect(cacheControl).toContain("must-revalidate");
+});
+
+test("Tasks API POST creates a task and returns it", async ({ request }) => {
+  const response = await request.post("/api/tasks", {
+    data: { title: "Test task from Playwright", priority: "high" },
+  });
+  expect(response.status()).toBe(201);
+  const data = await response.json();
+  expect(data).toHaveProperty("task");
+  expect(data.task.title).toBe("Test task from Playwright");
+  expect(data.task.priority).toBe("high");
+  expect(data.task.status).toBe("todo");
+  expect(data.task.source).toBe("manual");
+
+  // Cleanup
+  await request.delete(`/api/tasks/${data.task.id}`);
+});
+
+test("Tasks API POST rejects missing title", async ({ request }) => {
+  const response = await request.post("/api/tasks", {
+    data: { description: "No title" },
+  });
+  expect(response.status()).toBe(400);
+});
+
+test("Tasks API GET excludes archived by default", async ({ request }) => {
+  const response = await request.get("/api/tasks");
+  const data = await response.json();
+  expect(data.tasks.every((t: any) => t.archived === false)).toBe(true);
+});
+
+test("Tasks API PATCH updates a task", async ({ request }) => {
+  const createRes = await request.post("/api/tasks", {
+    data: { title: "Patch test task" },
+  });
+  const { task } = await createRes.json();
+
+  const patchRes = await request.patch(`/api/tasks/${task.id}`, {
+    data: { status: "in_progress", priority: "urgent" },
+  });
+  expect(patchRes.status()).toBe(200);
+  const patched = await patchRes.json();
+  expect(patched.task.status).toBe("in_progress");
+  expect(patched.task.priority).toBe("urgent");
+
+  await request.delete(`/api/tasks/${task.id}`);
+});
+
+test("Tasks API PATCH sets completed_at when status becomes done", async ({ request }) => {
+  const createRes = await request.post("/api/tasks", {
+    data: { title: "Complete me" },
+  });
+  const { task } = await createRes.json();
+
+  const patchRes = await request.patch(`/api/tasks/${task.id}`, {
+    data: { status: "done" },
+  });
+  const patched = await patchRes.json();
+  expect(patched.task.completedAt).toBeTruthy();
+
+  await request.delete(`/api/tasks/${task.id}`);
+});
+
+test("Tasks API DELETE removes a task", async ({ request }) => {
+  const createRes = await request.post("/api/tasks", {
+    data: { title: "Delete me" },
+  });
+  const { task } = await createRes.json();
+
+  const delRes = await request.delete(`/api/tasks/${task.id}`);
+  expect(delRes.status()).toBe(200);
+  const body = await delRes.json();
+  expect(body.success).toBe(true);
+});
+
+test("Tasks API PATCH returns 404 for non-existent task", async ({ request }) => {
+  const response = await request.patch("/api/tasks/00000000-0000-0000-0000-000000000000", {
+    data: { title: "Nope" },
+  });
+  expect(response.status()).toBe(404);
+});
+
+test("Tasks API DELETE returns 404 for non-existent task", async ({ request }) => {
+  const response = await request.delete("/api/tasks/00000000-0000-0000-0000-000000000000");
+  expect(response.status()).toBe(404);
+});
+
+test("Assignees API returns valid JSON", async ({ request }) => {
+  const response = await request.get("/api/assignees");
+  expect(response.status()).toBe(200);
+  const data = await response.json();
+  expect(data).toHaveProperty("assignees");
+  expect(Array.isArray(data.assignees)).toBe(true);
+  expect(data.assignees.length).toBeGreaterThanOrEqual(2);
+  const names = data.assignees.map((a: any) => a.name);
+  expect(names).toContain("aj");
+  expect(names).toContain("bot");
+});
+
+test("Tasks tab loads via URL", async ({ page }) => {
+  await page.goto("/?tab=tasks");
+  const tasksTab = page.getByRole("tab", { name: /Tasks/ });
+  await expect(tasksTab).toHaveAttribute("data-state", "active");
+  const tabContent = page.getByRole("tabpanel");
+  await expect(tabContent).toBeVisible();
+});
+
+test("Tasks tab keyboard shortcut 9 works", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.keyboard.press("9");
+  await expect(page.getByRole("tab", { name: /Tasks/ })).toHaveAttribute("data-state", "active");
+});
+
+test("Tasks tab shows Kanban board with 4 columns", async ({ page }) => {
+  await page.goto("/?tab=tasks");
+  await expect(page.getByText("To Do")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("In Progress")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Blocked")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Done")).toBeVisible({ timeout: 10000 });
+});
+
+test("Tasks tab has quick-add input", async ({ page }) => {
+  await page.goto("/?tab=tasks");
+  await expect(page.getByText("To Do")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByPlaceholder("Add a task...")).toBeVisible({ timeout: 5000 });
+});
+
+test("command palette shows Tasks navigation item", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await page.evaluate(() => {
+    const event = new KeyboardEvent("keydown", {
+      key: "k",
+      code: "KeyK",
+      metaKey: true,
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    window.dispatchEvent(event);
+  });
+  await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
+  await page.fill('input[placeholder="Type a command or search..."]', "tasks");
+  await expect(page.getByText("Go to Tasks")).toBeVisible();
 });

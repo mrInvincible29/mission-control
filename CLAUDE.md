@@ -7,7 +7,7 @@ Personal command center dashboard for monitoring AI agent activity, scheduled ta
 - **Frontend**: Next.js 16 (App Router, `output: "standalone"`), React 19, Tailwind CSS v4, shadcn/ui (Radix primitives)
 - **Backend**: Supabase (PostgreSQL + RPC functions), SWR for client-side data fetching
 - **Deployment**: Standalone `server.js` on `172.29.0.1:39151`, behind Traefik at `mission-control.quota.wtf` with basic auth
-- **Testing**: Playwright (72 smoke tests against `http://localhost:39151`)
+- **Testing**: Playwright (88 smoke tests against `http://localhost:39151`)
 - **Icons**: lucide-react
 
 ## Architecture
@@ -17,12 +17,14 @@ supabase/
   migrations/       # PostgreSQL schema + RPC functions
 src/
   app/
-    page.tsx        # Main dashboard — 8 tabs (Activity, Calendar, Search, Agents, Analytics, Health, Runs, Logs)
+    page.tsx        # Main dashboard — 9 tabs (Activity, Calendar, Search, Agents, Analytics, Health, Runs, Logs, Tasks)
     api/activity/   # POST/GET activities (basic auth)
     api/health/     # GET system metrics (CPU, memory, disk, Docker, services, network, processes)
     api/cron-runs/  # GET cron job execution history from ~/.openclaw/cron/runs/*.jsonl
     api/logs/       # GET service logs from journalctl + OpenClaw log files
     api/index/      # File indexing + cron sync endpoint (basic auth)
+    api/tasks/      # CRUD for Kanban task board (GET/POST + PATCH/DELETE by ID)
+    api/assignees/  # GET assignee list for task board
     api/sync/       # Webhook for external activity ingestion
   components/
     ActivityFeed.tsx   # Paginated activity list with category/date filters
@@ -30,10 +32,11 @@ src/
     CalendarView.tsx   # Google Calendar-style hourly grid with day/week toggle
     CronHistory.tsx    # Cron run history with job stats, timeline, expandable runs
     GlobalSearch.tsx   # Full-text search + file browser
+    KanbanBoard.tsx    # Drag-and-drop Kanban task board with 4 columns, detail sheet
     LogViewer.tsx      # Live service log viewer with source switching and filtering
     SystemHealth.tsx   # Real-time server monitoring (CPU, memory, disk, Docker, services)
     StatusStrip.tsx    # Live header vitals — CPU %, Memory %, Docker count (30s auto-refresh)
-    Skeletons.tsx      # Shimmer skeleton loaders for all 8 tabs (shown during dynamic import)
+    Skeletons.tsx      # Shimmer skeleton loaders for all 9 tabs (shown during dynamic import)
     SetupGuide.tsx     # Supabase setup instructions (shown if unconfigured)
     providers/         # SWRProvider, ThemeProvider
     ui/                # shadcn/ui primitives (button, badge, card, dialog, hover-card, etc.)
@@ -46,13 +49,13 @@ src/
       queries.ts       # All Supabase queries — activities, documents, cron jobs, analytics
     utils.ts           # cn() class merge utility
     formatters.ts      # Shared formatTokens, formatCost, formatRelativeTime, getModelColor
-  types/index.ts       # Activity, CronJob, IndexedDocument, SearchResult interfaces
+  types/index.ts       # Activity, CronJob, IndexedDocument, SearchResult, Task, Assignee interfaces
 scripts/
   activity-sync.mjs   # Watches latest OpenClaw log → syncs activities to Supabase
   file-watcher.mjs    # Watches ~/clawd → indexes files to Supabase
   sync-cron-data.mjs  # Parses OpenClaw config → upserts cron_jobs to Supabase
 tests/
-  smoke.spec.ts        # 72 Playwright smoke tests covering all tabs, APIs, and regressions
+  smoke.spec.ts        # 88 Playwright smoke tests covering all tabs, APIs, and regressions
 ```
 
 ## Data Model (Supabase)
@@ -63,7 +66,11 @@ tests/
 
 **cron_jobs** — `name`, `schedule` (human-readable), `command`, `enabled`, `last_run`, `next_run`, `model` (haiku/sonnet/opus)
 
-**RPC functions**: `analytics_summary(p_days)`, `activity_stats(p_since)`, `cleanup_old_activities()`, `search_documents(p_query, p_limit)`
+**tasks** — `title`, `description`, `status` (todo/in_progress/blocked/done), `assignee` (FK to assignees), `priority` (low/medium/high/urgent), `tags` (text[]), `source` (manual/cron/telegram), `cron_job_id` (FK to cron_jobs), `position` (fractional index), `metadata` (jsonb), `archived`, `completed_at`
+
+**assignees** — `name` (PK), `display_name`, `avatar_url`. Seeded with `aj` and `bot`.
+
+**RPC functions**: `analytics_summary(p_days)`, `activity_stats(p_since)`, `cleanup_old_activities()`, `search_documents(p_query, p_limit)`, `archive_old_tasks()` (marks done tasks >7 days as archived)
 
 ## Data Pipelines
 
@@ -88,7 +95,8 @@ Both APIs return `Cache-Control: no-cache, no-store, must-revalidate` to prevent
 - **CalendarView schedule parsing** converts human-readable strings ("daily 3:00 AM", "every 6 hours", "Monday 2pm") to grid positions. Frequent tasks (interval <= 6h) go to the all-day row instead of the hourly grid.
 - **Model color coding**: Haiku = green, Sonnet = blue, Opus = purple, unknown = gray. Used in CalendarView task cards (left border stripe + dot).
 - **StatusStrip in header** — live CPU/memory/Docker count with mini progress bars (30s polling, pauses when tab hidden). Shows on desktop; mobile sees subtitle text.
-- **Tab notification badges** — Health tab shows colored dot (amber=warn, red=critical), Runs and Logs tabs show count badges for failures/errors. Powered by `useTabNotifications` hook (60s polling).
+- **Tab notification badges** — Health tab shows colored dot (amber=warn, red=critical), Runs and Logs tabs show count badges for failures/errors, Tasks tab shows blocked count. Powered by `useTabNotifications` hook (60s polling).
+- **Kanban board** — 4 columns (To Do, In Progress, Blocked, Done) with `@dnd-kit` drag-and-drop. Cards use fractional indexing (`fractional-indexing` package) for position. Priority color coding: urgent=red, high=orange, medium=blue, low=gray. Quick-add in To Do column. Detail sheet (shadcn Sheet) opens from right on card click. Auto-archive done tasks after 7 days via `archive_old_tasks()` RPC.
 
 ## Commands
 
@@ -96,7 +104,7 @@ Both APIs return `Cache-Control: no-cache, no-store, must-revalidate` to prevent
 npm run dev          # Dev server on 172.29.0.1:39151
 npm run build        # Production build (standalone) — auto-copies static assets
 npm run start        # Start production server
-npx playwright test  # Run all 72 smoke tests against localhost:39151
+npx playwright test  # Run all 88 smoke tests against localhost:39151
 
 # Database migrations (Supabase CLI — needs SUPABASE_DB_PASSWORD env var)
 npm run db:new -- <name>  # Create new migration file
@@ -130,7 +138,13 @@ Basic auth credentials for API endpoints are configured in Traefik (see `~/fast/
 - **POST /api/index** — Trigger file indexing + cron sync from OpenClaw config
 - **GET /api/index** — List all indexed files
 
-All endpoints require basic auth (via Traefik). Health, cron-runs, and logs APIs include `Cache-Control: no-cache` headers.
+- **GET /api/tasks** — List tasks. Params: `status`, `assignee`, `priority`, `archived` (default false), `limit`, `offset`
+- **POST /api/tasks** — Create task `{ title, description?, status?, assignee?, priority?, tags?, source?, cron_job_id?, metadata? }`
+- **PATCH /api/tasks/:id** — Update task fields (auto-sets `completed_at` on status→done)
+- **DELETE /api/tasks/:id** — Delete task
+- **GET /api/assignees** — List assignees for task board
+
+All endpoints require basic auth (via Traefik). Health, cron-runs, logs, and tasks APIs include `Cache-Control: no-cache` headers.
 
 ## Systemd Services
 
