@@ -43,6 +43,7 @@ import {
   MessageSquare,
   Timer,
 } from "lucide-react";
+import { useToast } from "@/components/Toast";
 import type { Task, TaskStatus, TaskPriority, Assignee } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -551,6 +552,7 @@ function TaskDetailSheet({
 // ---------------------------------------------------------------------------
 
 export function KanbanBoard() {
+  const { toast } = useToast();
   const { data: tasksData, mutate: mutateTasks } = useSWR(
     "/api/tasks?archived=false",
     fetcher,
@@ -710,6 +712,9 @@ export function KanbanBoard() {
         return;
       }
 
+      // Save previous state for undo context
+      const prevStatus = draggedTask.status;
+
       // Optimistic update
       mutateTasks(
         (current: { tasks: Task[]; total: number } | undefined) => {
@@ -726,6 +731,11 @@ export function KanbanBoard() {
         { revalidate: false }
       );
 
+      if (prevStatus !== targetStatus) {
+        const columnLabel = COLUMNS.find(c => c.id === targetStatus)?.label ?? targetStatus;
+        toast(`Moved to ${columnLabel}`, "success");
+      }
+
       try {
         await fetch(`/api/tasks/${draggedTaskId}`, {
           method: "PATCH",
@@ -735,9 +745,10 @@ export function KanbanBoard() {
         mutateTasks();
       } catch {
         mutateTasks();
+        toast("Failed to move task", "error");
       }
     },
-    [tasks, mutateTasks]
+    [tasks, mutateTasks, toast]
   );
 
   // Save handler for detail sheet
