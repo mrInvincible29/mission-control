@@ -5,8 +5,9 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
 import {
   Activity,
-  Calendar,
-  Search,
+  CalendarDays,
+  CheckSquare,
+  Server,
   Plus,
   RefreshCw,
   Sun,
@@ -18,7 +19,10 @@ import {
   Zap,
   FileText,
   Hash,
-  LayoutGrid,
+  BarChart3,
+  Bot,
+  History,
+  ScrollText,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
@@ -86,13 +90,18 @@ export function CommandPalette() {
   const { theme, setTheme } = useTheme();
   const { toast } = useToast();
 
+  const close = useCallback(() => setOpen(false), []);
+
   const navigateToTab = useCallback(
-    (tab: string) => {
-      const url = tab === "activity" ? "/" : `/?tab=${tab}`;
+    (tab: string, view?: string) => {
+      const params = new URLSearchParams();
+      if (tab !== "activity") params.set("tab", tab);
+      if (view) params.set("view", view);
+      const url = params.toString() ? `/?${params}` : "/";
       router.replace(url, { scroll: false });
-      setOpen(false);
+      close();
     },
-    [router]
+    [router, close]
   );
 
   const handleSync = useCallback(async () => {
@@ -130,14 +139,12 @@ export function CommandPalette() {
   }, [toast]);
 
   const items = useMemo((): PaletteItem[] => {
-    const currentTab = searchParams.get("tab") || "activity";
-
     return [
-      // Navigation
+      // Tab navigation
       {
         id: "nav-activity",
-        label: "Go to Activity Feed",
-        description: "View recent agent activity and logs",
+        label: "Activity",
+        description: "Feed, Analytics, Agents",
         icon: <Activity className="h-4 w-4" />,
         section: "Navigation",
         keywords: ["activity", "feed", "logs", "events"],
@@ -145,84 +152,89 @@ export function CommandPalette() {
         shortcut: "1",
       },
       {
-        id: "nav-calendar",
-        label: "Go to Calendar",
-        description: "View scheduled cron jobs on the calendar",
-        icon: <Calendar className="h-4 w-4" />,
+        id: "nav-schedule",
+        label: "Schedule",
+        description: "Calendar, Run History",
+        icon: <CalendarDays className="h-4 w-4" />,
         section: "Navigation",
-        keywords: ["calendar", "schedule", "cron", "week", "day"],
-        action: () => navigateToTab("calendar"),
+        keywords: ["schedule", "calendar", "cron", "week", "day"],
+        action: () => navigateToTab("schedule"),
         shortcut: "2",
       },
       {
-        id: "nav-search",
-        label: "Go to Files & Search",
-        description: "Search indexed workspace files",
-        icon: <Search className="h-4 w-4" />,
-        section: "Navigation",
-        keywords: ["search", "files", "documents", "browse", "memory"],
-        action: () => navigateToTab("search"),
-        shortcut: "3",
-      },
-      {
-        id: "nav-agents",
-        label: "Go to Agent Sessions",
-        description: "Browse agent session history and timelines",
-        icon: <Zap className="h-4 w-4" />,
-        section: "Navigation",
-        keywords: ["agents", "sessions", "agent", "timeline", "history"],
-        action: () => navigateToTab("agents"),
-        shortcut: "4",
-      },
-      {
-        id: "nav-analytics",
-        label: "Go to Analytics",
-        description: "View token usage, costs, and trends",
-        icon: <Activity className="h-4 w-4" />,
-        section: "Navigation",
-        keywords: ["analytics", "usage", "tokens", "cost", "charts", "trends", "stats"],
-        action: () => navigateToTab("analytics"),
-        shortcut: "5",
-      },
-      {
-        id: "nav-health",
-        label: "Go to System Health",
-        description: "Monitor CPU, memory, disk, Docker, and services",
-        icon: <Monitor className="h-4 w-4" />,
-        section: "Navigation",
-        keywords: ["health", "system", "cpu", "memory", "disk", "docker", "services", "monitor", "server"],
-        action: () => navigateToTab("health"),
-        shortcut: "6",
-      },
-      {
-        id: "nav-cron-runs",
-        label: "Go to Cron Run History",
-        description: "View execution history and logs for all cron jobs",
-        icon: <Clock className="h-4 w-4" />,
-        section: "Navigation",
-        keywords: ["cron", "runs", "history", "execution", "logs", "jobs", "timeline"],
-        action: () => navigateToTab("cron-runs"),
-        shortcut: "7",
-      },
-      {
-        id: "nav-logs",
-        label: "Go to Log Viewer",
-        description: "Tail live service logs from systemd and OpenClaw",
-        icon: <FileText className="h-4 w-4" />,
-        section: "Navigation",
-        keywords: ["logs", "tail", "systemd", "journal", "service", "terminal", "output", "viewer"],
-        action: () => navigateToTab("logs"),
-        shortcut: "8",
-      },
-      {
         id: "nav-tasks",
-        label: "Go to Tasks",
-        description: "Kanban board for managing tasks and to-dos",
-        icon: <LayoutGrid className="h-4 w-4" />,
+        label: "Tasks",
+        description: "Kanban board",
+        icon: <CheckSquare className="h-4 w-4" />,
         section: "Navigation",
         keywords: ["tasks", "kanban", "board", "todo"],
         action: () => navigateToTab("tasks"),
-        shortcut: "9",
+        shortcut: "3",
+      },
+      {
+        id: "nav-system",
+        label: "System",
+        description: "Health, Logs",
+        icon: <Server className="h-4 w-4" />,
+        section: "Navigation",
+        keywords: ["system", "health", "logs", "server"],
+        action: () => navigateToTab("system"),
+        shortcut: "4",
+      },
+      // Sub-view navigation
+      {
+        id: "nav-analytics",
+        label: "Analytics",
+        description: "Token usage, cost charts",
+        icon: <BarChart3 className="h-4 w-4" />,
+        section: "Go to",
+        keywords: ["charts", "tokens", "cost", "usage", "analytics", "trends", "stats"],
+        action: () => navigateToTab("activity", "analytics"),
+      },
+      {
+        id: "nav-agents",
+        label: "Agent Sessions",
+        description: "Active agent monitoring",
+        icon: <Bot className="h-4 w-4" />,
+        section: "Go to",
+        keywords: ["agents", "sessions", "bots", "timeline"],
+        action: () => navigateToTab("activity", "agents"),
+      },
+      {
+        id: "nav-calendar",
+        label: "Calendar",
+        description: "Cron job schedule grid",
+        icon: <CalendarDays className="h-4 w-4" />,
+        section: "Go to",
+        keywords: ["calendar", "schedule", "cron", "grid"],
+        action: () => navigateToTab("schedule", "calendar"),
+      },
+      {
+        id: "nav-runs",
+        label: "Run History",
+        description: "Cron execution history",
+        icon: <History className="h-4 w-4" />,
+        section: "Go to",
+        keywords: ["runs", "cron", "history", "jobs", "execution"],
+        action: () => navigateToTab("schedule", "runs"),
+      },
+      {
+        id: "nav-health",
+        label: "System Health",
+        description: "CPU, memory, disk, Docker",
+        icon: <Server className="h-4 w-4" />,
+        section: "Go to",
+        keywords: ["health", "cpu", "memory", "docker", "disk", "monitor"],
+        action: () => navigateToTab("system", "health"),
+      },
+      {
+        id: "nav-logs",
+        label: "Log Viewer",
+        description: "Service logs",
+        icon: <ScrollText className="h-4 w-4" />,
+        section: "Go to",
+        keywords: ["logs", "viewer", "journal", "systemd", "tail"],
+        action: () => navigateToTab("system", "logs"),
       },
       // Actions
       {
@@ -233,9 +245,7 @@ export function CommandPalette() {
         section: "Actions",
         keywords: ["create", "new", "cron", "job", "schedule", "task"],
         action: () => {
-          // Navigate to calendar and trigger the create dialog
-          navigateToTab("calendar");
-          // Dispatch a custom event that CalendarView listens for
+          navigateToTab("schedule", "calendar");
           window.dispatchEvent(new CustomEvent("open-create-cron"));
         },
       },
@@ -264,10 +274,7 @@ export function CommandPalette() {
         icon: <Sun className="h-4 w-4" />,
         section: "Theme",
         keywords: ["light", "theme", "bright", "white"],
-        action: () => {
-          setTheme("light");
-          setOpen(false);
-        },
+        action: () => { setTheme("light"); close(); },
       },
       {
         id: "theme-dark",
@@ -275,10 +282,7 @@ export function CommandPalette() {
         icon: <Moon className="h-4 w-4" />,
         section: "Theme",
         keywords: ["dark", "theme", "night", "black"],
-        action: () => {
-          setTheme("dark");
-          setOpen(false);
-        },
+        action: () => { setTheme("dark"); close(); },
       },
       {
         id: "theme-system",
@@ -286,10 +290,7 @@ export function CommandPalette() {
         icon: <Monitor className="h-4 w-4" />,
         section: "Theme",
         keywords: ["system", "theme", "auto", "os"],
-        action: () => {
-          setTheme("system");
-          setOpen(false);
-        },
+        action: () => { setTheme("system"); close(); },
       },
       // Quick filters (activity)
       {
@@ -300,8 +301,7 @@ export function CommandPalette() {
         section: "Quick Filters",
         keywords: ["errors", "filter", "failed", "important", "red"],
         action: () => {
-          navigateToTab("activity");
-          // Dispatch custom event for ActivityFeed to handle
+          navigateToTab("activity", "feed");
           setTimeout(() => {
             window.dispatchEvent(new CustomEvent("set-activity-filter", { detail: { category: "important" } }));
           }, 100);
@@ -315,7 +315,7 @@ export function CommandPalette() {
         section: "Quick Filters",
         keywords: ["model", "tokens", "cost", "usage", "ai", "llm"],
         action: () => {
-          navigateToTab("activity");
+          navigateToTab("activity", "feed");
           setTimeout(() => {
             window.dispatchEvent(new CustomEvent("set-activity-filter", { detail: { category: "model" } }));
           }, 100);
@@ -329,14 +329,14 @@ export function CommandPalette() {
         section: "Quick Filters",
         keywords: ["today", "recent", "now", "latest"],
         action: () => {
-          navigateToTab("activity");
+          navigateToTab("activity", "feed");
           setTimeout(() => {
             window.dispatchEvent(new CustomEvent("set-activity-filter", { detail: { dateRange: 1 } }));
           }, 100);
         },
       },
     ];
-  }, [searchParams, navigateToTab, handleSync, handleRefreshIndex, setTheme, theme]);
+  }, [navigateToTab, handleSync, handleRefreshIndex, setTheme, close]);
 
   const filtered = useMemo(() => {
     if (!query.trim()) return items;
