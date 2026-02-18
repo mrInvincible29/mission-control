@@ -276,8 +276,19 @@ export function AgentSessions() {
                 Loading sessions...
               </div>
             ) : filteredSessions.length === 0 ? (
-              <div className="flex items-center justify-center h-32 text-muted-foreground">
-                {searchText ? `No sessions matching "${searchText}"` : "No sessions found"}
+              <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2">
+                {searchText ? (
+                  <>
+                    <Search className="size-8 opacity-20" />
+                    <p className="text-sm">No sessions matching &ldquo;{searchText}&rdquo;</p>
+                  </>
+                ) : (
+                  <>
+                    <Clock className="size-8 opacity-20" />
+                    <p className="text-sm">No active sessions</p>
+                    <p className="text-xs text-muted-foreground/50">Sessions appear when agents start working</p>
+                  </>
+                )}
               </div>
             ) : (
               <div className="space-y-2">

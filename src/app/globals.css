@@ -130,6 +130,21 @@ html {
   --sidebar-ring: oklch(0.556 0 0);
 }
 
+/* Tab content fade-in on switch */
+@keyframes tab-fade-in {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+[data-slot="tabs-content"][data-state="active"] {
+  animation: tab-fade-in 0.2s ease-out;
+}
+
 @layer base {
   * {
     @apply border-border outline-ring/50;

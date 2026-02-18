@@ -1,7 +1,8 @@
 "use client";
 
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Cpu, MemoryStick, Container, WifiOff } from "lucide-react";
+import { Cpu, MemoryStick, Container, HardDrive, Clock, WifiOff } from "lucide-react";
 import { useHealthData } from "@/hooks/useHealthData";
 
 function getColor(pct: number): string {
@@ -11,6 +12,12 @@ function getColor(pct: number): string {
 }
 
 function getDotColor(pct: number): string {
+  if (pct >= 90) return "bg-red-500";
+  if (pct >= 70) return "bg-amber-500";
+  return "bg-emerald-500";
+}
+
+function getBarColor(pct: number): string {
   if (pct >= 90) return "bg-red-500";
   if (pct >= 70) return "bg-amber-500";
   return "bg-emerald-500";
@@ -27,9 +34,43 @@ function MiniBar({ percent, color }: { percent: number; color: string }) {
   );
 }
 
+function formatUptime(seconds: number): string {
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days > 0) return `${days}d ${hours}h`;
+  const mins = Math.floor((seconds % 3600) / 60);
+  if (hours > 0) return `${hours}h ${mins}m`;
+  return `${mins}m`;
+}
+
+/** Live IST clock — updates every minute */
+function useISTClock(): string {
+  const [time, setTime] = useState("");
+
+  useEffect(() => {
+    const update = () => {
+      const now = new Date();
+      setTime(
+        now.toLocaleTimeString("en-IN", {
+          timeZone: "Asia/Kolkata",
+          hour: "2-digit",
+          minute: "2-digit",
+          hour12: false,
+        })
+      );
+    };
+    update();
+    const interval = setInterval(update, 60000);
+    return () => clearInterval(interval);
+  }, []);
+
+  return time;
+}
+
 export function StatusStrip({ compact = false }: { compact?: boolean }) {
   const { data, connected } = useHealthData();
   const router = useRouter();
+  const istTime = useISTClock();
 
   if (compact) {
     return (
@@ -46,6 +87,11 @@ export function StatusStrip({ compact = false }: { compact?: boolean }) {
               {" · "}
               <span className={getColor(data.memPercent)}>Mem {data.memPercent}%</span>
             </span>
+            {istTime && (
+              <span className="text-muted-foreground/50 ml-0.5">
+                {istTime}
+              </span>
+            )}
           </>
         )}
       </button>
@@ -63,20 +109,39 @@ export function StatusStrip({ compact = false }: { compact?: boolean }) {
         <>
           <span className="flex items-center gap-1.5" title={`CPU: ${data.cpu}%`}>
             <Cpu className="h-3 w-3" />
-            <MiniBar percent={data.cpu} color={data.cpu >= 90 ? "bg-red-500" : data.cpu >= 70 ? "bg-amber-500" : "bg-emerald-500"} />
+            <MiniBar percent={data.cpu} color={getBarColor(data.cpu)} />
             <span className={`font-mono tabular-nums ${getColor(data.cpu)}`}>{data.cpu}%</span>
           </span>
           <span className="text-border">|</span>
           <span className="flex items-center gap-1.5" title={`Memory: ${data.memPercent}%`}>
             <MemoryStick className="h-3 w-3" />
-            <MiniBar percent={data.memPercent} color={data.memPercent >= 90 ? "bg-red-500" : data.memPercent >= 70 ? "bg-amber-500" : "bg-emerald-500"} />
+            <MiniBar percent={data.memPercent} color={getBarColor(data.memPercent)} />
             <span className={`font-mono tabular-nums ${getColor(data.memPercent)}`}>{data.memPercent}%</span>
+          </span>
+          <span className="text-border">|</span>
+          <span className="flex items-center gap-1.5" title={`Disk: ${data.diskPercent}%`}>
+            <HardDrive className="h-3 w-3" />
+            <MiniBar percent={data.diskPercent} color={getBarColor(data.diskPercent)} />
+            <span className={`font-mono tabular-nums ${getColor(data.diskPercent)}`}>{data.diskPercent}%</span>
           </span>
           <span className="text-border">|</span>
           <span className="flex items-center gap-1" title={`${data.containers} containers running`}>
             <Container className="h-3 w-3" />
             <span className="font-mono tabular-nums">{data.containers}</span>
           </span>
+          <span className="text-border">|</span>
+          <span className="flex items-center gap-1" title={`Uptime: ${formatUptime(data.uptime)}`}>
+            <Clock className="h-3 w-3" />
+            <span className="font-mono tabular-nums">{formatUptime(data.uptime)}</span>
+          </span>
+          {istTime && (
+            <>
+              <span className="text-border">|</span>
+              <span className="font-mono tabular-nums text-foreground/60" title="Server time (IST)">
+                {istTime} IST
+              </span>
+            </>
+          )}
           <div
             className={`w-1.5 h-1.5 rounded-full ${getDotColor(Math.max(data.cpu, data.memPercent))} animate-pulse`}
             title={data.cpu >= 70 || data.memPercent >= 70 ? "High resource usage" : "System healthy"}

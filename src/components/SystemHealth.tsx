@@ -235,6 +235,38 @@ function LoadAvgBars({ loadAvg, cores }: { loadAvg: [number, number, number]; co
   );
 }
 
+/** Tiny circular countdown showing time until next auto-refresh */
+function RefreshCountdown({ lastRefresh, interval }: { lastRefresh: number; interval: number }) {
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    const tick = () => {
+      const elapsed = Date.now() - lastRefresh;
+      setProgress(Math.min(elapsed / interval, 1));
+    };
+    tick();
+    const id = setInterval(tick, 200);
+    return () => clearInterval(id);
+  }, [lastRefresh, interval]);
+
+  const size = 16;
+  const sw = 2;
+  const r = (size - sw) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c - progress * c;
+
+  return (
+    <svg width={size} height={size} className="-rotate-90 opacity-40" aria-hidden>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeOpacity={0.15} strokeWidth={sw} />
+      <circle
+        cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth={sw}
+        strokeDasharray={c} strokeDashoffset={offset} strokeLinecap="round"
+        className="transition-[stroke-dashoffset] duration-200"
+      />
+    </svg>
+  );
+}
+
 export function SystemHealth() {
   const [data, setData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -344,6 +376,10 @@ export function SystemHealth() {
             </Badge>
           </div>
           <div className="flex items-center gap-2">
+            {/* Refresh countdown ring */}
+            {autoRefresh && lastRefresh > 0 && (
+              <RefreshCountdown lastRefresh={lastRefresh} interval={10000} />
+            )}
             <span className="text-[10px] text-muted-foreground/60">
               {lastRefresh > 0 && `Updated ${Math.round((Date.now() - lastRefresh) / 1000)}s ago`}
             </span>

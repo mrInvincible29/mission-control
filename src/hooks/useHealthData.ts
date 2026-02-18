@@ -8,6 +8,8 @@ export interface HealthData {
   memPercent: number;
   containers: number;
   uptime: number;
+  diskPercent: number;
+  hostname: string;
   raw: any; // Full API response for SystemHealth component
 }
 
@@ -20,6 +22,8 @@ const fetcher = async (): Promise<HealthData> => {
     memPercent: Math.round(data.memory?.usedPercent ?? 0),
     containers: data.docker?.length ?? 0,
     uptime: data.uptime ?? 0,
+    diskPercent: Math.round(data.disks?.[0]?.usedPercent ?? 0),
+    hostname: data.hostname ?? "",
     raw: data,
   };
 };

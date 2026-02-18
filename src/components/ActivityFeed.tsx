@@ -260,8 +260,19 @@ export function ActivityFeed() {
               Loading activities...
             </div>
           ) : activities.length === 0 ? (
-            <div className="flex items-center justify-center h-32 text-muted-foreground">
-              {searchText ? `No activities matching "${searchText}"` : "No activities in this period"}
+            <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2">
+              {searchText ? (
+                <>
+                  <Search className="size-8 opacity-20" />
+                  <p className="text-sm">No activities matching &ldquo;{searchText}&rdquo;</p>
+                </>
+              ) : (
+                <>
+                  <Circle className="size-8 opacity-20" />
+                  <p className="text-sm">No activities in this period</p>
+                  <p className="text-xs text-muted-foreground/50">Agent activity will appear here as it happens</p>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-1.5">

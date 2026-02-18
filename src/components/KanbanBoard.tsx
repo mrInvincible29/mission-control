@@ -327,8 +327,13 @@ function KanbanColumn({
           ))}
 
           {tasks.length === 0 && (
-            <div className="flex-1 flex items-center justify-center text-xs text-muted-foreground/40 py-8">
-              No tasks
+            <div className="flex-1 flex flex-col items-center justify-center text-muted-foreground/30 py-8 gap-1.5">
+              <div className="opacity-40">{column.icon}</div>
+              <p className="text-xs">
+                {column.id === "todo" ? "Add a task above" :
+                 column.id === "done" ? "Completed tasks appear here" :
+                 "Drag tasks here"}
+              </p>
             </div>
           )}
         </div>
