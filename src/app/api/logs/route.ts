@@ -14,7 +14,7 @@ interface LogSource {
 // All source IDs and unit names are hardcoded — no user input reaches execSync
 const LOG_SOURCES: LogSource[] = [
   { id: "mission-control", name: "Mission Control", type: "systemd", unit: "mission-control", description: "Dashboard server" },
-  { id: "mc-file-watcher", name: "File Watcher", type: "systemd", unit: "mc-file-watcher", description: "Convex document indexer" },
+  { id: "mc-file-watcher", name: "File Watcher", type: "systemd", unit: "mc-file-watcher", description: "Supabase document indexer" },
   { id: "mc-activity-sync", name: "Activity Sync", type: "systemd-user", unit: "mc-activity-sync", description: "OpenClaw log parser" },
   { id: "docker", name: "Docker", type: "systemd", unit: "docker", description: "Container runtime" },
   { id: "nginx", name: "Nginx", type: "systemd", unit: "nginx", description: "Web server" },
@@ -93,8 +93,15 @@ function parseLogLine(raw: string): { timestamp: string; level: string; message:
   return { timestamp: "", level: detectLevel(raw), message: raw };
 }
 
-function getTodayLogPath(): string {
-  return `/tmp/openclaw/openclaw-${new Date().toISOString().slice(0, 10)}.log`;
+function getLatestOpenClawLog(): string | null {
+  const dir = '/tmp/openclaw';
+  try {
+    const files = fs.readdirSync(dir)
+      .filter(f => f.startsWith('openclaw-') && f.endsWith('.log'))
+      .map(f => ({ path: `${dir}/${f}`, mtime: fs.statSync(`${dir}/${f}`).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    return files[0]?.path || null;
+  } catch { return null; }
 }
 
 // GET /api/logs?source=mission-control&lines=100
@@ -106,13 +113,13 @@ export async function GET(request: NextRequest) {
 
     // If no source specified, return available log sources
     if (!sourceId) {
-      const todayPath = getTodayLogPath();
+      const latestLog = getLatestOpenClawLog();
       const sources = LOG_SOURCES.map(s => ({
         id: s.id,
         name: s.name,
         type: s.type,
         description: s.description,
-        available: s.type === "file" ? fs.existsSync(todayPath) : true,
+        available: s.type === "file" ? latestLog !== null : true,
       }));
 
       return NextResponse.json({ sources }, {
@@ -138,9 +145,11 @@ export async function GET(request: NextRequest) {
       case "systemd-user":
         rawLines = getUserSystemdLogs(source.unit!, lines);
         break;
-      case "file":
-        rawLines = getFileLogs(getTodayLogPath(), lines);
+      case "file": {
+        const logPath = getLatestOpenClawLog();
+        if (logPath) rawLines = getFileLogs(logPath, lines);
         break;
+      }
     }
 
     const entries = rawLines.map(parseLogLine);

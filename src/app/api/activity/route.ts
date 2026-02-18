@@ -1,49 +1,46 @@
 import { NextRequest, NextResponse } from "next/server";
-import { ConvexHttpClient } from "convex/browser";
-import { api } from "../../../../convex/_generated/api";
-
-function getConvexClient(): ConvexHttpClient | null {
-  const url = process.env.NEXT_PUBLIC_CONVEX_URL;
-  if (!url) return null;
-  return new ConvexHttpClient(url);
-}
+import { createServerClient } from "@/lib/supabase/server";
 
 export async function POST(request: NextRequest) {
   try {
-    const convex = getConvexClient();
-    if (!convex) {
-      return NextResponse.json(
-        { error: "Convex not configured. Set NEXT_PUBLIC_CONVEX_URL in .env.local" },
-        { status: 503 }
-      );
-    }
+    const supabase = createServerClient();
 
     const body = await request.json();
-    
+
     const { actionType, description, status, metadata } = body;
-    
+
     if (!actionType || !description || !status) {
       return NextResponse.json(
         { error: "Missing required fields: actionType, description, status" },
         { status: 400 }
       );
     }
-    
+
     if (!["success", "error", "pending"].includes(status)) {
       return NextResponse.json(
         { error: "Invalid status. Must be: success, error, or pending" },
         { status: 400 }
       );
     }
-    
-    const activityId = await convex.mutation(api.activities.create, {
-      actionType,
-      description,
-      status,
-      metadata,
-    });
-    
-    return NextResponse.json({ success: true, id: activityId });
+
+    const { data, error } = await supabase
+      .from("activities")
+      .insert({
+        action_type: actionType,
+        category: body.category ?? "system",
+        description,
+        timestamp: body.timestamp
+          ? new Date(body.timestamp).toISOString()
+          : new Date().toISOString(),
+        status,
+        metadata: metadata ?? null,
+      })
+      .select("id")
+      .single();
+
+    if (error) throw error;
+
+    return NextResponse.json({ success: true, id: data.id });
   } catch (error) {
     console.error("Error creating activity:", error);
     return NextResponse.json(
@@ -55,15 +52,27 @@ export async function POST(request: NextRequest) {
 
 export async function GET() {
   try {
-    const convex = getConvexClient();
-    if (!convex) {
-      return NextResponse.json(
-        { error: "Convex not configured. Set NEXT_PUBLIC_CONVEX_URL in .env.local" },
-        { status: 503 }
-      );
-    }
+    const supabase = createServerClient();
 
-    const activities = await convex.query(api.activities.list, { limit: 100 });
+    const { data, error } = await supabase
+      .from("activities")
+      .select("*")
+      .order("timestamp", { ascending: false })
+      .limit(100);
+
+    if (error) throw error;
+
+    // Map snake_case to camelCase for API consumers
+    const activities = (data ?? []).map((row) => ({
+      id: row.id,
+      actionType: row.action_type,
+      category: row.category,
+      description: row.description,
+      timestamp: new Date(row.timestamp).getTime(),
+      status: row.status,
+      metadata: row.metadata,
+    }));
+
     return NextResponse.json(activities);
   } catch (error) {
     console.error("Error fetching activities:", error);

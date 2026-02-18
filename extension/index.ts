@@ -9,7 +9,8 @@ const plugin = {
     type: "object" as const,
     additionalProperties: false,
     properties: {
-      convexUrl: { type: "string" as const },
+      supabaseUrl: { type: "string" as const },
+      supabaseKey: { type: "string" as const },
       enabled: { type: "boolean" as const, default: true },
     },
   },

@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import useSWR from "swr";
+import { listCronJobs } from "@/lib/supabase/queries";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -291,7 +291,7 @@ function TaskCardPopover({ job }: { job: CronJob }) {
 }
 
 export function CalendarView() {
-  const cronJobs = useQuery(api.cronJobs.list) as CronJob[] | undefined;
+  const { data: cronJobs } = useSWR("cron-jobs", listCronJobs, { refreshInterval: 60000 });
   const { toast } = useToast();
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -711,7 +711,7 @@ export function CalendarView() {
                 style={{ gridColumn: `2 / ${colCount + 2}` }}
               >
                 {visibleBannerTasks.map(task => (
-                  <HoverCard key={task.job._id} openDelay={300} closeDelay={100}>
+                  <HoverCard key={task.job.id} openDelay={300} closeDelay={100}>
                     <HoverCardTrigger asChild>
                       <button
                         onClick={() => setSelectedJob(task.job)}
@@ -797,7 +797,7 @@ export function CalendarView() {
                 return visibleTasks.map((task, idx) => {
                   const key = `${task.colIndex}-${task.hour}`;
                   const group = taskGroups[key];
-                  const indexInGroup = group.findIndex(t => t.job._id === task.job._id && t.colIndex === task.colIndex);
+                  const indexInGroup = group.findIndex(t => t.job.id === task.job.id && t.colIndex === task.colIndex);
                   const groupSize = group.length;
 
                   const maxVisible = 3;
@@ -813,7 +813,7 @@ export function CalendarView() {
                   const isDayView = viewMode === "day";
 
                   return (
-                    <HoverCard key={`${task.job._id}-${task.colIndex}-${idx}`} openDelay={300} closeDelay={100}>
+                    <HoverCard key={`${task.job.id}-${task.colIndex}-${idx}`} openDelay={300} closeDelay={100}>
                       <HoverCardTrigger asChild>
                         <button
                           onClick={() => setSelectedJob(task.job)}

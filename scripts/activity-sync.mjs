@@ -1,34 +1,57 @@
 #!/usr/bin/env node
 /**
- * Activity Sync - Watches OpenClaw logs and syncs to Mission Control
+ * Activity Sync - Watches OpenClaw logs and syncs to Mission Control (Supabase)
  * Run: node scripts/activity-sync.mjs
  *
  * Handles midnight log file rollover automatically.
  */
 
-import { createReadStream, watchFile, unwatchFile, statSync, existsSync } from 'fs';
+import { createReadStream, watchFile, unwatchFile, statSync, readdirSync } from 'fs';
 import { createInterface } from 'readline';
-import { ConvexHttpClient } from 'convex/browser';
-import { api } from '../convex/_generated/api.js';
+import { join } from 'path';
+import { createClient } from '@supabase/supabase-js';
 
-const CONVEX_URL = process.env.CONVEX_URL || 'https://accomplished-rabbit-353.convex.cloud';
-const client = new ConvexHttpClient(CONVEX_URL);
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-let currentDate = '';
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('[!] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false },
+});
+
+const LOG_DIR = '/tmp/openclaw';
+
 let currentLogFile = '';
 let lastPosition = 0;
 
-function getToday() {
-  return new Date().toISOString().slice(0, 10); // YYYY-MM-DD
-}
-
-function getLogFile(date) {
-  return process.argv[2] || `/tmp/openclaw/openclaw-${date}.log`;
+function findLatestLogFile() {
+  if (process.argv[2]) return process.argv[2];
+  try {
+    const files = readdirSync(LOG_DIR)
+      .filter(f => f.startsWith('openclaw-') && f.endsWith('.log'))
+      .map(f => ({ name: f, path: join(LOG_DIR, f), mtime: statSync(join(LOG_DIR, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime);
+    return files[0]?.path || null;
+  } catch { return null; }
 }
 
 async function postActivity(activity) {
   try {
-    await client.mutation(api.activities.create, activity);
+    const { error } = await supabase.from('activities').insert({
+      action_type: activity.actionType,
+      category: activity.category ?? 'system',
+      description: activity.description,
+      timestamp: activity.timestamp
+        ? new Date(activity.timestamp).toISOString()
+        : new Date().toISOString(),
+      status: activity.status,
+      metadata: activity.metadata ?? null,
+    });
+    if (error) throw error;
     console.log(`[✓] Logged: ${activity.actionType} - ${activity.description.slice(0, 50)}...`);
   } catch (err) {
     console.error('[✗] Failed to post activity:', err.message);
@@ -37,55 +60,75 @@ async function postActivity(activity) {
 
 function parseLogLine(line) {
   try {
-    // Parse the JSON log line
     const data = JSON.parse(line);
-    const message = data['1'] || '';
-    const subsystem = data['0'] || '';
+    const message = String(data['1'] ?? data['0'] ?? '');
     const timestamp = new Date(data.time || data._meta?.date).getTime();
+    const logLevel = data._meta?.logLevelName || 'INFO';
 
-    // Filter for interesting events
-    if (message.includes('tool call') || message.includes('Tool:')) {
-      const toolMatch = message.match(/Tool:\s*(\w+)/i) || message.match(/tool[_\s]?call[:\s]+(\w+)/i);
-      return {
-        actionType: 'tool_call',
-        description: message.slice(0, 200),
-        timestamp,
-        status: 'success',
-        metadata: { tool: toolMatch?.[1] || 'unknown' }
-      };
+    // Skip DEBUG heartbeat/queue noise — only keep tool calls
+    if (logLevel === 'DEBUG') {
+      if (message.includes('embedded run tool start:')) {
+        const toolMatch = message.match(/tool=(\S+)/);
+        return {
+          actionType: 'tool_call',
+          description: message.slice(0, 200),
+          timestamp,
+          status: 'success',
+          metadata: { tool: toolMatch?.[1] || 'unknown' }
+        };
+      }
+      return null;
     }
 
-    if (message.includes('message sent') || message.includes('Sending message')) {
-      return {
-        actionType: 'message',
-        description: message.slice(0, 200),
-        timestamp,
-        status: 'success',
-        metadata: { channel: 'telegram' }
-      };
-    }
-
-    if (message.includes('exec') || message.includes('command')) {
-      return {
-        actionType: 'exec',
-        description: message.slice(0, 200),
-        timestamp,
-        status: 'success',
-        metadata: {}
-      };
-    }
-
-    if (message.includes('error') || message.includes('Error')) {
+    // Use structured log level for error detection — NOT substring matching
+    if (logLevel === 'ERROR') {
       return {
         actionType: 'error',
         description: message.slice(0, 200),
         timestamp,
         status: 'error',
-        metadata: { error: message }
+        category: 'important',
+        metadata: { error: message.slice(0, 500) }
       };
     }
 
-    return null; // Skip uninteresting lines
+    if (logLevel === 'WARN') {
+      return {
+        actionType: 'warning',
+        description: message.slice(0, 200),
+        timestamp,
+        status: 'success',
+        category: 'system',
+        metadata: {}
+      };
+    }
+
+    // INFO level — parse specific patterns
+    if (message.includes('agent model:')) {
+      const modelMatch = message.match(/agent model:\s*(.+)/);
+      return {
+        actionType: 'agent_start',
+        description: `Agent started: ${modelMatch?.[1] || 'unknown'}`,
+        timestamp,
+        status: 'success',
+        category: 'system',
+        metadata: { model: modelMatch?.[1]?.trim() }
+      };
+    }
+
+    if (message.includes('No reply from agent')) {
+      return {
+        actionType: 'agent_no_reply',
+        description: 'No reply from agent',
+        timestamp,
+        status: 'success',
+        category: 'system',
+        metadata: {}
+      };
+    }
+
+    // Skip remaining INFO noise
+    return null;
   } catch {
     return null;
   }
@@ -137,30 +180,29 @@ function startWatching(logFile) {
   });
 }
 
-function checkDateRollover() {
-  const today = getToday();
-  if (today === currentDate) return;
+function checkForNewerFile() {
+  const latest = findLatestLogFile();
+  if (!latest || latest === currentLogFile) return;
 
-  // Date changed — switch to new log file
-  const newLogFile = getLogFile(today);
-  console.log(`[*] Date rollover: ${currentDate} → ${today}`);
-  console.log(`[*] Switching to: ${newLogFile}`);
+  console.log(`[*] Newer log file found: ${latest}`);
+  console.log(`[*] Switching from: ${currentLogFile}`);
 
   // Stop watching old file
   unwatchFile(currentLogFile);
-
-  currentDate = today;
-  startWatching(newLogFile);
+  startWatching(latest);
 }
 
 // Initial setup
-currentDate = getToday();
-const initialLogFile = getLogFile(currentDate);
+const initialLogFile = findLatestLogFile();
 
-console.log('[*] Activity Sync started');
-console.log(`[*] Watching: ${initialLogFile}`);
+console.log('[*] Activity Sync started (Supabase)');
 
-startWatching(initialLogFile);
+if (initialLogFile) {
+  console.log(`[*] Watching: ${initialLogFile}`);
+  startWatching(initialLogFile);
+} else {
+  console.log('[*] No log files found yet, will check every 60s');
+}
 
-// Check for date rollover every 60 seconds
-setInterval(checkDateRollover, 60000);
+// Check for newer log files every 60 seconds
+setInterval(checkForNewerFile, 60000);

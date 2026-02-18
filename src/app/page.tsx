@@ -69,7 +69,7 @@ class TabErrorBoundary extends Component<
   }
 }
 
-// Dynamically import components that use Convex hooks — each with a tab-specific skeleton loader
+// Dynamically import heavy components — each with a tab-specific skeleton loader
 const ActivityFeed = dynamic(
   () => import("@/components/ActivityFeed").then((mod) => ({ default: mod.ActivityFeed })),
   { ssr: false, loading: () => <ActivitySkeleton /> }
@@ -136,7 +136,7 @@ function TabCount({ count, color }: { count: number; color: "red" | "amber" }) {
 }
 
 function DashboardContent() {
-  const convexUrl = process.env.NEXT_PUBLIC_CONVEX_URL;
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const searchParams = useSearchParams();
   const router = useRouter();
   const notifications = useTabNotifications();
@@ -176,7 +176,7 @@ function DashboardContent() {
     router.replace(url, { scroll: false });
   }, [router]);
 
-  if (!convexUrl) {
+  if (!supabaseUrl) {
     return <SetupGuide />;
   }
 

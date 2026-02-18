@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import useSWR from "swr";
+import { getAnalytics } from "@/lib/supabase/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -264,7 +264,11 @@ function StatCard({
 
 export function AnalyticsView() {
   const [days, setDays] = useState(14);
-  const analytics = useQuery(api.activities.analytics, { days });
+  const { data: analytics } = useSWR(
+    ["analytics", days],
+    () => getAnalytics(days),
+    { refreshInterval: 60000 }
+  );
 
   // Compute trends: compare first half vs second half
   const trends = useMemo(() => {

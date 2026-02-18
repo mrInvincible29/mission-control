@@ -1,7 +1,7 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import useSWR from "swr";
+import { listActivitiesPaginated, getActivityStats } from "@/lib/supabase/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -21,19 +21,19 @@ const CATEGORY_COLORS: Record<string, string> = {
 };
 
 const ACTION_TYPE_ICONS: Record<string, string> = {
-  model_usage: "🤖",
-  message_processed: "💬",
-  message_error: "❌",
-  session_stuck: "⚠️",
-  webhook_error: "🔴",
-  session_state: "🔄",
-  exec: "⚡",
-  read: "📖",
-  write: "✏️",
-  message: "📨",
-  task: "✅",
-  fix: "🔧",
-  system: "⚙️",
+  model_usage: "\u{1F916}",
+  message_processed: "\u{1F4AC}",
+  message_error: "\u274C",
+  session_stuck: "\u26A0\uFE0F",
+  webhook_error: "\u{1F534}",
+  session_state: "\u{1F504}",
+  exec: "\u26A1",
+  read: "\u{1F4D6}",
+  write: "\u270F\uFE0F",
+  message: "\u{1F4E8}",
+  task: "\u2705",
+  fix: "\u{1F527}",
+  system: "\u2699\uFE0F",
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -51,14 +51,12 @@ const DATE_RANGES = [
 
 const CATEGORIES = [
   { label: "All", value: "" },
-  { label: "🔴 Important", value: "important" },
-  { label: "🤖 Model", value: "model" },
-  { label: "💬 Messages", value: "message" },
-  { label: "⚙️ System", value: "system" },
-  { label: "🔇 Noise", value: "noise" },
+  { label: "\u{1F534} Important", value: "important" },
+  { label: "\u{1F916} Model", value: "model" },
+  { label: "\u{1F4AC} Messages", value: "message" },
+  { label: "\u2699\uFE0F System", value: "system" },
+  { label: "\u{1F507} Noise", value: "noise" },
 ];
-
-// formatTokens, formatCost, formatRelativeTime imported from @/lib/formatters
 
 function getDateLabel(days: number): string {
   if (days === 1) return "Today";
@@ -107,17 +105,26 @@ export function ActivityFeed() {
 
   const currentCursor = cursors[cursors.length - 1];
 
-  const result = useQuery(api.activities.listPaginated, {
-    limit: PAGE_SIZE,
-    category: category || undefined,
-    excludeCategories: category ? undefined : ["noise"],
-    sinceTimestamp,
-    cursor: currentCursor,
-  });
+  const { data: result } = useSWR(
+    mounted ? ["activities", currentCursor, category, sinceTimestamp] : null,
+    () =>
+      listActivitiesPaginated({
+        limit: PAGE_SIZE,
+        category: category || undefined,
+        excludeCategories: category ? undefined : ["noise"],
+        sinceTimestamp,
+        cursor: currentCursor,
+      }),
+    { refreshInterval: 30000 }
+  );
 
-  const stats = useQuery(api.activities.stats, { sinceTimestamp });
+  const { data: stats } = useSWR(
+    mounted ? ["activity-stats", sinceTimestamp] : null,
+    () => getActivityStats(sinceTimestamp),
+    { refreshInterval: 30000 }
+  );
 
-  const rawActivities = result?.items as Activity[] | undefined;
+  const rawActivities = result?.items;
   const hasMore = result?.hasMore ?? false;
   const nextCursor = result?.nextCursor;
   const currentPage = cursors.length;
@@ -163,13 +170,13 @@ export function ActivityFeed() {
             <div className="rounded-lg bg-purple-500/5 border border-purple-500/10 p-2.5">
               <div className="text-xs text-purple-400">Tokens</div>
               <div className="text-base sm:text-lg font-semibold text-purple-400 dark:text-purple-300 mt-0.5">
-                {stats.totalTokens > 0 ? formatTokens(stats.totalTokens) : "—"}
+                {stats.totalTokens > 0 ? formatTokens(stats.totalTokens) : "\u2014"}
               </div>
             </div>
             <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
               <div className="text-xs text-emerald-400">Cost</div>
               <div className="text-base sm:text-lg font-semibold text-emerald-400 dark:text-emerald-300 mt-0.5">
-                {stats.totalCost > 0 ? formatCost(stats.totalCost) : "—"}
+                {stats.totalCost > 0 ? formatCost(stats.totalCost) : "\u2014"}
               </div>
             </div>
             <div className="rounded-lg bg-blue-500/5 border border-blue-500/10 p-2.5">
@@ -255,7 +262,7 @@ export function ActivityFeed() {
           ) : (
             <div className="space-y-1.5">
               {activities.map((activity: Activity) => (
-                <ActivityItem key={activity._id} activity={activity} />
+                <ActivityItem key={activity.id} activity={activity} />
               ))}
             </div>
           )}
@@ -294,7 +301,7 @@ export function ActivityFeed() {
 
 function ActivityItem({ activity }: { activity: Activity }) {
   const [expanded, setExpanded] = useState(false);
-  const icon = ACTION_TYPE_ICONS[activity.actionType] || "📌";
+  const icon = ACTION_TYPE_ICONS[activity.actionType] || "\u{1F4CC}";
   const categoryColor = CATEGORY_COLORS[activity.category ?? "system"] || CATEGORY_COLORS.system;
 
   const meta = activity.metadata;

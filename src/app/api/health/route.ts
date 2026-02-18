@@ -156,7 +156,7 @@ function getDocker(): DockerContainer[] {
 }
 
 function getServices(): ServiceStatus[] {
-  const serviceNames = ["mission-control", "traefik", "convex-sync", "docker", "ssh"];
+  const serviceNames = ["mission-control", "traefik", "mc-file-watcher", "docker", "ssh"];
   const services: ServiceStatus[] = [];
 
   for (const name of serviceNames) {

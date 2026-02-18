@@ -1,17 +1,25 @@
 #!/usr/bin/env node
 /**
- * File Watcher - Automatically indexes new/changed files for Global Search
+ * File Watcher - Automatically indexes new/changed files for Global Search (Supabase)
  * Run: node scripts/file-watcher.mjs
  */
 
 import { watch, readFileSync, statSync, readdirSync } from 'fs';
 import { join, basename, extname } from 'path';
-import { ConvexHttpClient } from 'convex/browser';
-import { api } from '../convex/_generated/api.js';
+import { createClient } from '@supabase/supabase-js';
 
-const CONVEX_URL = process.env.CONVEX_URL || 'https://accomplished-rabbit-353.convex.cloud';
+const SUPABASE_URL = process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 const WORKSPACE = '/home/h2/clawd';
-const client = new ConvexHttpClient(CONVEX_URL);
+
+if (!SUPABASE_URL || !SUPABASE_KEY) {
+  console.error('[!] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY');
+  process.exit(1);
+}
+
+const supabase = createClient(SUPABASE_URL, SUPABASE_KEY, {
+  auth: { persistSession: false },
+});
 
 // File extensions to index
 const INDEXABLE_EXTENSIONS = new Set([
@@ -41,12 +49,20 @@ async function indexFile(filePath) {
     const content = readFileSync(filePath, 'utf8');
     const fileName = basename(filePath);
 
-    await client.mutation(api.documents.upsertDocument, {
-      filePath,
-      fileName,
-      content: content.slice(0, 50000), // 50KB limit
-      size: stats.size,
-    });
+    const { error } = await supabase
+      .from('indexed_documents')
+      .upsert(
+        {
+          file_path: filePath,
+          file_name: fileName,
+          content: content.slice(0, 50000), // 50KB limit
+          last_indexed: new Date().toISOString(),
+          size: stats.size,
+        },
+        { onConflict: 'file_path' }
+      );
+
+    if (error) throw error;
     console.log(`[indexed] ${filePath}`);
   } catch (err) {
     console.error(`[error] ${filePath}:`, err.message);
@@ -72,27 +88,26 @@ function watchDirectory(dir) {
   try {
     watch(dir, { recursive: true }, (eventType, filename) => {
       if (!filename) return;
-      
+
       const fullPath = join(dir, filename);
-      
+
       // Skip unwanted directories
       for (const skipDir of SKIP_DIRS) {
         if (filename.includes(skipDir)) return;
       }
-      
+
       // Check if file should be indexed
       if (!shouldIndex(fullPath)) return;
-      
+
       // Check if file exists (might have been deleted)
       try {
         statSync(fullPath);
         debounceIndex(fullPath);
       } catch {
         console.log(`[deleted] ${fullPath}`);
-        // Could call a delete mutation here if needed
       }
     });
-    
+
     console.log(`[watching] ${dir}`);
   } catch (err) {
     console.error(`[error] Could not watch ${dir}:`, err.message);
@@ -102,13 +117,13 @@ function watchDirectory(dir) {
 // Initial scan for any files that might have been missed
 async function initialScan(dir, depth = 0) {
   if (depth > 5) return; // Max depth
-  
+
   try {
     const entries = readdirSync(dir, { withFileTypes: true });
-    
+
     for (const entry of entries) {
       const fullPath = join(dir, entry.name);
-      
+
       if (entry.isDirectory()) {
         if (!SKIP_DIRS.has(entry.name)) {
           await initialScan(fullPath, depth + 1);
@@ -117,12 +132,12 @@ async function initialScan(dir, depth = 0) {
         await indexFile(fullPath);
       }
     }
-  } catch (err) {
+  } catch {
     // Ignore permission errors etc
   }
 }
 
-console.log('[*] File Watcher started');
+console.log('[*] File Watcher started (Supabase)');
 console.log(`[*] Watching: ${WORKSPACE}`);
 console.log('[*] Extensions:', [...INDEXABLE_EXTENSIONS].join(', '));
 

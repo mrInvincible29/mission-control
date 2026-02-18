@@ -1,7 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
-import { ConvexClientProvider } from "@/components/providers/ConvexClientProvider";
+import { SWRProvider } from "@/components/providers/SWRProvider";
 import { ThemeProvider } from "@/components/providers/ThemeProvider";
 
 const geistSans = Geist({
@@ -31,7 +31,7 @@ export default function RootLayout({
         suppressHydrationWarning
       >
         <ThemeProvider attribute="class" defaultTheme="dark" enableSystem>
-          <ConvexClientProvider>{children}</ConvexClientProvider>
+          <SWRProvider>{children}</SWRProvider>
         </ThemeProvider>
       </body>
     </html>

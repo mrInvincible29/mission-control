@@ -1,7 +1,11 @@
 "use client";
 
-import { useQuery } from "convex/react";
-import { api } from "../../convex/_generated/api";
+import useSWR from "swr";
+import {
+  searchDocuments,
+  listDocumentsPaginated,
+  getDocumentContent,
+} from "@/lib/supabase/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
@@ -33,33 +37,31 @@ import { useToast } from "@/components/Toast";
 function highlightMatch(text: string, query: string): React.ReactNode {
   if (!query.trim()) return text;
 
-  const escaped = query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  const splitRegex = new RegExp(`(${escaped})`, "gi");
-  const testRegex = new RegExp(`^${escaped}$`, "i");
-  const parts = text.split(splitRegex);
-
-  return parts.map((part, i) =>
-    testRegex.test(part) ? (
-      <mark key={i} className="bg-yellow-400/30 dark:bg-yellow-500/30 text-yellow-700 dark:text-yellow-200 rounded px-0.5">
-        {part}
-      </mark>
-    ) : (
-      part
-    )
-  );
+  // Replace <<...>> markers from ts_headline with highlight spans
+  const parts = text.split(/(<<[^>]*>>)/g);
+  return parts.map((part, i) => {
+    if (part.startsWith("<<") && part.endsWith(">>")) {
+      return (
+        <mark key={i} className="bg-yellow-400/30 dark:bg-yellow-500/30 text-yellow-700 dark:text-yellow-200 rounded px-0.5">
+          {part.slice(2, -2)}
+        </mark>
+      );
+    }
+    return part;
+  });
 }
 
 function getFileIcon(filePath: string): string {
-  if (filePath.includes("memory/")) return "🧠";
-  if (filePath.includes("MEMORY")) return "💭";
-  if (filePath.includes("TOOLS")) return "🔧";
-  if (filePath.includes("AGENTS")) return "🤖";
-  if (filePath.includes("SOUL")) return "👻";
-  if (filePath.includes("USER")) return "👤";
-  if (filePath.includes("HEARTBEAT")) return "💓";
-  if (filePath.endsWith(".md")) return "📝";
-  if (filePath.endsWith(".json")) return "📋";
-  return "📄";
+  if (filePath.includes("memory/")) return "\u{1F9E0}";
+  if (filePath.includes("MEMORY")) return "\u{1F4AD}";
+  if (filePath.includes("TOOLS")) return "\u{1F527}";
+  if (filePath.includes("AGENTS")) return "\u{1F916}";
+  if (filePath.includes("SOUL")) return "\u{1F47B}";
+  if (filePath.includes("USER")) return "\u{1F464}";
+  if (filePath.includes("HEARTBEAT")) return "\u{1F493}";
+  if (filePath.endsWith(".md")) return "\u{1F4DD}";
+  if (filePath.endsWith(".json")) return "\u{1F4CB}";
+  return "\u{1F4C4}";
 }
 
 function getFolder(filePath: string): string {
@@ -85,16 +87,25 @@ function formatDate(timestamp: number): string {
 
 type SortMode = "name" | "size" | "date";
 
-// --- FileViewerDialog sub-component ---
+// --- FileViewerDialog sub-component (loads content on-demand) ---
 
 function FileViewerDialog({
-  file,
+  fileId,
+  fileName,
+  filePath,
   onClose,
 }: {
-  file: IndexedDocument | null;
+  fileId: string | null;
+  fileName?: string;
+  filePath?: string;
   onClose: () => void;
 }) {
   const [copied, setCopied] = useState(false);
+
+  const { data: file } = useSWR(
+    fileId ? ["document-content", fileId] : null,
+    () => getDocumentContent(fileId!)
+  );
 
   const lines = useMemo(() => {
     if (!file?.content) return [];
@@ -113,13 +124,13 @@ function FileViewerDialog({
   }, [file]);
 
   return (
-    <Dialog open={!!file} onOpenChange={(open) => !open && onClose()}>
+    <Dialog open={!!fileId} onOpenChange={(open) => !open && onClose()}>
       <DialogContent className="max-w-4xl w-[95vw] h-[80vh] flex flex-col p-0">
         <DialogHeader className="p-6 pb-2">
           <div className="flex items-center justify-between">
             <DialogTitle className="flex items-center gap-2">
-              <span>{file && getFileIcon(file.filePath)}</span>
-              <span className="truncate">{file?.fileName}</span>
+              <span>{filePath && getFileIcon(filePath)}</span>
+              <span className="truncate">{fileName ?? file?.fileName}</span>
             </DialogTitle>
             <Tooltip>
               <TooltipTrigger asChild>
@@ -128,6 +139,7 @@ function FileViewerDialog({
                   size="sm"
                   className="h-8 w-8 p-0"
                   onClick={handleCopy}
+                  disabled={!file}
                 >
                   {copied ? (
                     <Check className="h-4 w-4 text-emerald-400" />
@@ -140,30 +152,36 @@ function FileViewerDialog({
             </Tooltip>
           </div>
           <div className="text-xs text-muted-foreground truncate">
-            {file?.filePath}
+            {filePath ?? file?.filePath}
           </div>
         </DialogHeader>
         <div className="flex-1 overflow-auto px-6">
-          <table className="w-full text-sm font-mono bg-muted/50 rounded-lg">
-            <tbody>
-              {lines.map((line, i) => (
-                <tr key={i} className="hover:bg-muted/80">
-                  <td className="text-right pr-3 pl-3 py-0 text-muted-foreground/50 select-none align-top w-[1%] whitespace-nowrap text-xs">
-                    {i + 1}
-                  </td>
-                  <td className="pr-4 py-0 whitespace-pre-wrap break-words align-top">
-                    {line || "\u00A0"}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+          {!file ? (
+            <div className="flex items-center justify-center h-32 text-muted-foreground">
+              Loading file content...
+            </div>
+          ) : (
+            <table className="w-full text-sm font-mono bg-muted/50 rounded-lg">
+              <tbody>
+                {lines.map((line, i) => (
+                  <tr key={i} className="hover:bg-muted/80">
+                    <td className="text-right pr-3 pl-3 py-0 text-muted-foreground/50 select-none align-top w-[1%] whitespace-nowrap text-xs">
+                      {i + 1}
+                    </td>
+                    <td className="pr-4 py-0 whitespace-pre-wrap break-words align-top">
+                      {line || "\u00A0"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
         </div>
         <div className="flex justify-between items-center p-4 border-t text-xs text-muted-foreground">
-          <span>Size: {file?.size ? `${(file.size / 1024).toFixed(1)} KB` : "—"}</span>
+          <span>Size: {file?.size ? `${(file.size / 1024).toFixed(1)} KB` : "\u2014"}</span>
           <span>{lines.length} lines</span>
           <span suppressHydrationWarning>
-            Indexed: {file?.lastIndexed ? formatDate(file.lastIndexed) : "—"}
+            Indexed: {file?.lastIndexed ? formatDate(file.lastIndexed) : "\u2014"}
           </span>
         </div>
       </DialogContent>
@@ -178,69 +196,51 @@ export function GlobalSearch() {
   const [query, setQuery] = useState("");
   const [debouncedQuery, setDebouncedQuery] = useState("");
   const [isIndexing, setIsIndexing] = useState(false);
-  const [selectedFile, setSelectedFile] = useState<IndexedDocument | null>(null);
+  const [selectedFileId, setSelectedFileId] = useState<string | null>(null);
+  const [selectedFileMeta, setSelectedFileMeta] = useState<{ name: string; path: string } | null>(null);
   const [activeTab, setActiveTab] = useState("browse");
   const [collapsedFolders, setCollapsedFolders] = useState<Set<string>>(new Set());
   const [sortMode, setSortMode] = useState<SortMode>("name");
   const [selectedIndex, setSelectedIndex] = useState(-1);
   const searchInputRef = useRef<HTMLInputElement>(null);
 
-  const searchResults = useQuery(
-    api.documents.search,
-    debouncedQuery.length >= 2 ? { query: debouncedQuery, limit: 50 } : "skip"
-  ) as SearchResult[] | undefined;
-  const allDocs = useQuery(api.documents.listAll) as IndexedDocument[] | undefined;
+  // Search results from Postgres FTS
+  const { data: searchResults } = useSWR(
+    debouncedQuery.length >= 2 ? ["search", debouncedQuery] : null,
+    () => searchDocuments(debouncedQuery, 50)
+  );
 
-  // Filename matching: merge content results with filename matches
-  const mergedResults = useMemo(() => {
-    if (!debouncedQuery || debouncedQuery.length < 2) return undefined;
-    if (!searchResults && !allDocs) return undefined;
+  // Browse tab: paginated metadata only (no content column!)
+  const { data: browseData } = useSWR(
+    "documents-browse",
+    () => listDocumentsPaginated(0, 500),
+    { refreshInterval: 60000 }
+  );
 
-    const contentResults = searchResults ?? [];
-    const contentIds = new Set(contentResults.map(r => r._id));
-
-    const filenameMatches: SearchResult[] = [];
-    if (allDocs) {
-      const lower = debouncedQuery.toLowerCase();
-      for (const doc of allDocs) {
-        if (!contentIds.has(doc._id) && doc.fileName.toLowerCase().includes(lower)) {
-          filenameMatches.push({
-            _id: doc._id,
-            filePath: doc.filePath,
-            fileName: doc.fileName,
-            snippet: doc.content.slice(0, 150) + (doc.content.length > 150 ? "..." : ""),
-            lastIndexed: doc.lastIndexed,
-          });
-        }
-      }
-    }
-
-    return [...filenameMatches, ...contentResults];
-  }, [searchResults, allDocs, debouncedQuery]);
-
-  // Track which results are filename-only matches
-  const filenameMatchIds = useMemo(() => {
-    if (!mergedResults || !searchResults) return new Set<string>();
-    const contentIds = new Set(searchResults.map(r => r._id));
-    return new Set(mergedResults.filter(r => !contentIds.has(r._id)).map(r => r._id));
-  }, [mergedResults, searchResults]);
+  const allDocsMeta = browseData?.documents;
+  const totalFiles = browseData?.totalCount ?? 0;
 
   // Sort files within folders
-  const sortFiles = useCallback((files: IndexedDocument[]): IndexedDocument[] => {
-    return [...files].sort((a, b) => {
-      if (sortMode === "size") return b.size - a.size;
-      if (sortMode === "date") return b.lastIndexed - a.lastIndexed;
-      return a.fileName.localeCompare(b.fileName);
-    });
-  }, [sortMode]);
+  type DocMeta = Omit<IndexedDocument, "content">;
+  const sortFiles = useCallback(
+    (files: DocMeta[]): DocMeta[] => {
+      if (!files) return [];
+      return [...files].sort((a, b) => {
+        if (sortMode === "size") return b.size - a.size;
+        if (sortMode === "date") return b.lastIndexed - a.lastIndexed;
+        return a.fileName.localeCompare(b.fileName);
+      });
+    },
+    [sortMode]
+  );
 
   // Group files by folder for browse view
   const groupedFiles = useMemo(() => {
-    if (!allDocs) return {};
+    if (!allDocsMeta) return {};
 
-    const groups: Record<string, IndexedDocument[]> = {};
+    const groups: Record<string, typeof allDocsMeta> = {};
 
-    for (const doc of allDocs) {
+    for (const doc of allDocsMeta) {
       const folder = getFolder(doc.filePath) || "root";
       if (!groups[folder]) groups[folder] = [];
       groups[folder].push(doc);
@@ -251,14 +251,18 @@ export function GlobalSearch() {
     }
 
     return groups;
-  }, [allDocs, sortFiles]);
+  }, [allDocsMeta, sortFiles]);
 
-  const getFullDocument = (filePath: string): IndexedDocument | undefined => {
-    return allDocs?.find(doc => doc.filePath === filePath);
-  };
+  const openFile = useCallback(
+    (id: string, fileName: string, filePath: string) => {
+      setSelectedFileId(id);
+      setSelectedFileMeta({ name: fileName, path: filePath });
+    },
+    []
+  );
 
   const toggleFolder = useCallback((folder: string) => {
-    setCollapsedFolders(prev => {
+    setCollapsedFolders((prev) => {
       const next = new Set(prev);
       if (next.has(folder)) {
         next.delete(folder);
@@ -282,15 +286,15 @@ export function GlobalSearch() {
     setSelectedIndex(-1);
   }, [debouncedQuery]);
 
-  // Keyboard shortcuts (Cmd+K now handled by CommandPalette)
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      // Only handle arrow/escape/enter when search tab is active
       if (activeTab !== "search") return;
 
       if (e.key === "Escape") {
-        if (selectedFile) {
-          setSelectedFile(null);
+        if (selectedFileId) {
+          setSelectedFileId(null);
+          setSelectedFileMeta(null);
         } else if (query) {
           setQuery("");
           setDebouncedQuery("");
@@ -298,32 +302,31 @@ export function GlobalSearch() {
         return;
       }
 
-      if (!mergedResults || mergedResults.length === 0) return;
+      if (!searchResults || searchResults.length === 0) return;
 
       if (e.key === "ArrowDown") {
         e.preventDefault();
-        setSelectedIndex(prev => Math.min(prev + 1, mergedResults.length - 1));
+        setSelectedIndex((prev) => Math.min(prev + 1, searchResults.length - 1));
         return;
       }
 
       if (e.key === "ArrowUp") {
         e.preventDefault();
-        setSelectedIndex(prev => Math.max(prev - 1, -1));
+        setSelectedIndex((prev) => Math.max(prev - 1, -1));
         return;
       }
 
-      if (e.key === "Enter" && selectedIndex >= 0 && selectedIndex < mergedResults.length) {
+      if (e.key === "Enter" && selectedIndex >= 0 && selectedIndex < searchResults.length) {
         e.preventDefault();
-        const result = mergedResults[selectedIndex];
-        const fullDoc = getFullDocument(result.filePath);
-        if (fullDoc) setSelectedFile(fullDoc);
+        const result = searchResults[selectedIndex];
+        openFile(result.id, result.fileName, result.filePath);
         return;
       }
     };
 
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeTab, query, selectedFile, mergedResults, selectedIndex, allDocs]);
+  }, [activeTab, query, selectedFileId, searchResults, selectedIndex, openFile]);
 
   const handleRefreshIndex = async () => {
     setIsIndexing(true);
@@ -338,7 +341,7 @@ export function GlobalSearch() {
     }
   };
 
-  const resultCount = mergedResults?.length ?? 0;
+  const resultCount = searchResults?.length ?? 0;
 
   return (
     <TooltipProvider>
@@ -348,7 +351,7 @@ export function GlobalSearch() {
             <CardTitle className="text-lg font-semibold">Files & Search</CardTitle>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-xs">
-                {allDocs?.length ?? 0} files
+                {totalFiles} files
               </Badge>
               <Button
                 variant="outline"
@@ -373,7 +376,7 @@ export function GlobalSearch() {
               {/* Sort controls */}
               <div className="flex items-center gap-1 mb-3">
                 <span className="text-xs text-muted-foreground mr-1">Sort:</span>
-                {(["name", "size", "date"] as SortMode[]).map(mode => (
+                {(["name", "size", "date"] as SortMode[]).map((mode) => (
                   <Button
                     key={mode}
                     variant={sortMode === mode ? "secondary" : "ghost"}
@@ -387,11 +390,11 @@ export function GlobalSearch() {
               </div>
 
               <ScrollArea className="h-[450px] pr-4">
-                {!allDocs ? (
+                {!allDocsMeta ? (
                   <div className="flex items-center justify-center h-32 text-muted-foreground">
                     Loading files...
                   </div>
-                ) : allDocs.length === 0 ? (
+                ) : allDocsMeta.length === 0 ? (
                   <div className="flex flex-col items-center justify-center h-32 text-muted-foreground gap-2">
                     <span>No files indexed yet</span>
                     <Button
@@ -405,41 +408,50 @@ export function GlobalSearch() {
                   </div>
                 ) : (
                   <div className="space-y-1">
-                    {Object.entries(groupedFiles).sort(([a], [b]) => a.localeCompare(b)).map(([folder, files]) => (
-                      <Collapsible
-                        key={folder}
-                        open={!collapsedFolders.has(folder)}
-                        onOpenChange={() => toggleFolder(folder)}
-                      >
-                        <CollapsibleTrigger className="w-full flex items-center gap-2 p-1.5 rounded-md hover:bg-muted/50 transition-colors group">
-                          <ChevronRight className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${!collapsedFolders.has(folder) ? "rotate-90" : ""}`} />
-                          <span className="text-sm font-semibold text-muted-foreground">
-                            {folder}
-                          </span>
-                          <Badge variant="secondary" className="text-xs ml-auto">{files.length}</Badge>
-                        </CollapsibleTrigger>
-                        <CollapsibleContent>
-                          <div className="space-y-0.5 ml-5 mt-0.5">
-                            {files.map((doc) => (
-                              <button
-                                key={doc._id}
-                                className="w-full text-left p-2 rounded-md hover:bg-muted/50 transition-colors flex items-center gap-2"
-                                onClick={() => setSelectedFile(doc)}
-                              >
-                                <span>{getFileIcon(doc.filePath)}</span>
-                                <span className="text-sm truncate flex-1">{doc.fileName}</span>
-                                <span className="text-[10px] text-muted-foreground/60" suppressHydrationWarning>
-                                  {formatDate(doc.lastIndexed)}
-                                </span>
-                                <span className="text-xs text-muted-foreground">
-                                  {(doc.size / 1024).toFixed(1)}KB
-                                </span>
-                              </button>
-                            ))}
-                          </div>
-                        </CollapsibleContent>
-                      </Collapsible>
-                    ))}
+                    {Object.entries(groupedFiles)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([folder, files]) => (
+                        <Collapsible
+                          key={folder}
+                          open={!collapsedFolders.has(folder)}
+                          onOpenChange={() => toggleFolder(folder)}
+                        >
+                          <CollapsibleTrigger className="w-full flex items-center gap-2 p-1.5 rounded-md hover:bg-muted/50 transition-colors group">
+                            <ChevronRight
+                              className={`h-3.5 w-3.5 text-muted-foreground transition-transform ${!collapsedFolders.has(folder) ? "rotate-90" : ""}`}
+                            />
+                            <span className="text-sm font-semibold text-muted-foreground">
+                              {folder}
+                            </span>
+                            <Badge variant="secondary" className="text-xs ml-auto">
+                              {files.length}
+                            </Badge>
+                          </CollapsibleTrigger>
+                          <CollapsibleContent>
+                            <div className="space-y-0.5 ml-5 mt-0.5">
+                              {files.map((doc) => (
+                                <button
+                                  key={doc.id}
+                                  className="w-full text-left p-2 rounded-md hover:bg-muted/50 transition-colors flex items-center gap-2"
+                                  onClick={() => openFile(doc.id, doc.fileName, doc.filePath)}
+                                >
+                                  <span>{getFileIcon(doc.filePath)}</span>
+                                  <span className="text-sm truncate flex-1">{doc.fileName}</span>
+                                  <span
+                                    className="text-[10px] text-muted-foreground/60"
+                                    suppressHydrationWarning
+                                  >
+                                    {formatDate(doc.lastIndexed)}
+                                  </span>
+                                  <span className="text-xs text-muted-foreground">
+                                    {(doc.size / 1024).toFixed(1)}KB
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          </CollapsibleContent>
+                        </Collapsible>
+                      ))}
                   </div>
                 )}
               </ScrollArea>
@@ -459,7 +471,10 @@ export function GlobalSearch() {
                 />
                 {query && (
                   <button
-                    onClick={() => { setQuery(""); setDebouncedQuery(""); }}
+                    onClick={() => {
+                      setQuery("");
+                      setDebouncedQuery("");
+                    }}
                     className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
                   >
                     <X className="h-3.5 w-3.5" />
@@ -468,7 +483,7 @@ export function GlobalSearch() {
               </div>
 
               {/* Result count */}
-              {debouncedQuery.length >= 2 && mergedResults && (
+              {debouncedQuery.length >= 2 && searchResults && (
                 <div className="text-xs text-muted-foreground">
                   {resultCount} result{resultCount !== 1 ? "s" : ""} for &quot;{debouncedQuery}&quot;
                 </div>
@@ -480,28 +495,25 @@ export function GlobalSearch() {
                     <span>Type at least 2 characters to search</span>
                     <span className="text-xs opacity-60">Tip: Cmd+K to focus search</span>
                   </div>
-                ) : !mergedResults ? (
+                ) : !searchResults ? (
                   <div className="flex items-center justify-center h-32 text-muted-foreground">
                     Searching...
                   </div>
-                ) : mergedResults.length === 0 ? (
+                ) : searchResults.length === 0 ? (
                   <div className="flex items-center justify-center h-32 text-muted-foreground">
                     No results found for &quot;{debouncedQuery}&quot;
                   </div>
                 ) : (
                   <div className="space-y-2">
-                    {mergedResults.map((result: SearchResult, idx: number) => (
+                    {searchResults.map((result: SearchResult, idx: number) => (
                       <div
-                        key={result._id}
+                        key={result.id}
                         className={`p-3 rounded-lg border transition-colors cursor-pointer ${
                           idx === selectedIndex
                             ? "border-primary/50 bg-primary/5"
                             : "border-border/50 bg-card/50 hover:bg-card/80"
                         }`}
-                        onClick={() => {
-                          const fullDoc = getFullDocument(result.filePath);
-                          if (fullDoc) setSelectedFile(fullDoc);
-                        }}
+                        onClick={() => openFile(result.id, result.fileName, result.filePath)}
                         onMouseEnter={() => setSelectedIndex(idx)}
                       >
                         <div className="flex items-start gap-2">
@@ -512,11 +524,6 @@ export function GlobalSearch() {
                                 <span className="font-medium text-sm truncate">
                                   {result.fileName}
                                 </span>
-                                {filenameMatchIds.has(result._id) && (
-                                  <Badge variant="outline" className="text-[9px] px-1 py-0 bg-amber-500/10 text-amber-400 border-amber-500/20">
-                                    filename match
-                                  </Badge>
-                                )}
                               </div>
                               <Button
                                 variant="ghost"
@@ -524,8 +531,7 @@ export function GlobalSearch() {
                                 className="text-xs shrink-0"
                                 onClick={(e) => {
                                   e.stopPropagation();
-                                  const fullDoc = getFullDocument(result.filePath);
-                                  if (fullDoc) setSelectedFile(fullDoc);
+                                  openFile(result.id, result.fileName, result.filePath);
                                 }}
                               >
                                 View
@@ -548,7 +554,15 @@ export function GlobalSearch() {
           </Tabs>
         </CardContent>
 
-        <FileViewerDialog file={selectedFile} onClose={() => setSelectedFile(null)} />
+        <FileViewerDialog
+          fileId={selectedFileId}
+          fileName={selectedFileMeta?.name}
+          filePath={selectedFileMeta?.path}
+          onClose={() => {
+            setSelectedFileId(null);
+            setSelectedFileMeta(null);
+          }}
+        />
       </Card>
     </TooltipProvider>
   );

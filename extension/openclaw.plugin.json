@@ -4,9 +4,13 @@
     "type": "object",
     "additionalProperties": false,
     "properties": {
-      "convexUrl": {
+      "supabaseUrl": {
         "type": "string",
-        "description": "Convex deployment URL"
+        "description": "Supabase project URL"
+      },
+      "supabaseKey": {
+        "type": "string",
+        "description": "Supabase service role key"
       },
       "enabled": {
         "type": "boolean",

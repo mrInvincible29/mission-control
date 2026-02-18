@@ -1,5 +1,5 @@
 export interface Activity {
-  _id: string;
+  id: string;
   actionType: string;
   category?: "important" | "model" | "message" | "system" | "noise";
   description: string;
@@ -19,7 +19,7 @@ export interface Activity {
 }
 
 export interface IndexedDocument {
-  _id: string;
+  id: string;
   filePath: string;
   fileName: string;
   content: string;
@@ -28,7 +28,7 @@ export interface IndexedDocument {
 }
 
 export interface SearchResult {
-  _id: string;
+  id: string;
   filePath: string;
   fileName: string;
   snippet: string;
@@ -36,7 +36,7 @@ export interface SearchResult {
 }
 
 export interface CronJob {
-  _id: string;
+  id: string;
   name: string;
   schedule: string;
   command: string;

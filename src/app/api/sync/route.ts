@@ -13,7 +13,8 @@ export async function POST() {
         env: {
           ...process.env,
           PATH: process.env.PATH,
-          CONVEX_URL: process.env.NEXT_PUBLIC_CONVEX_URL,
+          SUPABASE_URL: process.env.SUPABASE_URL || process.env.NEXT_PUBLIC_SUPABASE_URL,
+          SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
           HOME: process.env.HOME || "/home/h2",
         },
         cwd: "/home/h2/fast/ws/mission-control",

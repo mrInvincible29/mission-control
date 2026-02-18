@@ -30,5 +30,5 @@
     ".next/dev/types/**/*.ts",
     "**/*.mts"
   ],
-  "exclude": ["node_modules", "convex", "extension"]
+  "exclude": ["node_modules", "extension", "tests", "playwright.config.ts"]
 }
