@@ -1,6 +1,6 @@
 "use client";
 
-import useSWR from "swr";
+import useSWR, { mutate } from "swr";
 import { listCronJobs } from "@/lib/supabase/queries";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
@@ -360,6 +360,7 @@ export function CalendarView() {
     try {
       const res = await fetch("/api/sync", { method: "POST" });
       if (res.ok) {
+        await mutate("cron-jobs");
         toast("Cron jobs synced", "success");
       } else {
         toast("Sync failed", "error");
