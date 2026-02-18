@@ -6,6 +6,7 @@ export interface TabNotifications {
   health: "ok" | "warn" | "critical" | null;
   logs: number; // error count
   cronRuns: number; // failed count
+  blockedTasks: number; // blocked task count
 }
 
 /**
@@ -17,6 +18,7 @@ export function useTabNotifications(): TabNotifications {
     health: null,
     logs: 0,
     cronRuns: 0,
+    blockedTasks: 0,
   });
 
   const fetch_ = useCallback(async () => {
@@ -52,6 +54,13 @@ export function useTabNotifications(): TabNotifications {
           (r: any) => r.status !== "ok" && r.ts > dayAgo
         ).length;
         setNotifications(prev => ({ ...prev, cronRuns: recentFails }));
+      }
+
+      // Fetch blocked tasks count
+      const tasksRes = await fetch("/api/tasks?status=blocked");
+      if (tasksRes.ok) {
+        const t = await tasksRes.json();
+        setNotifications(prev => ({ ...prev, blockedTasks: t.total ?? 0 }));
       }
     } catch {
       // Silently ignore — tab notifications are non-critical

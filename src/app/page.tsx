@@ -16,6 +16,7 @@ import {
   HealthSkeleton,
   CronRunsSkeleton,
   LogsSkeleton,
+  KanbanSkeleton,
 } from "@/components/Skeletons";
 
 const ThemeToggle = dynamic(
@@ -33,7 +34,7 @@ const StatusStrip = dynamic(
   { ssr: false }
 );
 
-const VALID_TABS = ["activity", "calendar", "search", "agents", "analytics", "health", "cron-runs", "logs"] as const;
+const VALID_TABS = ["activity", "calendar", "search", "agents", "analytics", "health", "cron-runs", "logs", "tasks"] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
 class TabErrorBoundary extends Component<
@@ -110,6 +111,11 @@ const LogViewer = dynamic(
   { ssr: false, loading: () => <LogsSkeleton /> }
 );
 
+const KanbanBoard = dynamic(
+  () => import("@/components/KanbanBoard").then((mod) => ({ default: mod.KanbanBoard })),
+  { ssr: false, loading: () => <KanbanSkeleton /> }
+);
+
 /** Notification dot for tabs — shows colored dot or count badge */
 function TabDot({ color }: { color: "red" | "amber" | "emerald" }) {
   const colors = {
@@ -163,6 +169,7 @@ function DashboardContent() {
       else if (e.key === "6") setActiveTab("health");
       else if (e.key === "7") setActiveTab("cron-runs");
       else if (e.key === "8") setActiveTab("logs");
+      else if (e.key === "9") setActiveTab("tasks");
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
@@ -182,7 +189,7 @@ function DashboardContent() {
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-      <TabsList className="flex w-full overflow-x-auto sm:grid sm:grid-cols-8 max-w-[640px] sm:max-w-4xl">
+      <TabsList className="flex w-full overflow-x-auto sm:grid sm:grid-cols-9 max-w-[640px] sm:max-w-4xl">
         <TabsTrigger value="activity" className="shrink-0">
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">1</span>
           Activity
@@ -218,6 +225,11 @@ function DashboardContent() {
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">8</span>
           Logs
           {notifications.logs > 0 && <TabCount count={notifications.logs} color="amber" />}
+        </TabsTrigger>
+        <TabsTrigger value="tasks" className="shrink-0 relative">
+          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">9</span>
+          Tasks
+          {notifications.blockedTasks > 0 && <TabCount count={notifications.blockedTasks} color="red" />}
         </TabsTrigger>
       </TabsList>
 
@@ -266,6 +278,12 @@ function DashboardContent() {
       <TabsContent value="logs" className="mt-6">
         <TabErrorBoundary fallbackLabel="Log Viewer">
           <LogViewer />
+        </TabErrorBoundary>
+      </TabsContent>
+
+      <TabsContent value="tasks" className="mt-6">
+        <TabErrorBoundary fallbackLabel="Tasks">
+          <KanbanBoard />
         </TabErrorBoundary>
       </TabsContent>
     </Tabs>
