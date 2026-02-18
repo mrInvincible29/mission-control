@@ -18,6 +18,7 @@ import {
   Zap,
   FileText,
   Hash,
+  LayoutGrid,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
@@ -212,6 +213,16 @@ export function CommandPalette() {
         keywords: ["logs", "tail", "systemd", "journal", "service", "terminal", "output", "viewer"],
         action: () => navigateToTab("logs"),
         shortcut: "8",
+      },
+      {
+        id: "nav-tasks",
+        label: "Go to Tasks",
+        description: "Kanban board for managing tasks and to-dos",
+        icon: <LayoutGrid className="h-4 w-4" />,
+        section: "Navigation",
+        keywords: ["tasks", "kanban", "board", "todo"],
+        action: () => navigateToTab("tasks"),
+        shortcut: "9",
       },
       // Actions
       {
