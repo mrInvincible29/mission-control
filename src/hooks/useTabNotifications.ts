@@ -1,86 +1,60 @@
 "use client";
 
 import { useState, useEffect, useCallback } from "react";
+import { useHealthData } from "@/hooks/useHealthData";
 
 export interface TabNotifications {
   health: "ok" | "warn" | "critical" | null;
-  logs: number; // error count
-  cronRuns: number; // failed count
-  blockedTasks: number; // blocked task count
+  logs: number;
+  cronRuns: number;
+  blockedTasks: number;
 }
 
-/**
- * Fetches lightweight notification data for tabs.
- * Shows warning dots on Health (high CPU/mem), Logs (errors), Runs (failures).
- */
 export function useTabNotifications(): TabNotifications {
-  const [notifications, setNotifications] = useState<TabNotifications>({
-    health: null,
-    logs: 0,
-    cronRuns: 0,
-    blockedTasks: 0,
-  });
+  const { healthStatus } = useHealthData();
+  const [extra, setExtra] = useState({ logs: 0, cronRuns: 0, blockedTasks: 0 });
 
-  const fetch_ = useCallback(async () => {
+  const fetchExtra = useCallback(async () => {
     try {
-      // Fetch health for CPU/mem status
-      const healthRes = await fetch("/api/health");
-      if (healthRes.ok) {
-        const h = await healthRes.json();
-        const cpu = 100 - (h.cpu?.idle ?? 100);
-        const mem = h.memory?.usedPercent ?? 0;
-        const worst = Math.max(cpu, mem);
-        setNotifications(prev => ({
-          ...prev,
-          health: worst >= 90 ? "critical" : worst >= 70 ? "warn" : "ok",
-        }));
-      }
+      const [logsRes, cronRes, tasksRes] = await Promise.allSettled([
+        fetch("/api/logs?source=mission-control&lines=100"),
+        fetch("/api/cron-runs?limit=50"),
+        fetch("/api/tasks?status=blocked"),
+      ]);
 
-      // Fetch log error count
-      const logsRes = await fetch("/api/logs?source=mission-control&lines=100");
-      if (logsRes.ok) {
-        const l = await logsRes.json();
-        const errorCount = (l.entries || []).filter((e: any) => e.level === "error").length;
-        setNotifications(prev => ({ ...prev, logs: errorCount }));
-      }
+      const logs = logsRes.status === "fulfilled" && logsRes.value.ok
+        ? (await logsRes.value.json()).entries?.filter((e: any) => e.level === "error").length ?? 0
+        : 0;
 
-      // Fetch cron run failures
-      const cronRes = await fetch("/api/cron-runs?limit=50");
-      if (cronRes.ok) {
-        const c = await cronRes.json();
-        // Count recent failures (last 24h)
-        const dayAgo = Date.now() - 86400000;
-        const recentFails = (c.runs || []).filter(
-          (r: any) => r.status !== "ok" && r.ts > dayAgo
-        ).length;
-        setNotifications(prev => ({ ...prev, cronRuns: recentFails }));
-      }
+      const dayAgo = Date.now() - 86400000;
+      const cronRuns = cronRes.status === "fulfilled" && cronRes.value.ok
+        ? (await cronRes.value.json()).runs?.filter((r: any) => r.status !== "ok" && r.ts > dayAgo).length ?? 0
+        : 0;
 
-      // Fetch blocked tasks count
-      const tasksRes = await fetch("/api/tasks?status=blocked");
-      if (tasksRes.ok) {
-        const t = await tasksRes.json();
-        setNotifications(prev => ({ ...prev, blockedTasks: t.total ?? 0 }));
-      }
+      const blockedTasks = tasksRes.status === "fulfilled" && tasksRes.value.ok
+        ? (await tasksRes.value.json()).total ?? 0
+        : 0;
+
+      setExtra({ logs, cronRuns, blockedTasks });
     } catch {
-      // Silently ignore — tab notifications are non-critical
+      // Non-critical — silently ignore
     }
   }, []);
 
   useEffect(() => {
-    fetch_();
-    const interval = setInterval(fetch_, 60000); // 1 minute refresh
+    fetchExtra();
+    const interval = setInterval(fetchExtra, 60000);
     return () => clearInterval(interval);
-  }, [fetch_]);
+  }, [fetchExtra]);
 
-  // Refresh on tab visibility
   useEffect(() => {
-    const handler = () => {
-      if (!document.hidden) fetch_();
-    };
+    const handler = () => { if (!document.hidden) fetchExtra(); };
     document.addEventListener("visibilitychange", handler);
     return () => document.removeEventListener("visibilitychange", handler);
-  }, [fetch_]);
+  }, [fetchExtra]);
 
-  return notifications;
+  return {
+    health: healthStatus,
+    ...extra,
+  };
 }
