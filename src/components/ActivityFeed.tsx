@@ -8,7 +8,11 @@ import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useState, useMemo, useCallback, useEffect } from "react";
-import { Search, X, ChevronDown } from "lucide-react";
+import {
+  Search, X, ChevronDown,
+  Bot, MessageSquare, XCircle, AlertTriangle, Circle, RefreshCw,
+  Zap, BookOpen, Pencil, Mail, CheckCircle2, Wrench, Settings,
+} from "lucide-react";
 import type { Activity } from "@/types";
 import { formatTokens, formatCost, formatRelativeTime, formatDuration } from "@/lib/formatters";
 
@@ -20,20 +24,20 @@ const CATEGORY_COLORS: Record<string, string> = {
   noise: "bg-zinc-500/20 text-zinc-500 border-zinc-500/30",
 };
 
-const ACTION_TYPE_ICONS: Record<string, string> = {
-  model_usage: "\u{1F916}",
-  message_processed: "\u{1F4AC}",
-  message_error: "\u274C",
-  session_stuck: "\u26A0\uFE0F",
-  webhook_error: "\u{1F534}",
-  session_state: "\u{1F504}",
-  exec: "\u26A1",
-  read: "\u{1F4D6}",
-  write: "\u270F\uFE0F",
-  message: "\u{1F4E8}",
-  task: "\u2705",
-  fix: "\u{1F527}",
-  system: "\u2699\uFE0F",
+const ACTION_TYPE_ICONS: Record<string, React.ReactNode> = {
+  model_usage: <Bot className="h-4 w-4" />,
+  message_processed: <MessageSquare className="h-4 w-4" />,
+  message_error: <XCircle className="h-4 w-4 text-red-400" />,
+  session_stuck: <AlertTriangle className="h-4 w-4 text-amber-400" />,
+  webhook_error: <Circle className="h-4 w-4 text-red-400" />,
+  session_state: <RefreshCw className="h-4 w-4" />,
+  exec: <Zap className="h-4 w-4" />,
+  read: <BookOpen className="h-4 w-4" />,
+  write: <Pencil className="h-4 w-4" />,
+  message: <Mail className="h-4 w-4" />,
+  task: <CheckCircle2 className="h-4 w-4" />,
+  fix: <Wrench className="h-4 w-4" />,
+  system: <Settings className="h-4 w-4" />,
 };
 
 const STATUS_COLORS: Record<string, string> = {
@@ -51,11 +55,11 @@ const DATE_RANGES = [
 
 const CATEGORIES = [
   { label: "All", value: "" },
-  { label: "\u{1F534} Important", value: "important" },
-  { label: "\u{1F916} Model", value: "model" },
-  { label: "\u{1F4AC} Messages", value: "message" },
-  { label: "\u2699\uFE0F System", value: "system" },
-  { label: "\u{1F507} Noise", value: "noise" },
+  { label: "Important", value: "important" },
+  { label: "Model", value: "model" },
+  { label: "Messages", value: "message" },
+  { label: "System", value: "system" },
+  { label: "Noise", value: "noise" },
 ];
 
 function getDateLabel(days: number): string {
@@ -301,7 +305,7 @@ export function ActivityFeed() {
 
 function ActivityItem({ activity }: { activity: Activity }) {
   const [expanded, setExpanded] = useState(false);
-  const icon = ACTION_TYPE_ICONS[activity.actionType] || "\u{1F4CC}";
+  const icon = ACTION_TYPE_ICONS[activity.actionType] || <Circle className="h-4 w-4" />;
   const categoryColor = CATEGORY_COLORS[activity.category ?? "system"] || CATEGORY_COLORS.system;
 
   const meta = activity.metadata;
@@ -329,7 +333,7 @@ function ActivityItem({ activity }: { activity: Activity }) {
       aria-expanded={expanded}
     >
       <div className="flex items-start gap-2">
-        <span className="text-base mt-0.5">{icon}</span>
+        <span className="mt-0.5 text-muted-foreground">{icon}</span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <Badge
