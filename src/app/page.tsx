@@ -6,11 +6,12 @@ import { useSearchParams, useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SetupGuide } from "@/components/SetupGuide";
 import { ToastProvider } from "@/components/Toast";
+import { SubViewToggle } from "@/components/SubViewToggle";
 import { useTabNotifications } from "@/hooks/useTabNotifications";
+import { Activity, CalendarDays, CheckSquare, Server, Search } from "lucide-react";
 import {
   ActivitySkeleton,
   CalendarSkeleton,
-  SearchSkeleton,
   AgentsSkeleton,
   AnalyticsSkeleton,
   HealthSkeleton,
@@ -34,8 +35,15 @@ const StatusStrip = dynamic(
   { ssr: false }
 );
 
-const VALID_TABS = ["activity", "calendar", "search", "agents", "analytics", "health", "cron-runs", "logs", "tasks"] as const;
+const VALID_TABS = ["activity", "schedule", "tasks", "system"] as const;
 type TabValue = (typeof VALID_TABS)[number];
+
+const VALID_VIEWS: Record<TabValue, string[]> = {
+  activity: ["feed", "analytics", "agents"],
+  schedule: ["calendar", "runs"],
+  tasks: ["board"],
+  system: ["health", "logs"],
+};
 
 class TabErrorBoundary extends Component<
   { children: ReactNode; fallbackLabel: string },
@@ -79,11 +87,6 @@ const ActivityFeed = dynamic(
 const CalendarView = dynamic(
   () => import("@/components/CalendarView").then((mod) => ({ default: mod.CalendarView })),
   { ssr: false, loading: () => <CalendarSkeleton /> }
-);
-
-const GlobalSearch = dynamic(
-  () => import("@/components/GlobalSearch").then((mod) => ({ default: mod.GlobalSearch })),
-  { ssr: false, loading: () => <SearchSkeleton /> }
 );
 
 const AgentSessions = dynamic(
@@ -154,34 +157,60 @@ function DashboardContent() {
     : "activity";
   const [activeTab, setActiveTab] = useState<TabValue>(initialTab);
 
-  // Keyboard shortcuts: 1/2/3/4 to switch tabs
-  useEffect(() => {
-    const handleKeyDown = (e: KeyboardEvent) => {
-      // Don't trigger when typing in inputs
-      const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+  // Read initial view from URL
+  const viewParam = searchParams.get("view");
+  const [activeView, setActiveView] = useState<string>(
+    viewParam && VALID_VIEWS[initialTab]?.includes(viewParam)
+      ? viewParam
+      : VALID_VIEWS[initialTab][0]
+  );
 
-      if (e.key === "1") setActiveTab("activity");
-      else if (e.key === "2") setActiveTab("calendar");
-      else if (e.key === "3") setActiveTab("search");
-      else if (e.key === "4") setActiveTab("agents");
-      else if (e.key === "5") setActiveTab("analytics");
-      else if (e.key === "6") setActiveTab("health");
-      else if (e.key === "7") setActiveTab("cron-runs");
-      else if (e.key === "8") setActiveTab("logs");
-      else if (e.key === "9") setActiveTab("tasks");
-    };
-    window.addEventListener("keydown", handleKeyDown);
-    return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  // Sync view changes to URL
+  const handleViewChange = useCallback((view: string) => {
+    setActiveView(view);
+    const params = new URLSearchParams();
+    if (activeTab !== "activity") params.set("tab", activeTab);
+    const defaultView = VALID_VIEWS[activeTab][0];
+    if (view !== defaultView) params.set("view", view);
+    const url = params.toString() ? `/?${params}` : "/";
+    router.replace(url, { scroll: false });
+  }, [activeTab, router]);
 
-  // Sync tab changes to URL
+  // Sync tab changes to URL, reset view to default
   const handleTabChange = useCallback((value: string) => {
     const tab = value as TabValue;
     setActiveTab(tab);
+    const defaultView = VALID_VIEWS[tab][0];
+    setActiveView(defaultView);
     const url = tab === "activity" ? "/" : `/?tab=${tab}`;
     router.replace(url, { scroll: false });
   }, [router]);
+
+  // Keyboard shortcuts: 1-4 for tabs, Shift+1/2/3 for sub-views
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      // Tab switching: 1-4
+      if (!e.shiftKey) {
+        if (e.key === "1") handleTabChange("activity");
+        else if (e.key === "2") handleTabChange("schedule");
+        else if (e.key === "3") handleTabChange("tasks");
+        else if (e.key === "4") handleTabChange("system");
+      }
+      // Sub-view switching: Shift+1/2/3
+      if (e.shiftKey) {
+        const views = VALID_VIEWS[activeTab];
+        const idx = parseInt(e.key) - 1;
+        if (idx >= 0 && idx < views.length) {
+          handleViewChange(views[idx]);
+        }
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [activeTab, handleTabChange, handleViewChange]);
 
   if (!supabaseUrl) {
     return <SetupGuide />;
@@ -189,101 +218,84 @@ function DashboardContent() {
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
-      <TabsList className="flex w-full overflow-x-auto sm:grid sm:grid-cols-9 max-w-[640px] sm:max-w-4xl">
-        <TabsTrigger value="activity" className="shrink-0">
+      <TabsList className="flex w-full overflow-x-auto sm:grid sm:grid-cols-4 max-w-md">
+        <TabsTrigger value="activity" className="shrink-0 gap-1.5">
+          <Activity className="h-4 w-4 sm:hidden" />
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">1</span>
           Activity
         </TabsTrigger>
-        <TabsTrigger value="calendar" className="shrink-0">
+        <TabsTrigger value="schedule" className="shrink-0 gap-1.5">
+          <CalendarDays className="h-4 w-4 sm:hidden" />
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">2</span>
-          Calendar
-        </TabsTrigger>
-        <TabsTrigger value="search" className="shrink-0">
-          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">3</span>
-          Search
-        </TabsTrigger>
-        <TabsTrigger value="agents" className="shrink-0">
-          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">4</span>
-          Agents
-        </TabsTrigger>
-        <TabsTrigger value="analytics" className="shrink-0">
-          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">5</span>
-          Analytics
-        </TabsTrigger>
-        <TabsTrigger value="health" className="shrink-0 relative">
-          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">6</span>
-          Health
-          {notifications.health === "critical" && <TabDot color="red" />}
-          {notifications.health === "warn" && <TabDot color="amber" />}
-        </TabsTrigger>
-        <TabsTrigger value="cron-runs" className="shrink-0 relative">
-          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">7</span>
-          Runs
+          Schedule
           {notifications.cronRuns > 0 && <TabCount count={notifications.cronRuns} color="red" />}
         </TabsTrigger>
-        <TabsTrigger value="logs" className="shrink-0 relative">
-          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">8</span>
-          Logs
-          {notifications.logs > 0 && <TabCount count={notifications.logs} color="amber" />}
-        </TabsTrigger>
-        <TabsTrigger value="tasks" className="shrink-0 relative">
-          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">9</span>
+        <TabsTrigger value="tasks" className="shrink-0 gap-1.5 relative">
+          <CheckSquare className="h-4 w-4 sm:hidden" />
+          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">3</span>
           Tasks
           {notifications.blockedTasks > 0 && <TabCount count={notifications.blockedTasks} color="red" />}
         </TabsTrigger>
+        <TabsTrigger value="system" className="shrink-0 gap-1.5 relative">
+          <Server className="h-4 w-4 sm:hidden" />
+          <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">4</span>
+          System
+          {notifications.health === "critical" && <TabDot color="red" />}
+          {notifications.health === "warn" && <TabDot color="amber" />}
+          {notifications.logs > 0 && <TabCount count={notifications.logs} color="amber" />}
+        </TabsTrigger>
       </TabsList>
 
-      <TabsContent value="activity" className="mt-6">
-        <TabErrorBoundary fallbackLabel="Activity Feed">
-          <ActivityFeed />
+      <TabsContent value="activity" className="mt-6 space-y-4">
+        <SubViewToggle
+          views={[
+            { id: "feed", label: "Feed" },
+            { id: "analytics", label: "Analytics" },
+            { id: "agents", label: "Agents" },
+          ]}
+          active={activeView}
+          onChange={handleViewChange}
+        />
+        <TabErrorBoundary fallbackLabel="Activity">
+          {activeView === "feed" && <ActivityFeed />}
+          {activeView === "analytics" && <AnalyticsView />}
+          {activeView === "agents" && <AgentSessions />}
         </TabErrorBoundary>
       </TabsContent>
 
-      <TabsContent value="calendar" className="mt-6">
-        <TabErrorBoundary fallbackLabel="Calendar">
-          <CalendarView />
-        </TabErrorBoundary>
-      </TabsContent>
-
-      <TabsContent value="search" className="mt-6">
-        <TabErrorBoundary fallbackLabel="Search">
-          <GlobalSearch />
-        </TabErrorBoundary>
-      </TabsContent>
-
-      <TabsContent value="agents" className="mt-6">
-        <TabErrorBoundary fallbackLabel="Agents">
-          <AgentSessions />
-        </TabErrorBoundary>
-      </TabsContent>
-
-      <TabsContent value="analytics" className="mt-6">
-        <TabErrorBoundary fallbackLabel="Analytics">
-          <AnalyticsView />
-        </TabErrorBoundary>
-      </TabsContent>
-
-      <TabsContent value="health" className="mt-6">
-        <TabErrorBoundary fallbackLabel="System Health">
-          <SystemHealth />
-        </TabErrorBoundary>
-      </TabsContent>
-
-      <TabsContent value="cron-runs" className="mt-6">
-        <TabErrorBoundary fallbackLabel="Cron Runs">
-          <CronHistory />
-        </TabErrorBoundary>
-      </TabsContent>
-
-      <TabsContent value="logs" className="mt-6">
-        <TabErrorBoundary fallbackLabel="Log Viewer">
-          <LogViewer />
+      <TabsContent value="schedule" className="mt-6 space-y-4">
+        <SubViewToggle
+          views={[
+            { id: "calendar", label: "Calendar" },
+            { id: "runs", label: "Run History" },
+          ]}
+          active={activeView}
+          onChange={handleViewChange}
+        />
+        <TabErrorBoundary fallbackLabel="Schedule">
+          {activeView === "calendar" && <CalendarView />}
+          {activeView === "runs" && <CronHistory />}
         </TabErrorBoundary>
       </TabsContent>
 
       <TabsContent value="tasks" className="mt-6">
         <TabErrorBoundary fallbackLabel="Tasks">
           <KanbanBoard />
+        </TabErrorBoundary>
+      </TabsContent>
+
+      <TabsContent value="system" className="mt-6 space-y-4">
+        <SubViewToggle
+          views={[
+            { id: "health", label: "Health" },
+            { id: "logs", label: "Logs" },
+          ]}
+          active={activeView}
+          onChange={handleViewChange}
+        />
+        <TabErrorBoundary fallbackLabel="System">
+          {activeView === "health" && <SystemHealth />}
+          {activeView === "logs" && <LogViewer />}
         </TabErrorBoundary>
       </TabsContent>
     </Tabs>
@@ -305,19 +317,22 @@ export default function Home() {
                 <div className="mt-1.5 hidden sm:block">
                   <StatusStrip />
                 </div>
-                <p className="text-muted-foreground mt-1 text-sm sm:hidden">
-                  AJ&apos;s personal command center
-                </p>
+                <div className="mt-1 sm:hidden">
+                  <StatusStrip compact />
+                </div>
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true }))}
-                  className="hidden sm:flex items-center gap-2 rounded-lg border border-border/60 bg-muted/30 px-3 py-1.5 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+                  onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, ctrlKey: true, bubbles: true }))}
+                  className="flex items-center justify-center rounded-lg border border-border/60 bg-muted/30 p-1.5 sm:px-3 sm:py-1.5 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
                 >
-                  <span>Search commands...</span>
-                  <kbd className="rounded border border-border/40 bg-background/50 px-1 py-0.5 text-[10px] font-mono">
-                    ⌘K
-                  </kbd>
+                  <Search className="h-4 w-4 sm:hidden" />
+                  <span className="hidden sm:flex items-center gap-2">
+                    Search commands...
+                    <kbd className="rounded border border-border/40 bg-background/50 px-1 py-0.5 text-[10px] font-mono">
+                      ⌘K
+                    </kbd>
+                  </span>
                 </button>
                 <ThemeToggle />
               </div>
