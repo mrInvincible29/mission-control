@@ -8,9 +8,9 @@ test("homepage loads with 200 status", async ({ page }) => {
   await expect(page.locator("h1")).toContainText("Mission Control");
 });
 
-test("all 9 tabs are visible", async ({ page }) => {
+test("all 4 tabs are visible", async ({ page }) => {
   await page.goto("/");
-  for (const tab of ["Activity", "Calendar", "Search", "Agents", "Analytics", "Health", "Runs", "Logs", "Tasks"]) {
+  for (const tab of ["Activity", "Schedule", "Tasks", "System"]) {
     await expect(page.getByRole("tab", { name: new RegExp(tab) })).toBeVisible();
   }
 });
@@ -25,62 +25,39 @@ test("tab navigation — Activity tab loads content", async ({ page }) => {
   await expect(tabContent).toBeVisible();
 });
 
-test("tab navigation — Calendar tab loads content", async ({ page }) => {
-  await page.goto("/?tab=calendar");
-  const calendarTab = page.getByRole("tab", { name: /Calendar/ });
-  await expect(calendarTab).toHaveAttribute("data-state", "active");
+test("tab navigation — Schedule tab loads content", async ({ page }) => {
+  await page.goto("/?tab=schedule");
+  const scheduleTab = page.getByRole("tab", { name: /Schedule/ });
+  await expect(scheduleTab).toHaveAttribute("data-state", "active");
   const tabContent = page.getByRole("tabpanel");
   await expect(tabContent).toBeVisible();
 });
 
-test("tab navigation — Search tab loads content", async ({ page }) => {
-  await page.goto("/?tab=search");
-  const searchTab = page.getByRole("tab", { name: /Search/ });
-  await expect(searchTab).toHaveAttribute("data-state", "active");
-  const tabContent = page.getByRole("tabpanel");
-  await expect(tabContent).toBeVisible();
-});
-
-test("tab navigation — Agents tab loads content", async ({ page }) => {
-  await page.goto("/?tab=agents");
-  const agentsTab = page.getByRole("tab", { name: /Agents/ });
-  await expect(agentsTab).toHaveAttribute("data-state", "active");
-  const tabContent = page.getByRole("tabpanel");
-  await expect(tabContent).toBeVisible();
-});
-
-test("tab navigation — Analytics tab loads content", async ({ page }) => {
-  await page.goto("/?tab=analytics");
-  const analyticsTab = page.getByRole("tab", { name: /Analytics/ });
-  await expect(analyticsTab).toHaveAttribute("data-state", "active");
+test("tab navigation — System tab loads content", async ({ page }) => {
+  await page.goto("/?tab=system");
+  const systemTab = page.getByRole("tab", { name: /System/ });
+  await expect(systemTab).toHaveAttribute("data-state", "active");
   const tabContent = page.getByRole("tabpanel");
   await expect(tabContent).toBeVisible();
 });
 
 test("keyboard shortcuts switch tabs", async ({ page }) => {
   await page.goto("/");
-  // Wait for page to be interactive
   await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  // Wait for dynamic components and keyboard listener to register
+  await page.waitForTimeout(1000);
 
-  // Press 2 for Calendar
   await page.keyboard.press("2");
-  await expect(page.getByRole("tab", { name: /Calendar/ })).toHaveAttribute("data-state", "active");
+  await expect(page.getByRole("tab", { name: /Schedule/ })).toHaveAttribute("data-state", "active", { timeout: 5000 });
 
-  // Press 3 for Search
   await page.keyboard.press("3");
-  await expect(page.getByRole("tab", { name: /Search/ })).toHaveAttribute("data-state", "active");
+  await expect(page.getByRole("tab", { name: /Tasks/ })).toHaveAttribute("data-state", "active", { timeout: 5000 });
 
-  // Press 4 for Agents
   await page.keyboard.press("4");
-  await expect(page.getByRole("tab", { name: /Agents/ })).toHaveAttribute("data-state", "active");
+  await expect(page.getByRole("tab", { name: /System/ })).toHaveAttribute("data-state", "active", { timeout: 5000 });
 
-  // Press 5 for Analytics
-  await page.keyboard.press("5");
-  await expect(page.getByRole("tab", { name: /Analytics/ })).toHaveAttribute("data-state", "active");
-
-  // Press 1 for Activity
   await page.keyboard.press("1");
-  await expect(page.getByRole("tab", { name: /Activity/ })).toHaveAttribute("data-state", "active");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toHaveAttribute("data-state", "active", { timeout: 5000 });
 });
 
 test("theme toggle exists and is clickable", async ({ page }) => {
@@ -117,27 +94,19 @@ test("command palette opens via keyboard event", async ({ page }) => {
   await expect(page.getByPlaceholder("Type a command or search...")).not.toBeVisible({ timeout: 5000 });
 });
 
-test("search tab has an input field", async ({ page }) => {
-  await page.goto("/?tab=search");
-  await expect(page.getByRole("tabpanel")).toBeVisible();
-  // Search tab should have a search input or browse interface
-  const panel = page.getByRole("tabpanel");
-  await expect(panel).toBeVisible();
-});
+// === SYSTEM TAB: Health Sub-View ===
 
-// === NEW FEATURE TESTS: System Health Tab ===
-
-test("Health tab loads and shows system metrics", async ({ page }) => {
-  await page.goto("/?tab=health");
-  const healthTab = page.getByRole("tab", { name: /Health/ });
-  await expect(healthTab).toHaveAttribute("data-state", "active");
+test("System tab loads and shows system metrics", async ({ page }) => {
+  await page.goto("/?tab=system");
+  const systemTab = page.getByRole("tab", { name: /System/ });
+  await expect(systemTab).toHaveAttribute("data-state", "active");
 
   // Wait for health data to load
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
 });
 
 test("Health tab shows hostname badge", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   // Hostname badge should appear
   const hostname = page.locator('[class*="font-mono"]').filter({ hasText: /s\d+/ });
@@ -145,50 +114,50 @@ test("Health tab shows hostname badge", async ({ page }) => {
 });
 
 test("Health tab shows CPU gauge", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   // CPU label should appear
   await expect(page.getByText("CPU", { exact: true }).first()).toBeVisible({ timeout: 10000 });
 });
 
 test("Health tab shows Memory gauge", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("Memory", { exact: true }).first()).toBeVisible({ timeout: 10000 });
 });
 
 test("Health tab shows Disk section", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("Disk Usage")).toBeVisible({ timeout: 10000 });
 });
 
 test("Health tab shows Docker containers", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   await expect(page.getByRole("heading", { name: "Docker" })).toBeVisible({ timeout: 10000 });
 });
 
 test("Health tab shows Services", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("Services")).toBeVisible({ timeout: 10000 });
 });
 
 test("Health tab shows Network interfaces", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("Network Interfaces")).toBeVisible({ timeout: 10000 });
 });
 
 test("Health tab shows Top Processes", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("Top Processes")).toBeVisible({ timeout: 10000 });
 });
 
 test("Health tab auto-refresh toggle works", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   // Auto button should be visible (auto-refresh is on by default)
   const autoBtn = page.getByRole("button", { name: "Auto" });
@@ -199,14 +168,6 @@ test("Health tab auto-refresh toggle works", async ({ page }) => {
   // Click to resume
   await page.getByRole("button", { name: "Paused" }).click();
   await expect(page.getByRole("button", { name: "Auto" })).toBeVisible();
-});
-
-test("Health tab keyboard shortcut 6 works", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
-  await page.keyboard.press("6");
-  await expect(page.getByRole("tab", { name: /Health/ })).toHaveAttribute("data-state", "active");
-  await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
 });
 
 test("Health API returns valid JSON", async ({ request }) => {
@@ -227,12 +188,12 @@ test("Health API returns valid JSON", async ({ request }) => {
 });
 
 test("Health tab Uptime section shows uptime", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("Uptime")).toBeVisible({ timeout: 10000 });
 });
 
-test("command palette shows Health navigation item", async ({ page }) => {
+test("command palette shows System Health navigation item", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
   // Wait for dynamic components to load
@@ -252,21 +213,21 @@ test("command palette shows Health navigation item", async ({ page }) => {
   await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
   // Type "health"
   await page.fill('input[placeholder="Type a command or search..."]', "health");
-  await expect(page.getByText("Go to System Health")).toBeVisible();
+  await expect(page.getByText("System Health")).toBeVisible();
 });
 
-// === NEW FEATURE TESTS: Cron Run History Tab ===
+// === SCHEDULE TAB: Runs Sub-View ===
 
-test("Cron Runs tab loads via URL", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
-  const runsTab = page.getByRole("tab", { name: /Runs/ });
-  await expect(runsTab).toHaveAttribute("data-state", "active");
+test("Schedule tab (Runs view) loads via URL", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=runs");
+  const scheduleTab = page.getByRole("tab", { name: /Schedule/ });
+  await expect(scheduleTab).toHaveAttribute("data-state", "active");
   const tabContent = page.getByRole("tabpanel");
   await expect(tabContent).toBeVisible();
 });
 
 test("Cron Runs tab shows header and stats", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   // Stats banner should show Total Runs
   await expect(page.getByText("Total Runs")).toBeVisible({ timeout: 10000 });
@@ -274,14 +235,14 @@ test("Cron Runs tab shows header and stats", async ({ page }) => {
 });
 
 test("Cron Runs tab shows job list", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   // Should show at least one job name (e.g. Nightly Build)
   await expect(page.getByText("Nightly Build").first()).toBeVisible({ timeout: 10000 });
 });
 
 test("Cron Runs tab expand job shows run list", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   // Click on a job to expand it
   const jobButton = page.getByText("Nightly Build").first();
@@ -292,7 +253,7 @@ test("Cron Runs tab expand job shows run list", async ({ page }) => {
 });
 
 test("Cron Runs tab status filter works", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   // Click "Success" filter — use exact match to avoid matching timeline entries
   const successBtn = page.getByRole("button", { name: "Success", exact: true });
@@ -305,7 +266,7 @@ test("Cron Runs tab status filter works", async ({ page }) => {
 });
 
 test("Cron Runs tab sort buttons work", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   // Click "Name" sort — use exact match to avoid matching timeline entries
   const nameBtn = page.getByRole("button", { name: "Name", exact: true });
@@ -316,18 +277,10 @@ test("Cron Runs tab sort buttons work", async ({ page }) => {
 });
 
 test("Cron Runs tab shows timeline section", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   // Timeline heading should be visible
   await expect(page.getByText("Timeline")).toBeVisible({ timeout: 10000 });
-});
-
-test("Cron Runs keyboard shortcut 7 works", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
-  await page.keyboard.press("7");
-  await expect(page.getByRole("tab", { name: /Runs/ })).toHaveAttribute("data-state", "active");
-  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
 });
 
 test("Cron Runs API returns valid JSON", async ({ request }) => {
@@ -355,13 +308,13 @@ test("Cron Runs API supports jobId filter", async ({ request }) => {
 });
 
 test("Cron Runs tab refresh button exists", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   const refreshBtn = page.getByRole("button", { name: "Refresh", exact: true });
   await expect(refreshBtn).toBeVisible({ timeout: 5000 });
 });
 
-test("command palette shows Cron Run History navigation item", async ({ page }) => {
+test("command palette shows Run History navigation item", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
   await page.waitForTimeout(1000);
@@ -377,16 +330,25 @@ test("command palette shows Cron Run History navigation item", async ({ page }) 
     window.dispatchEvent(event);
   });
   await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
-  await page.fill('input[placeholder="Type a command or search..."]', "cron runs");
-  await expect(page.getByText("Go to Cron Run History")).toBeVisible();
+  await page.fill('input[placeholder="Type a command or search..."]', "run history");
+  await expect(page.getByRole("button", { name: /Run History/ }).first()).toBeVisible();
 });
 
 // === BUG FIX REGRESSION TESTS ===
 
 test("Health API returns Cache-Control no-cache header", async ({ request }) => {
-  const response = await request.get("/api/health");
-  expect(response.status()).toBe(200);
-  const cacheControl = response.headers()["cache-control"];
+  let response;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      response = await request.get("/api/health");
+      break;
+    } catch {
+      if (attempt === 2) throw new Error("Health API unreachable after 3 attempts");
+      await new Promise((r) => setTimeout(r, 1000));
+    }
+  }
+  expect(response!.status()).toBe(200);
+  const cacheControl = response!.headers()["cache-control"];
   expect(cacheControl).toContain("no-cache");
   expect(cacheControl).toContain("no-store");
   expect(cacheControl).toContain("must-revalidate");
@@ -402,14 +364,14 @@ test("Cron Runs API returns Cache-Control no-cache header", async ({ request }) 
 });
 
 test("Health tab shows 'Updated Xs ago' counter", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   // The "Updated Xs ago" counter should appear after data loads
   await expect(page.getByText(/Updated \d+s ago/)).toBeVisible({ timeout: 10000 });
 });
 
 test("Health tab 'Updated' counter increments over time", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText(/Updated \d+s ago/)).toBeVisible({ timeout: 10000 });
   // Wait 2 seconds and verify the counter has changed
@@ -420,7 +382,7 @@ test("Health tab 'Updated' counter increments over time", async ({ page }) => {
 });
 
 test("Health tab has a manual refresh button", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   // The refresh icon button should exist and be clickable
   const refreshBtn = page.locator('button:has(svg.h-3\\.5.w-3\\.5)').last();
@@ -479,7 +441,7 @@ test("Cron Runs API returns valid job stats", async ({ request }) => {
 });
 
 test("Cron Runs tab jobs are sorted by most recent first (default)", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   // "Recent" sort button should be active by default
   const recentBtn = page.getByRole("button", { name: "Recent", exact: true });
@@ -487,7 +449,7 @@ test("Cron Runs tab jobs are sorted by most recent first (default)", async ({ pa
 });
 
 test("Cron Runs tab Health sort orders by success rate descending", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   const healthBtn = page.getByRole("button", { name: "Health", exact: true });
   await expect(healthBtn).toBeVisible({ timeout: 5000 });
@@ -498,7 +460,7 @@ test("Cron Runs tab Health sort orders by success rate descending", async ({ pag
 });
 
 test("Cron Runs tab timestamps use locale-appropriate formatting", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   // Expand a job to see run timestamps
   const jobButton = page.getByText("Nightly Build").first();
@@ -509,10 +471,10 @@ test("Cron Runs tab timestamps use locale-appropriate formatting", async ({ page
   await expect(page.getByText(/[AP]M/).first()).toBeVisible({ timeout: 5000 });
 });
 
-test("Analytics tab loads without crashing", async ({ page }) => {
-  await page.goto("/?tab=analytics");
-  const analyticsTab = page.getByRole("tab", { name: /Analytics/ });
-  await expect(analyticsTab).toHaveAttribute("data-state", "active");
+test("Analytics sub-view loads without crashing", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  const activityTab = page.getByRole("tab", { name: /Activity/ });
+  await expect(activityTab).toHaveAttribute("data-state", "active");
   // Should show content even if there's no data — not crash
   const tabContent = page.getByRole("tabpanel");
   await expect(tabContent).toBeVisible();
@@ -523,7 +485,7 @@ test("Analytics tab loads without crashing", async ({ page }) => {
 });
 
 test("Cron Runs tab visibility change triggers refresh", async ({ page }) => {
-  await page.goto("/?tab=cron-runs");
+  await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   // Simulate visibility change (hidden then visible) — data should still show
   await page.evaluate(() => {
@@ -535,7 +497,7 @@ test("Cron Runs tab visibility change triggers refresh", async ({ page }) => {
 });
 
 test("Health tab visibility change triggers refresh", async ({ page }) => {
-  await page.goto("/?tab=health");
+  await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
   // Simulate visibility change
   await page.evaluate(() => {
@@ -545,37 +507,37 @@ test("Health tab visibility change triggers refresh", async ({ page }) => {
   await expect(page.getByText("System Health")).toBeVisible();
 });
 
-// === NEW FEATURE TESTS: Log Viewer Tab ===
+// === SYSTEM TAB: Logs Sub-View ===
 
-test("Logs tab loads via URL", async ({ page }) => {
-  await page.goto("/?tab=logs");
-  const logsTab = page.getByRole("tab", { name: /Logs/ });
-  await expect(logsTab).toHaveAttribute("data-state", "active");
+test("System tab (Logs view) loads via URL", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  const systemTab = page.getByRole("tab", { name: /System/ });
+  await expect(systemTab).toHaveAttribute("data-state", "active");
   const tabContent = page.getByRole("tabpanel");
   await expect(tabContent).toBeVisible();
 });
 
 test("Logs tab shows Log Viewer header", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
 });
 
 test("Logs tab shows source selector buttons", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
   // Should show Mission Control source button
   await expect(page.getByRole("button", { name: /Mission Control/ })).toBeVisible({ timeout: 10000 });
 });
 
 test("Logs tab shows log entries from default source", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
   // Wait for logs to load — the log container should have entries with INF/ERR/WRN labels
   await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
 });
 
 test("Logs tab switching source changes log content", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
   // Wait for initial load
   await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
@@ -588,7 +550,7 @@ test("Logs tab switching source changes log content", async ({ page }) => {
 });
 
 test("Logs tab Live/Paused toggle works", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
   // Live button should be visible by default
   const liveBtn = page.getByRole("button", { name: /Live/ });
@@ -602,7 +564,7 @@ test("Logs tab Live/Paused toggle works", async ({ page }) => {
 });
 
 test("Logs tab filter text input works", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
   // Type in the filter input
   const filterInput = page.getByPlaceholder("Filter log messages...");
@@ -615,7 +577,7 @@ test("Logs tab filter text input works", async ({ page }) => {
 });
 
 test("Logs tab line count selector works", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
   // Click 50 lines button
   const btn50 = page.getByRole("button", { name: "50", exact: true });
@@ -627,16 +589,8 @@ test("Logs tab line count selector works", async ({ page }) => {
   await page.getByRole("button", { name: "200", exact: true }).click();
 });
 
-test("Logs tab keyboard shortcut 8 works", async ({ page }) => {
-  await page.goto("/");
-  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
-  await page.keyboard.press("8");
-  await expect(page.getByRole("tab", { name: /Logs/ })).toHaveAttribute("data-state", "active");
-  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
-});
-
 test("Logs tab shows Updated Xs ago counter", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText(/Updated \d+s ago/)).toBeVisible({ timeout: 10000 });
 });
@@ -705,11 +659,11 @@ test("command palette shows Log Viewer navigation item", async ({ page }) => {
   });
   await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
   await page.fill('input[placeholder="Type a command or search..."]', "log viewer");
-  await expect(page.getByText("Go to Log Viewer")).toBeVisible();
+  await expect(page.getByText("Log Viewer")).toBeVisible();
 });
 
 test("Logs tab visibility change triggers refresh", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
   await page.evaluate(() => {
     document.dispatchEvent(new Event("visibilitychange"));
@@ -731,8 +685,8 @@ test("skeleton loader renders animated elements (no bare 'Loading...' text)", as
 });
 
 test("all tabs render without generic 'Loading...' fallback", async ({ page }) => {
-  for (const tab of ["activity", "calendar", "search", "agents", "analytics", "health", "cron-runs", "logs"]) {
-    await page.goto(`/?tab=${tab}`);
+  for (const url of ["/?tab=activity", "/?tab=schedule", "/?tab=tasks", "/?tab=system"]) {
+    await page.goto(url);
     const tabPanel = page.getByRole("tabpanel");
     await expect(tabPanel).toBeVisible({ timeout: 10000 });
     await page.waitForTimeout(500);
@@ -742,7 +696,7 @@ test("all tabs render without generic 'Loading...' fallback", async ({ page }) =
 });
 
 test("log viewer highlights matching search terms with yellow marks", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
   const filterInput = page.getByPlaceholder("Filter log messages...");
@@ -758,7 +712,7 @@ test("log viewer highlights matching search terms with yellow marks", async ({ p
 });
 
 test("log viewer clears highlights when search is cleared", async ({ page }) => {
-  await page.goto("/?tab=logs");
+  await page.goto("/?tab=system&view=logs");
   await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
   const filterInput = page.getByPlaceholder("Filter log messages...");
@@ -905,11 +859,12 @@ test("Tasks tab loads via URL", async ({ page }) => {
   await expect(tabContent).toBeVisible();
 });
 
-test("Tasks tab keyboard shortcut 9 works", async ({ page }) => {
+test("Tasks tab keyboard shortcut 3 works", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
-  await page.keyboard.press("9");
-  await expect(page.getByRole("tab", { name: /Tasks/ })).toHaveAttribute("data-state", "active");
+  await page.waitForTimeout(1000);
+  await page.keyboard.press("3");
+  await expect(page.getByRole("tab", { name: /Tasks/ })).toHaveAttribute("data-state", "active", { timeout: 5000 });
 });
 
 test("Tasks tab shows Kanban board with 4 columns", async ({ page }) => {
@@ -943,5 +898,5 @@ test("command palette shows Tasks navigation item", async ({ page }) => {
   });
   await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
   await page.fill('input[placeholder="Type a command or search..."]', "tasks");
-  await expect(page.getByText("Go to Tasks")).toBeVisible();
+  await expect(page.getByRole("button", { name: /Tasks/ }).first()).toBeVisible();
 });
