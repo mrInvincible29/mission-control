@@ -170,6 +170,16 @@ export function AgentSessions() {
     }
   }, [selectedId, fetchDetail]);
 
+  // Listen for global "r" key refresh event
+  useEffect(() => {
+    const handler = () => {
+      fetchSessions();
+      if (selectedId) fetchDetail(selectedId, false);
+    };
+    window.addEventListener("refresh-view", handler);
+    return () => window.removeEventListener("refresh-view", handler);
+  }, [fetchSessions, fetchDetail, selectedId]);
+
   // Filter sessions by search
   const filteredSessions = useMemo(() => {
     if (!searchText.trim()) return sessions;

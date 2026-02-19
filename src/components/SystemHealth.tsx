@@ -317,6 +317,13 @@ export function SystemHealth() {
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [fetchHealth]);
 
+  // Listen for global "r" key refresh event
+  useEffect(() => {
+    const handler = () => fetchHealth();
+    window.addEventListener("refresh-view", handler);
+    return () => window.removeEventListener("refresh-view", handler);
+  }, [fetchHealth]);
+
   // Tick every second so "Updated Xs ago" counts up in real time
   useEffect(() => {
     if (lastRefresh === 0) return;

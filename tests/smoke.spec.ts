@@ -900,3 +900,132 @@ test("command palette shows Tasks navigation item", async ({ page }) => {
   await page.fill('input[placeholder="Type a command or search..."]', "tasks");
   await expect(page.getByRole("button", { name: /Tasks/ }).first()).toBeVisible();
 });
+
+// === KEYBOARD SHORTCUT HELP TESTS ===
+
+// Helper to dispatch ? key event (Playwright's keyboard.press may not produce e.key==="?" reliably)
+async function pressQuestionMark(page: any) {
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "?",
+      code: "Slash",
+      shiftKey: true,
+      bubbles: true,
+      cancelable: true,
+    }));
+  });
+}
+
+test("keyboard shortcut help opens with ? key", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await pressQuestionMark(page);
+  await expect(page.getByText("Keyboard Shortcuts")).toBeVisible({ timeout: 5000 });
+});
+
+test("keyboard shortcut help shows all sections", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await pressQuestionMark(page);
+  await expect(page.getByText("Keyboard Shortcuts")).toBeVisible({ timeout: 5000 });
+  // Check for section headings
+  await expect(page.getByText("Navigation").last()).toBeVisible();
+  await expect(page.getByText("Sub-views").last()).toBeVisible();
+  await expect(page.getByText("Actions").last()).toBeVisible();
+});
+
+test("keyboard shortcut help closes on backdrop click", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await pressQuestionMark(page);
+  await expect(page.getByText("Keyboard Shortcuts")).toBeVisible({ timeout: 5000 });
+  // Click the backdrop (top-left corner)
+  await page.click("body", { position: { x: 10, y: 10 } });
+  await expect(page.getByText("Keyboard Shortcuts")).not.toBeVisible({ timeout: 5000 });
+});
+
+test("keyboard shortcut help close button works", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await pressQuestionMark(page);
+  await expect(page.getByText("Keyboard Shortcuts")).toBeVisible({ timeout: 5000 });
+  // Click close button
+  await page.getByRole("button", { name: "Close shortcuts help" }).click();
+  await expect(page.getByText("Keyboard Shortcuts")).not.toBeVisible({ timeout: 5000 });
+});
+
+test("keyboard shortcut help ? button in header exists", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  // Wait for dynamic components (including KeyboardShortcuts) to load
+  await page.waitForTimeout(1500);
+  // The ? button should be visible on desktop
+  const helpBtn = page.getByRole("button", { name: "Keyboard shortcuts" });
+  await expect(helpBtn).toBeVisible({ timeout: 5000 });
+  await helpBtn.click();
+  await expect(page.getByText("Keyboard Shortcuts")).toBeVisible({ timeout: 5000 });
+});
+
+test("keyboard shortcut help toggles on/off with ? key", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  // Open
+  await pressQuestionMark(page);
+  await expect(page.getByText("Keyboard Shortcuts")).toBeVisible({ timeout: 5000 });
+  // Toggle off
+  await pressQuestionMark(page);
+  await expect(page.getByText("Keyboard Shortcuts")).not.toBeVisible({ timeout: 5000 });
+});
+
+// === SUB-VIEW TOGGLE SHORTCUT HINTS ===
+
+test("SubViewToggle shows shortcut hints on Activity tab", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1500);
+  // The sub-view toggle should show shortcut hints like ⇧1, ⇧2, ⇧3
+  const tabPanel = page.getByRole("tabpanel");
+  await expect(tabPanel).toBeVisible();
+  await expect(tabPanel.locator("kbd").filter({ hasText: "⇧1" }).first()).toBeVisible({ timeout: 5000 });
+  await expect(tabPanel.locator("kbd").filter({ hasText: "⇧2" }).first()).toBeVisible({ timeout: 5000 });
+});
+
+test("SubViewToggle shows shortcut hints on System tab", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await expect(page.getByRole("tab", { name: /System/ })).toHaveAttribute("data-state", "active");
+  await page.waitForTimeout(1500);
+  const tabPanel = page.getByRole("tabpanel");
+  await expect(tabPanel).toBeVisible();
+  await expect(tabPanel.locator("kbd").filter({ hasText: "⇧1" }).first()).toBeVisible({ timeout: 5000 });
+  await expect(tabPanel.locator("kbd").filter({ hasText: "⇧2" }).first()).toBeVisible({ timeout: 5000 });
+});
+
+// === DYNAMIC PAGE TITLE ===
+
+test("page title is set to Mission Control", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(2000);
+  const title = await page.title();
+  expect(title).toMatch(/^Mission Control/);
+});
+
+// === R KEY REFRESH ===
+
+test("r key triggers refresh-view event", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // Wait for initial data load
+  await expect(page.getByText(/Updated \d+s ago/)).toBeVisible({ timeout: 10000 });
+  // Wait a moment for the counter to tick up
+  await page.waitForTimeout(2000);
+  // Press r to refresh
+  await page.keyboard.press("r");
+  // Counter should reset close to 0 after refresh
+  await expect(page.getByText(/Updated [0-3]s ago/)).toBeVisible({ timeout: 5000 });
+});

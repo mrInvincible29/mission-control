@@ -109,7 +109,7 @@ export function ActivityFeed() {
 
   const currentCursor = cursors[cursors.length - 1];
 
-  const { data: result } = useSWR(
+  const { data: result, mutate: mutateActivities } = useSWR(
     mounted ? ["activities", currentCursor, category, sinceTimestamp] : null,
     () =>
       listActivitiesPaginated({
@@ -122,11 +122,21 @@ export function ActivityFeed() {
     { refreshInterval: 30000 }
   );
 
-  const { data: stats } = useSWR(
+  const { data: stats, mutate: mutateStats } = useSWR(
     mounted ? ["activity-stats", sinceTimestamp] : null,
     () => getActivityStats(sinceTimestamp),
     { refreshInterval: 30000 }
   );
+
+  // Listen for global "r" key refresh event
+  useEffect(() => {
+    const handler = () => {
+      mutateActivities();
+      mutateStats();
+    };
+    window.addEventListener("refresh-view", handler);
+    return () => window.removeEventListener("refresh-view", handler);
+  }, [mutateActivities, mutateStats]);
 
   const rawActivities = result?.items;
   const hasMore = result?.hasMore ?? false;

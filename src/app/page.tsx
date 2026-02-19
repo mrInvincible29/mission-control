@@ -25,6 +25,11 @@ const ThemeToggle = dynamic(
   { ssr: false }
 );
 
+const KeyboardShortcuts = dynamic(
+  () => import("@/components/KeyboardShortcuts").then((mod) => ({ default: mod.KeyboardShortcuts })),
+  { ssr: false }
+);
+
 const CommandPalette = dynamic(
   () => import("@/components/CommandPalette").then((mod) => ({ default: mod.CommandPalette })),
   { ssr: false }
@@ -186,21 +191,25 @@ function DashboardContent() {
     router.replace(url, { scroll: false });
   }, [router]);
 
-  // Keyboard shortcuts: 1-4 for tabs, Shift+1/2/3 for sub-views
+  // Keyboard shortcuts: 1-4 for tabs, Shift+1/2/3 for sub-views, r for refresh
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
 
       // Tab switching: 1-4
-      if (!e.shiftKey) {
+      if (!e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         if (e.key === "1") handleTabChange("activity");
         else if (e.key === "2") handleTabChange("schedule");
         else if (e.key === "3") handleTabChange("tasks");
         else if (e.key === "4") handleTabChange("system");
+        else if (e.key === "r" || e.key === "R") {
+          e.preventDefault();
+          window.dispatchEvent(new CustomEvent("refresh-view"));
+        }
       }
       // Sub-view switching: Shift+1/2/3
-      if (e.shiftKey) {
+      if (e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
         const views = VALID_VIEWS[activeTab];
         const idx = parseInt(e.key) - 1;
         if (idx >= 0 && idx < views.length) {
@@ -211,6 +220,13 @@ function DashboardContent() {
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [activeTab, handleTabChange, handleViewChange]);
+
+  // Dynamic page title with notification count
+  useEffect(() => {
+    const total = notifications.blockedTasks + notifications.cronRuns + notifications.logs;
+    const suffix = total > 0 ? ` (${total})` : "";
+    document.title = `Mission Control${suffix}`;
+  }, [notifications]);
 
   if (!supabaseUrl) {
     return <SetupGuide />;
@@ -306,6 +322,7 @@ export default function Home() {
   return (
     <ToastProvider>
       <CommandPalette />
+      <KeyboardShortcuts />
       <main className="min-h-screen bg-gradient-to-b from-background to-background/95">
         <div className="container mx-auto px-4 py-6">
           <header className="mb-8">
@@ -333,6 +350,14 @@ export default function Home() {
                       ⌘K
                     </kbd>
                   </span>
+                </button>
+                <button
+                  onClick={() => window.dispatchEvent(new CustomEvent("toggle-shortcuts"))}
+                  className="hidden sm:flex items-center justify-center rounded-lg border border-border/60 bg-muted/30 w-8 h-8 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
+                  title="Keyboard shortcuts (?)"
+                  aria-label="Keyboard shortcuts"
+                >
+                  <span className="font-mono text-[13px] font-medium">?</span>
                 </button>
                 <ThemeToggle />
               </div>

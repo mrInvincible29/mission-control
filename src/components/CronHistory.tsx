@@ -235,6 +235,13 @@ export function CronHistory() {
     return () => document.removeEventListener("visibilitychange", handler);
   }, [fetchRuns]);
 
+  // Listen for global "r" key refresh event
+  useEffect(() => {
+    const handler = () => fetchRuns();
+    window.addEventListener("refresh-view", handler);
+    return () => window.removeEventListener("refresh-view", handler);
+  }, [fetchRuns]);
+
   // Group runs by job
   const runsByJob = useMemo(() => {
     const map: Record<string, CronRun[]> = {};

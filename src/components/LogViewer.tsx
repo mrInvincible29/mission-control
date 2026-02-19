@@ -127,6 +127,13 @@ export function LogViewer() {
     return () => document.removeEventListener("visibilitychange", handleVisibility);
   }, [fetchLogs]);
 
+  // Listen for global "r" key refresh event
+  useEffect(() => {
+    const handler = () => fetchLogs();
+    window.addEventListener("refresh-view", handler);
+    return () => window.removeEventListener("refresh-view", handler);
+  }, [fetchLogs]);
+
   // "Updated Xs ago" ticker
   useEffect(() => {
     if (lastRefresh === 0) return;
