@@ -7,7 +7,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { useState, useMemo, useCallback, useEffect } from "react";
+import { useState, useMemo, useCallback, useEffect, Fragment } from "react";
 import {
   Search, X, ChevronDown,
   Bot, MessageSquare, XCircle, AlertTriangle, Circle, RefreshCw,
@@ -46,6 +46,40 @@ const STATUS_COLORS: Record<string, string> = {
   pending: "bg-amber-500/20 text-amber-400",
 };
 
+/** Left border color per category — for quick visual scanning */
+const CATEGORY_BORDERS: Record<string, string> = {
+  important: "border-l-red-500",
+  model: "border-l-purple-500",
+  message: "border-l-blue-500",
+  system: "border-l-gray-500",
+  noise: "border-l-zinc-400",
+};
+
+/** Returns "Today", "Yesterday", or a formatted date like "Mon, Feb 17" */
+function getActivityDateGroup(ts: number): string {
+  const date = new Date(ts);
+  const today = new Date();
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+
+  if (date.toDateString() === today.toDateString()) return "Today";
+  if (date.toDateString() === yesterday.toDateString()) return "Yesterday";
+  return date.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" });
+}
+
+/** Visual separator between date groups in the feed */
+function DateSeparator({ label }: { label: string }) {
+  return (
+    <div className="flex items-center gap-3 py-2" role="separator" aria-label={label}>
+      <div className="h-px flex-1 bg-border/50" />
+      <span className="text-[10px] font-medium text-muted-foreground/60 uppercase tracking-wider shrink-0">
+        {label}
+      </span>
+      <div className="h-px flex-1 bg-border/50" />
+    </div>
+  );
+}
+
 const DATE_RANGES = [
   { label: "Today", value: 1 },
   { label: "7 days", value: 7 },
@@ -78,10 +112,13 @@ export function ActivityFeed() {
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
 
-  // Auto-refresh relative timestamps every 60 seconds
+  // Track last refresh time for the "Updated Xs ago" indicator
+  const [lastRefresh, setLastRefresh] = useState(0);
+
+  // Auto-refresh relative timestamps every 60 seconds (+ "Updated Xs ago" every second)
   const [, setTick] = useState(0);
   useEffect(() => {
-    const interval = setInterval(() => setTick(t => t + 1), 60000);
+    const interval = setInterval(() => setTick(t => t + 1), 1000);
     return () => clearInterval(interval);
   }, []);
 
@@ -109,7 +146,7 @@ export function ActivityFeed() {
 
   const currentCursor = cursors[cursors.length - 1];
 
-  const { data: result, mutate: mutateActivities } = useSWR(
+  const { data: result, mutate: mutateActivities, isValidating } = useSWR(
     mounted ? ["activities", currentCursor, category, sinceTimestamp] : null,
     () =>
       listActivitiesPaginated({
@@ -119,7 +156,7 @@ export function ActivityFeed() {
         sinceTimestamp,
         cursor: currentCursor,
       }),
-    { refreshInterval: 30000 }
+    { refreshInterval: 30000, onSuccess: () => setLastRefresh(Date.now()) }
   );
 
   const { data: stats, mutate: mutateStats } = useSWR(
@@ -172,6 +209,20 @@ export function ActivityFeed() {
       <CardHeader className="pb-2 flex-shrink-0 px-4 pt-4">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg font-semibold">Activity Feed</CardTitle>
+          <div className="flex items-center gap-2">
+            {lastRefresh > 0 && (
+              <span className="text-[10px] text-muted-foreground/50 tabular-nums">
+                Updated {Math.round((Date.now() - lastRefresh) / 1000)}s ago
+              </span>
+            )}
+            <button
+              onClick={() => { mutateActivities(); mutateStats(); }}
+              className="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+              aria-label="Refresh feed"
+            >
+              <RefreshCw className={`h-3.5 w-3.5 ${isValidating ? "animate-spin" : ""}`} />
+            </button>
+          </div>
         </div>
 
         {/* Stats Banner */}
@@ -286,9 +337,19 @@ export function ActivityFeed() {
             </div>
           ) : (
             <div className="space-y-1.5">
-              {activities.map((activity: Activity) => (
-                <ActivityItem key={activity.id} activity={activity} />
-              ))}
+              {activities.map((activity: Activity, index: number) => {
+                const prevActivity = index > 0 ? activities[index - 1] : null;
+                const currentGroup = getActivityDateGroup(activity.timestamp);
+                const prevGroup = prevActivity ? getActivityDateGroup(prevActivity.timestamp) : null;
+                const showSeparator = currentGroup !== prevGroup;
+
+                return (
+                  <Fragment key={activity.id}>
+                    {showSeparator && <DateSeparator label={currentGroup} />}
+                    <ActivityItem activity={activity} />
+                  </Fragment>
+                );
+              })}
             </div>
           )}
         </ScrollArea>
@@ -328,6 +389,7 @@ function ActivityItem({ activity }: { activity: Activity }) {
   const [expanded, setExpanded] = useState(false);
   const icon = ACTION_TYPE_ICONS[activity.actionType] || <Circle className="h-4 w-4" />;
   const categoryColor = CATEGORY_COLORS[activity.category ?? "system"] || CATEGORY_COLORS.system;
+  const categoryBorder = CATEGORY_BORDERS[activity.category ?? "system"] || CATEGORY_BORDERS.system;
 
   const meta = activity.metadata;
   const hasExpandableContent = meta && (
@@ -339,9 +401,9 @@ function ActivityItem({ activity }: { activity: Activity }) {
     <div
       role="button"
       tabIndex={0}
-      className={`p-2.5 rounded-lg border transition-colors cursor-pointer ${
+      className={`p-2.5 rounded-lg border border-l-[3px] transition-colors cursor-pointer ${categoryBorder} ${
         activity.status === "error"
-          ? "border-red-500/30 bg-red-500/5"
+          ? "border-red-500/30 border-l-red-500 bg-red-500/5"
           : "border-border/50 bg-card/50 hover:bg-card/80"
       } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
       onClick={() => setExpanded(e => !e)}
