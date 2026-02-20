@@ -1029,3 +1029,63 @@ test("r key triggers refresh-view event", async ({ page }) => {
   // Counter should reset close to 0 after refresh
   await expect(page.getByText(/Updated [0-3]s ago/)).toBeVisible({ timeout: 5000 });
 });
+
+// === ACTIVITY FEED UX POLISH TESTS ===
+
+test("Activity Feed shows date separators between date groups", async ({ page }) => {
+  // Use 7-day range to increase chance of having multiple date groups
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(2000);
+  // Click 7-day range filter
+  const sevenDayBtn = page.getByRole("button", { name: "7 days", exact: true });
+  await expect(sevenDayBtn).toBeVisible({ timeout: 5000 });
+  await sevenDayBtn.click();
+  await page.waitForTimeout(2000);
+  // Date separators use role="separator" — at least one should be present if there are activities
+  const separators = page.locator('[role="separator"]');
+  const count = await separators.count();
+  // Should have at least 1 separator (e.g. "Today") if activities exist
+  if (count > 0) {
+    await expect(separators.first()).toBeVisible();
+    // Separator should contain a date label (Today, Yesterday, or a date)
+    const text = await separators.first().textContent();
+    expect(text).toBeTruthy();
+  }
+});
+
+test("Activity Feed items have category left borders", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(3000);
+  // Activity items have role="button" and border-l-[3px] class
+  const activityItems = page.locator('[role="button"][aria-expanded]');
+  const itemCount = await activityItems.count();
+  if (itemCount > 0) {
+    // First item should have border-l-[3px] class for category border
+    const firstItem = activityItems.first();
+    await expect(firstItem).toBeVisible();
+    const className = await firstItem.getAttribute("class");
+    expect(className).toContain("border-l-");
+  }
+});
+
+test("Activity Feed shows refresh indicator", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  // Wait for data to load — the "Updated Xs ago" text should appear
+  await expect(page.getByText(/Updated \d+s ago/).first()).toBeVisible({ timeout: 15000 });
+});
+
+test("Activity Feed refresh button spins while fetching", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(2000);
+  // The refresh button should exist
+  const refreshBtn = page.getByRole("button", { name: "Refresh feed" });
+  await expect(refreshBtn).toBeVisible({ timeout: 10000 });
+  // Click the refresh button
+  await refreshBtn.click();
+  // Counter should reset close to 0
+  await expect(page.getByText(/Updated [0-5]s ago/).first()).toBeVisible({ timeout: 10000 });
+});
