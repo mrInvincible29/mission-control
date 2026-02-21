@@ -7,7 +7,7 @@ Personal command center dashboard for monitoring AI agent activity, scheduled ta
 - **Frontend**: Next.js 16 (App Router, `output: "standalone"`), React 19, Tailwind CSS v4, shadcn/ui (Radix primitives)
 - **Backend**: Supabase (PostgreSQL + RPC functions), SWR for client-side data fetching
 - **Deployment**: Standalone `server.js` on `172.29.0.1:39151`, behind Traefik at `mission-control.quota.wtf` with basic auth
-- **Testing**: Playwright (82 smoke tests against `http://localhost:39151`)
+- **Testing**: Playwright (106 smoke tests against `http://localhost:39151`)
 - **Icons**: lucide-react
 
 ## Architecture
@@ -25,6 +25,7 @@ src/
     api/index/      # File indexing + cron sync endpoint (basic auth)
     api/tasks/      # CRUD for Kanban task board (GET/POST + PATCH/DELETE by ID)
     api/assignees/  # GET assignee list for task board
+    api/services/   # GET services directory with HTTP health checks + systemd status
     api/sync/       # Webhook for external activity ingestion
   components/
     SubViewToggle.tsx  # Segmented pill control for switching sub-views within a tab
@@ -36,6 +37,7 @@ src/
     KanbanBoard.tsx    # Drag-and-drop Kanban task board with 4 columns, detail sheet (Tasks)
     SystemHealth.tsx   # Real-time server monitoring (CPU, memory, disk, Docker, services) (System > Health)
     LogViewer.tsx      # Live service log viewer with source switching and filtering (System > Logs)
+    ServicesView.tsx   # Services directory with health checks, status dots, filtering (System > Services)
     StatusStrip.tsx    # Live header vitals — full mode (desktop) + compact mode (mobile), uses shared health hook
     CommandPalette.tsx # Cmd+K palette — tab/sub-view navigation, actions, quick filters
     GlobalSearch.tsx   # Full-text search + file browser (accessible via command palette)
@@ -60,7 +62,8 @@ scripts/
   file-watcher.mjs    # Watches ~/clawd → indexes files to Supabase
   sync-cron-data.mjs  # Parses OpenClaw config → upserts cron_jobs to Supabase
 tests/
-  smoke.spec.ts        # 82 Playwright smoke tests covering all tabs, sub-views, APIs, and regressions
+  smoke.spec.ts        # 96 Playwright smoke tests covering all tabs, sub-views, APIs, and regressions
+  services.spec.ts     # 10 Playwright tests for Services Directory sub-view and API
 ```
 
 ## Data Model (Supabase)
@@ -100,7 +103,7 @@ The dashboard uses 4 top-level tabs, each with sub-views toggled by a `SubViewTo
 | **Activity** | Feed (default), Analytics, Agents | `1` then `Shift+1/2/3` |
 | **Schedule** | Calendar (default), Run History | `2` then `Shift+1/2` |
 | **Tasks** | Kanban board (single view) | `3` |
-| **System** | Health (default), Logs | `4` then `Shift+1/2` |
+| **System** | Health (default), Logs, Services | `4` then `Shift+1/2/3` |
 
 URL structure: `/?tab=<tab>&view=<view>` (both optional, defaults to Activity > Feed).
 
@@ -162,9 +165,10 @@ Basic auth credentials for API endpoints are configured in Traefik (see `~/fast/
 - **POST /api/tasks** — Create task `{ title, description?, status?, assignee?, priority?, tags?, source?, cron_job_id?, metadata? }`
 - **PATCH /api/tasks/:id** — Update task fields (auto-sets `completed_at` on status→done)
 - **DELETE /api/tasks/:id** — Delete task
+- **GET /api/services** — Services directory with HTTP health checks (HEAD, 5s timeout) and systemd unit status. Returns JSON array with name, url, port, category, status (up/degraded/down), httpStatus, responseTime, systemd, systemdStatus
 - **GET /api/assignees** — List assignees for task board
 
-All endpoints require basic auth (via Traefik). Health, cron-runs, logs, and tasks APIs include `Cache-Control: no-cache` headers.
+All endpoints require basic auth (via Traefik). Health, cron-runs, logs, tasks, and services APIs include `Cache-Control: no-cache` headers.
 
 ## Systemd Services
 

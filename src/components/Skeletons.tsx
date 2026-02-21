@@ -281,6 +281,46 @@ export function LogsSkeleton() {
   );
 }
 
+/** Services Directory: filter bar + card grid */
+export function ServicesSkeleton() {
+  return (
+    <div className="px-4 pt-4 space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <Shimmer className="h-5 w-32" />
+          <Shimmer className="h-5 w-16 rounded-full" />
+        </div>
+        <div className="flex items-center gap-2">
+          <ShimmerText width="w-20" height="h-3" />
+          <Shimmer className="h-7 w-7 rounded-md" />
+        </div>
+      </div>
+      {/* Filter bar */}
+      <Shimmer className="h-8 w-full rounded-md" />
+      {/* Card grid */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        {Array.from({ length: 6 }).map((_, i) => (
+          <div key={i} className="rounded-xl border border-border/30 p-4 space-y-2">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <Shimmer className="w-2 h-2 rounded-full" />
+                <ShimmerText width="w-24" height="h-3.5" />
+              </div>
+              <ShimmerText width="w-10" height="h-2.5" />
+            </div>
+            <ShimmerText width="w-40" height="h-3" />
+            <div className="flex gap-1.5">
+              <Shimmer className="w-16 h-4 rounded" />
+              <Shimmer className="w-14 h-4 rounded" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Kanban Board: 4 columns with card placeholders */
 export function KanbanSkeleton() {
   return (

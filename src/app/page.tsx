@@ -18,6 +18,7 @@ import {
   CronRunsSkeleton,
   LogsSkeleton,
   KanbanSkeleton,
+  ServicesSkeleton,
 } from "@/components/Skeletons";
 
 const ThemeToggle = dynamic(
@@ -47,7 +48,7 @@ const VALID_VIEWS: Record<TabValue, string[]> = {
   activity: ["feed", "analytics", "agents"],
   schedule: ["calendar", "runs"],
   tasks: ["board"],
-  system: ["health", "logs"],
+  system: ["health", "logs", "services"],
 };
 
 class TabErrorBoundary extends Component<
@@ -122,6 +123,11 @@ const LogViewer = dynamic(
 const KanbanBoard = dynamic(
   () => import("@/components/KanbanBoard").then((mod) => ({ default: mod.KanbanBoard })),
   { ssr: false, loading: () => <KanbanSkeleton /> }
+);
+
+const ServicesView = dynamic(
+  () => import("@/components/ServicesView").then((mod) => ({ default: mod.ServicesView })),
+  { ssr: false, loading: () => <ServicesSkeleton /> }
 );
 
 /** Notification dot for tabs — shows colored dot or count badge */
@@ -305,6 +311,7 @@ function DashboardContent() {
           views={[
             { id: "health", label: "Health" },
             { id: "logs", label: "Logs" },
+            { id: "services", label: "Services" },
           ]}
           active={activeView}
           onChange={handleViewChange}
@@ -312,6 +319,7 @@ function DashboardContent() {
         <TabErrorBoundary fallbackLabel="System">
           {activeView === "health" && <SystemHealth />}
           {activeView === "logs" && <LogViewer />}
+          {activeView === "services" && <ServicesView />}
         </TabErrorBoundary>
       </TabsContent>
     </Tabs>

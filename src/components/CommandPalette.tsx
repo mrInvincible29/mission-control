@@ -236,6 +236,15 @@ export function CommandPalette() {
         keywords: ["logs", "viewer", "journal", "systemd", "tail"],
         action: () => navigateToTab("system", "logs"),
       },
+      {
+        id: "nav-services",
+        label: "Services Directory",
+        description: "Service status and health checks",
+        icon: <Server className="h-4 w-4" />,
+        section: "Go to",
+        keywords: ["services", "directory", "status", "uptime", "monitoring", "health check"],
+        action: () => navigateToTab("system", "services"),
+      },
       // Actions
       {
         id: "action-create-cron",

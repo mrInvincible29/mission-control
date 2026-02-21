@@ -141,7 +141,7 @@ test("Health tab shows Docker containers", async ({ page }) => {
 test("Health tab shows Services", async ({ page }) => {
   await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
-  await expect(page.getByText("Services")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("heading", { name: "Services" })).toBeVisible({ timeout: 10000 });
 });
 
 test("Health tab shows Network interfaces", async ({ page }) => {
