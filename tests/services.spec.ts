@@ -115,7 +115,7 @@ test("command palette shows Services Directory navigation item", async ({ page }
     });
     window.dispatchEvent(event);
   });
-  await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
-  await page.fill('input[placeholder="Type a command or search..."]', "services");
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
+  await page.fill('input[placeholder*="search files"]', "services");
   await expect(page.getByText("Services Directory")).toBeVisible();
 });

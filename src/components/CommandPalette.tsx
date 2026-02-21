@@ -3,6 +3,7 @@
 import { useState, useEffect, useMemo, useCallback, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useTheme } from "next-themes";
+import useSWR from "swr";
 import {
   Activity,
   CalendarDays,
@@ -23,8 +24,17 @@ import {
   Bot,
   History,
   ScrollText,
+  File,
+  Loader2,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import { searchDocuments, getDocumentContent } from "@/lib/supabase/queries";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 
 interface PaletteItem {
   id: string;
@@ -78,11 +88,100 @@ function bestMatch(item: PaletteItem, query: string): number {
   return best;
 }
 
+function fileIcon(path: string): React.ReactNode {
+  if (path.endsWith(".md")) return <FileText className="h-4 w-4" />;
+  if (path.endsWith(".json")) return <File className="h-4 w-4" />;
+  return <File className="h-4 w-4" />;
+}
+
+function folderPath(filePath: string): string {
+  const parts = filePath.split("/");
+  if (parts.length <= 1) return "";
+  return parts.slice(0, -1).join("/");
+}
+
+// --- File Viewer Dialog (loads content on-demand) ---
+
+function PaletteFileViewer({
+  fileId,
+  fileName,
+  filePath,
+  onClose,
+}: {
+  fileId: string;
+  fileName: string;
+  filePath: string;
+  onClose: () => void;
+}) {
+  const { data: file } = useSWR(
+    ["palette-file-content", fileId],
+    () => getDocumentContent(fileId)
+  );
+
+  const lines = useMemo(() => {
+    if (!file?.content) return [];
+    return file.content.split("\n");
+  }, [file]);
+
+  return (
+    <Dialog open onOpenChange={(open) => !open && onClose()}>
+      <DialogContent className="max-w-3xl w-[90vw] h-[70vh] flex flex-col p-0">
+        <DialogHeader className="p-4 pb-2">
+          <DialogTitle className="text-sm font-medium truncate">
+            {fileName}
+          </DialogTitle>
+          <div className="text-xs text-muted-foreground truncate">
+            {filePath}
+          </div>
+        </DialogHeader>
+        <div className="flex-1 overflow-auto px-4 pb-4">
+          {!file ? (
+            <div className="flex items-center justify-center h-32 text-sm text-muted-foreground">
+              Loading...
+            </div>
+          ) : (
+            <table className="w-full text-xs font-mono bg-muted/30 rounded-lg">
+              <tbody>
+                {lines.map((line, i) => (
+                  <tr key={i} className="hover:bg-muted/50">
+                    <td className="text-right pr-3 pl-3 py-0 text-muted-foreground/40 select-none align-top w-[1%] whitespace-nowrap">
+                      {i + 1}
+                    </td>
+                    <td className="pr-4 py-0 whitespace-pre-wrap break-words align-top">
+                      {line || "\u00A0"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+        <div className="border-t border-border/50 px-4 py-2 text-[10px] text-muted-foreground flex justify-between">
+          <span>{file?.size ? `${(file.size / 1024).toFixed(1)} KB` : "\u2014"}</span>
+          <span>{lines.length} lines</span>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+// --- Main Component ---
+
+// Priority options for quick task creation
+const QUICK_TASK_PRIORITIES = [
+  { value: "medium", label: "Medium priority", color: "text-blue-400", dotColor: "bg-blue-400" },
+  { value: "high", label: "High priority", color: "text-orange-400", dotColor: "bg-orange-400" },
+  { value: "urgent", label: "Urgent", color: "text-red-400", dotColor: "bg-red-400" },
+  { value: "low", label: "Low priority", color: "text-gray-400", dotColor: "bg-gray-400" },
+] as const;
+
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [executing, setExecuting] = useState<string | null>(null);
+  const [viewingFile, setViewingFile] = useState<{ id: string; name: string; path: string } | null>(null);
+  const [debouncedQuery, setDebouncedQuery] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -137,6 +236,49 @@ export function CommandPalette() {
       setOpen(false);
     }
   }, [toast]);
+
+  const handleCreateTask = useCallback(
+    async (title: string, priority: string) => {
+      const execId = `create-task-${priority}`;
+      setExecuting(execId);
+      try {
+        const res = await fetch("/api/tasks", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ title: title.trim(), priority, status: "todo" }),
+        });
+        if (res.ok) {
+          toast(`Task created: "${title.trim()}"`, "success");
+          setOpen(false);
+        } else {
+          toast("Failed to create task", "error");
+        }
+      } catch {
+        toast("Failed to create task — network error", "error");
+      } finally {
+        setExecuting(null);
+      }
+    },
+    [toast]
+  );
+
+  // Detect "> task title" quick-create prefix
+  const quickTaskTitle = useMemo(() => {
+    if (!query.startsWith("> ")) return "";
+    return query.slice(2).trim();
+  }, [query]);
+
+  // Debounce query for file search (200ms)
+  useEffect(() => {
+    const timer = setTimeout(() => setDebouncedQuery(query), 200);
+    return () => clearTimeout(timer);
+  }, [query]);
+
+  // File search via Supabase full-text search
+  const { data: fileResults, isLoading: fileSearchLoading } = useSWR(
+    open && debouncedQuery.length >= 2 ? ["cmd-palette-search", debouncedQuery] : null,
+    () => searchDocuments(debouncedQuery, 8)
+  );
 
   const items = useMemo((): PaletteItem[] => {
     return [
@@ -247,6 +389,19 @@ export function CommandPalette() {
       },
       // Actions
       {
+        id: "action-new-task",
+        label: "New Task",
+        description: "Create a task — or type \"> task title\" for quick add",
+        icon: <Plus className="h-4 w-4" />,
+        section: "Actions",
+        keywords: ["create", "new", "task", "todo", "add", "kanban", "quick"],
+        action: () => {
+          setQuery("> ");
+          // Stay open — user continues typing
+          requestAnimationFrame(() => inputRef.current?.focus());
+        },
+      },
+      {
         id: "action-create-cron",
         label: "Create Cron Job",
         description: "Schedule a new recurring or one-time task",
@@ -347,14 +502,60 @@ export function CommandPalette() {
     ];
   }, [navigateToTab, handleSync, handleRefreshIndex, setTheme, close]);
 
+  // Quick task creation items (shown when query starts with "> ")
+  const quickTaskItems = useMemo((): PaletteItem[] => {
+    if (!quickTaskTitle) return [];
+    return QUICK_TASK_PRIORITIES.map(({ value, label, color, dotColor }) => ({
+      id: `create-task-${value}`,
+      label: quickTaskTitle,
+      description: label,
+      icon: (
+        <div className="relative">
+          <CheckSquare className={`h-4 w-4 ${color}`} />
+          <span className={`absolute -bottom-0.5 -right-0.5 w-2 h-2 rounded-full ${dotColor} border border-background`} />
+        </div>
+      ),
+      section: "Create Task",
+      action: () => handleCreateTask(quickTaskTitle, value),
+    }));
+  }, [quickTaskTitle, handleCreateTask]);
+
+  // Filter commands by query, then append file search results
   const filtered = useMemo(() => {
-    if (!query.trim()) return items;
-    return items
-      .map((item) => ({ item, score: bestMatch(item, query) }))
-      .filter((r) => r.score > 0)
-      .sort((a, b) => b.score - a.score)
-      .map((r) => r.item);
-  }, [items, query]);
+    // Quick task mode: show task creation options first, then regular items
+    if (quickTaskItems.length > 0) {
+      return quickTaskItems;
+    }
+
+    let commandResults: PaletteItem[];
+    if (!query.trim()) {
+      commandResults = items;
+    } else {
+      commandResults = items
+        .map((item) => ({ item, score: bestMatch(item, query) }))
+        .filter((r) => r.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map((r) => r.item);
+    }
+
+    // Append file results from Supabase full-text search
+    if (fileResults && fileResults.length > 0) {
+      const fileItems: PaletteItem[] = fileResults.map((result) => ({
+        id: `file-${result.id}`,
+        label: result.fileName,
+        description: folderPath(result.filePath),
+        icon: fileIcon(result.filePath),
+        section: "Files",
+        action: () => {
+          setViewingFile({ id: result.id, name: result.fileName, path: result.filePath });
+          close();
+        },
+      }));
+      return [...commandResults, ...fileItems];
+    }
+
+    return commandResults;
+  }, [items, query, fileResults, close, quickTaskItems]);
 
   // Group items by section
   const grouped = useMemo(() => {
@@ -405,6 +606,7 @@ export function CommandPalette() {
   useEffect(() => {
     if (open) {
       setQuery("");
+      setDebouncedQuery("");
       setSelectedIndex(0);
       // Small delay to ensure DOM is ready
       requestAnimationFrame(() => {
@@ -447,134 +649,167 @@ export function CommandPalette() {
     [flatItems, selectedIndex, executeItem]
   );
 
-  if (!open) return null;
+  if (!open && !viewingFile) return null;
 
   let flatIndex = 0;
 
   return (
-    <div className="fixed inset-0 z-50" onClick={() => setOpen(false)}>
-      {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+    <>
+      {open && (
+        <div className="fixed inset-0 z-50" onClick={() => setOpen(false)}>
+          {/* Backdrop */}
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
 
-      {/* Palette */}
-      <div
-        className="absolute left-1/2 top-[15%] w-full max-w-lg -translate-x-1/2 rounded-xl border border-border/80 bg-background shadow-2xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        {/* Search input */}
-        <div className="flex items-center gap-3 border-b border-border/50 px-4">
-          <Command className="h-4 w-4 text-muted-foreground shrink-0" />
-          <input
-            ref={inputRef}
-            type="text"
-            placeholder="Type a command or search..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            onKeyDown={handleKeyDown}
-            className="flex-1 bg-transparent py-3.5 text-sm outline-none placeholder:text-muted-foreground/60"
-          />
-          {executing && (
-            <RefreshCw className="h-3.5 w-3.5 text-muted-foreground animate-spin shrink-0" />
-          )}
-          <kbd className="hidden sm:inline-flex items-center gap-0.5 rounded border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground font-mono">
-            ESC
-          </kbd>
-        </div>
-
-        {/* Results */}
-        <div ref={listRef} className="max-h-[60vh] overflow-y-auto p-2">
-          {flatItems.length === 0 ? (
-            <div className="py-8 text-center text-sm text-muted-foreground">
-              No matching commands
+          {/* Palette */}
+          <div
+            className="absolute left-1/2 top-[15%] w-full max-w-lg -translate-x-1/2 rounded-xl border border-border/80 bg-background shadow-2xl overflow-hidden"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Search input */}
+            <div className="flex items-center gap-3 border-b border-border/50 px-4">
+              <Command className="h-4 w-4 text-muted-foreground shrink-0" />
+              <input
+                ref={inputRef}
+                type="text"
+                placeholder='Type a command, search files, or "> task" to add...'
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                onKeyDown={handleKeyDown}
+                className="flex-1 bg-transparent py-3.5 text-sm outline-none placeholder:text-muted-foreground/60"
+              />
+              {(executing || (debouncedQuery.length >= 2 && fileSearchLoading)) && (
+                <Loader2 className="h-3.5 w-3.5 text-muted-foreground animate-spin shrink-0" />
+              )}
+              <kbd className="hidden sm:inline-flex items-center gap-0.5 rounded border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground font-mono">
+                ESC
+              </kbd>
             </div>
-          ) : (
-            grouped.map((group) => (
-              <div key={group.section} className="mb-1">
-                <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-wider">
-                  {group.section}
+
+            {/* Results */}
+            <div ref={listRef} className="max-h-[60vh] overflow-y-auto p-2">
+              {flatItems.length === 0 ? (
+                <div className="py-8 text-center text-sm text-muted-foreground">
+                  No matching commands or files
                 </div>
-                {group.items.map((item) => {
-                  const idx = flatIndex++;
-                  const isSelected = idx === selectedIndex;
-                  const isExecuting = executing === item.id;
+              ) : (
+                grouped.map((group) => (
+                  <div key={group.section} className="mb-1">
+                    <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-wider">
+                      {group.section}
+                    </div>
+                    {group.items.map((item) => {
+                      const idx = flatIndex++;
+                      const isSelected = idx === selectedIndex;
+                      const isExecuting = executing === item.id;
 
-                  return (
-                    <button
-                      key={item.id}
-                      data-index={idx}
-                      className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
-                        isSelected
-                          ? "bg-primary/10 text-foreground"
-                          : "text-foreground/80 hover:bg-muted/50"
-                      }`}
-                      onClick={() => executeItem(item)}
-                      onMouseEnter={() => setSelectedIndex(idx)}
-                    >
-                      <span
-                        className={`shrink-0 ${
-                          isSelected ? "text-primary" : "text-muted-foreground"
-                        }`}
-                      >
-                        {isExecuting ? (
-                          <RefreshCw className="h-4 w-4 animate-spin" />
-                        ) : (
-                          item.icon
-                        )}
-                      </span>
-                      <div className="flex-1 min-w-0">
-                        <div className="truncate font-medium">{item.label}</div>
-                        {item.description && (
-                          <div className="truncate text-xs text-muted-foreground/60">
-                            {item.description}
+                      return (
+                        <button
+                          key={item.id}
+                          data-index={idx}
+                          className={`w-full flex items-center gap-3 rounded-lg px-3 py-2 text-left text-sm transition-colors ${
+                            isSelected
+                              ? "bg-primary/10 text-foreground"
+                              : "text-foreground/80 hover:bg-muted/50"
+                          }`}
+                          onClick={() => executeItem(item)}
+                          onMouseEnter={() => setSelectedIndex(idx)}
+                        >
+                          <span
+                            className={`shrink-0 ${
+                              isSelected ? "text-primary" : "text-muted-foreground"
+                            }`}
+                          >
+                            {isExecuting ? (
+                              <RefreshCw className="h-4 w-4 animate-spin" />
+                            ) : (
+                              item.icon
+                            )}
+                          </span>
+                          <div className="flex-1 min-w-0">
+                            <div className="truncate font-medium">{item.label}</div>
+                            {item.description && (
+                              <div className="truncate text-xs text-muted-foreground/60">
+                                {item.description}
+                              </div>
+                            )}
                           </div>
-                        )}
-                      </div>
-                      {item.shortcut && (
-                        <kbd className="hidden sm:inline-flex items-center rounded border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground font-mono shrink-0">
-                          {item.shortcut}
-                        </kbd>
-                      )}
-                      {isSelected && (
-                        <ArrowRight className="h-3.5 w-3.5 text-primary shrink-0" />
-                      )}
-                    </button>
-                  );
-                })}
-              </div>
-            ))
-          )}
-        </div>
+                          {item.shortcut && (
+                            <kbd className="hidden sm:inline-flex items-center rounded border border-border/60 bg-muted/50 px-1.5 py-0.5 text-[10px] text-muted-foreground font-mono shrink-0">
+                              {item.shortcut}
+                            </kbd>
+                          )}
+                          {isSelected && (
+                            <ArrowRight className="h-3.5 w-3.5 text-primary shrink-0" />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))
+              )}
+            </div>
 
-        {/* Footer */}
-        <div className="border-t border-border/50 px-4 py-2 flex items-center justify-between text-[10px] text-muted-foreground/60">
-          <div className="flex items-center gap-3">
-            <span className="flex items-center gap-1">
-              <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">
-                ↑↓
-              </kbd>
-              navigate
-            </span>
-            <span className="flex items-center gap-1">
-              <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">
-                ↵
-              </kbd>
-              select
-            </span>
-            <span className="flex items-center gap-1">
-              <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">
-                esc
-              </kbd>
-              close
-            </span>
+            {/* Footer */}
+            <div className="border-t border-border/50 px-4 py-2 flex items-center justify-between text-[10px] text-muted-foreground/60">
+              {quickTaskTitle ? (
+                <div className="flex items-center gap-3">
+                  <span className="text-blue-400/70 font-medium">Quick task mode</span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">↑↓</kbd>
+                    priority
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">↵</kbd>
+                    create
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">esc</kbd>
+                    cancel
+                  </span>
+                </div>
+              ) : (
+                <div className="flex items-center gap-3">
+                  <span className="flex items-center gap-1">
+                    <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">
+                      ↑↓
+                    </kbd>
+                    navigate
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">
+                      ↵
+                    </kbd>
+                    select
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">
+                      esc
+                    </kbd>
+                    close
+                  </span>
+                </div>
+              )}
+              {!quickTaskTitle && (
+                <span>
+                  <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">
+                    ⌘K
+                  </kbd>
+                  {" "}to toggle
+                </span>
+              )}
+            </div>
           </div>
-          <span>
-            <kbd className="rounded border border-border/40 bg-muted/30 px-1 py-0.5 font-mono">
-              ⌘K
-            </kbd>
-            {" "}to toggle
-          </span>
         </div>
-      </div>
-    </div>
+      )}
+
+      {viewingFile && (
+        <PaletteFileViewer
+          fileId={viewingFile.id}
+          fileName={viewingFile.name}
+          filePath={viewingFile.path}
+          onClose={() => setViewingFile(null)}
+        />
+      )}
+    </>
   );
 }

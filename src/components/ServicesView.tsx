@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -9,6 +9,7 @@ import {
   ExternalLink,
   Search,
   Server,
+  Zap,
 } from "lucide-react";
 
 interface ServiceData {
@@ -38,11 +39,40 @@ const STATUS_COLORS: Record<string, string> = {
   down: "bg-red-500",
 };
 
+/** Tiny response time bar — compares against the max across all services */
+function ResponseBar({ ms, maxMs }: { ms: number; maxMs: number }) {
+  const pct = maxMs > 0 ? Math.max((ms / maxMs) * 100, 2) : 2;
+  const color =
+    ms < 100 ? "bg-emerald-500" : ms < 500 ? "bg-amber-500" : "bg-red-500";
+  return (
+    <div className="flex items-center gap-1.5 w-full">
+      <div className="flex-1 h-1 rounded-full bg-muted/40 overflow-hidden">
+        <div
+          className={`h-full rounded-full ${color} transition-all duration-500`}
+          style={{ width: `${pct}%` }}
+        />
+      </div>
+      <span
+        className={`text-[10px] font-mono flex-shrink-0 ${
+          ms < 100
+            ? "text-emerald-400"
+            : ms < 500
+            ? "text-amber-400"
+            : "text-red-400"
+        }`}
+      >
+        {ms}ms
+      </span>
+    </div>
+  );
+}
+
 export function ServicesView() {
   const [services, setServices] = useState<ServiceData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<number>(0);
   const [, setTick] = useState(0);
 
@@ -85,7 +115,18 @@ export function ServicesView() {
     return () => clearInterval(timer);
   }, [lastRefresh]);
 
+  const categories = useMemo(() => {
+    const cats = Array.from(new Set(services.map((s) => s.category))).sort();
+    return cats;
+  }, [services]);
+
+  const maxResponseTime = useMemo(() => {
+    const times = services.map((s) => s.responseTime ?? 0);
+    return Math.max(...times, 1);
+  }, [services]);
+
   const filtered = services.filter((svc) => {
+    if (categoryFilter && svc.category !== categoryFilter) return false;
     if (!filter.trim()) return true;
     const q = filter.toLowerCase();
     return (
@@ -168,6 +209,35 @@ export function ServicesView() {
             className="w-full rounded-md border border-border/50 bg-muted/30 pl-8 pr-3 py-1.5 text-xs outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground/50"
           />
         </div>
+
+        {/* Category filter pills */}
+        {categories.length > 1 && (
+          <div className="flex flex-wrap gap-1.5 mt-2">
+            <button
+              onClick={() => setCategoryFilter("")}
+              className={`text-[10px] rounded-full px-2.5 py-0.5 border transition-colors ${
+                categoryFilter === ""
+                  ? "bg-primary/15 text-primary border-primary/30 font-medium"
+                  : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/50"
+              }`}
+            >
+              All
+            </button>
+            {categories.map((cat) => (
+              <button
+                key={cat}
+                onClick={() => setCategoryFilter(categoryFilter === cat ? "" : cat)}
+                className={`text-[10px] rounded-full px-2.5 py-0.5 border transition-colors capitalize ${
+                  categoryFilter === cat
+                    ? `${CATEGORY_COLORS[cat] || "bg-muted/50 text-muted-foreground"} font-medium`
+                    : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/50"
+                }`}
+              >
+                {cat}
+              </button>
+            ))}
+          </div>
+        )}
       </CardHeader>
 
       <CardContent className="flex-1 overflow-y-auto px-4">
@@ -179,20 +249,27 @@ export function ServicesView() {
               className="rounded-xl border border-border/50 bg-card/30 p-4 flex flex-col gap-2 hover:bg-card/50 transition-colors"
             >
               {/* Header: name + status dot */}
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2 min-w-0">
-                  <div
-                    data-testid="service-status-dot"
-                    className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_COLORS[svc.status]}`}
-                  />
-                  <span className="font-medium text-sm truncate">{svc.name}</span>
-                </div>
-                {svc.responseTime !== null && (
-                  <span className="text-[10px] text-muted-foreground/60 font-mono flex-shrink-0">
-                    {svc.responseTime}ms
+              <div className="flex items-center gap-2 min-w-0">
+                <div
+                  data-testid="service-status-dot"
+                  className={`w-2 h-2 rounded-full flex-shrink-0 ${STATUS_COLORS[svc.status]}`}
+                />
+                <span className="font-medium text-sm truncate">{svc.name}</span>
+                {svc.status === "up" && (
+                  <span className="ml-auto shrink-0">
+                    <Zap className="h-3 w-3 text-emerald-400/60" />
                   </span>
                 )}
               </div>
+
+              {/* Response time bar */}
+              {svc.responseTime !== null ? (
+                <ResponseBar ms={svc.responseTime} maxMs={maxResponseTime} />
+              ) : (
+                <div className="text-[10px] text-muted-foreground/40 italic">
+                  {svc.status === "down" ? "unreachable" : "no timing"}
+                </div>
+              )}
 
               {/* URL */}
               <a

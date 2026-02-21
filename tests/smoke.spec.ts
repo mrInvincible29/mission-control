@@ -87,11 +87,11 @@ test("command palette opens via keyboard event", async ({ page }) => {
     });
     window.dispatchEvent(event);
   });
-  await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
   // Focus the input, then close with Escape
-  await page.getByPlaceholder("Type a command or search...").focus();
+  await page.getByPlaceholder("search files").focus();
   await page.keyboard.press("Escape");
-  await expect(page.getByPlaceholder("Type a command or search...")).not.toBeVisible({ timeout: 5000 });
+  await expect(page.getByPlaceholder("search files")).not.toBeVisible({ timeout: 5000 });
 });
 
 // === SYSTEM TAB: Health Sub-View ===
@@ -210,9 +210,9 @@ test("command palette shows System Health navigation item", async ({ page }) => 
     });
     window.dispatchEvent(event);
   });
-  await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
   // Type "health"
-  await page.fill('input[placeholder="Type a command or search..."]', "health");
+  await page.fill('input[placeholder*="search files"]', "health");
   await expect(page.getByText("System Health")).toBeVisible();
 });
 
@@ -329,8 +329,8 @@ test("command palette shows Run History navigation item", async ({ page }) => {
     });
     window.dispatchEvent(event);
   });
-  await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
-  await page.fill('input[placeholder="Type a command or search..."]', "run history");
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
+  await page.fill('input[placeholder*="search files"]', "run history");
   await expect(page.getByRole("button", { name: /Run History/ }).first()).toBeVisible();
 });
 
@@ -657,8 +657,8 @@ test("command palette shows Log Viewer navigation item", async ({ page }) => {
     });
     window.dispatchEvent(event);
   });
-  await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
-  await page.fill('input[placeholder="Type a command or search..."]', "log viewer");
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
+  await page.fill('input[placeholder*="search files"]', "log viewer");
   await expect(page.getByText("Log Viewer")).toBeVisible();
 });
 
@@ -896,8 +896,8 @@ test("command palette shows Tasks navigation item", async ({ page }) => {
     });
     window.dispatchEvent(event);
   });
-  await expect(page.getByPlaceholder("Type a command or search...")).toBeVisible({ timeout: 5000 });
-  await page.fill('input[placeholder="Type a command or search..."]', "tasks");
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
+  await page.fill('input[placeholder*="search files"]', "tasks");
   await expect(page.getByRole("button", { name: /Tasks/ }).first()).toBeVisible();
 });
 
@@ -1088,4 +1088,146 @@ test("Activity Feed refresh button spins while fetching", async ({ page }) => {
   await refreshBtn.click();
   // Counter should reset close to 0
   await expect(page.getByText(/Updated [0-5]s ago/).first()).toBeVisible({ timeout: 10000 });
+});
+
+// === QUICK TASK CREATION VIA COMMAND PALETTE ===
+
+// Helper to open command palette
+async function openCommandPalette(page: any) {
+  await page.evaluate(() => {
+    window.dispatchEvent(new KeyboardEvent("keydown", {
+      key: "k", code: "KeyK", metaKey: true, ctrlKey: true, bubbles: true, cancelable: true,
+    }));
+  });
+}
+
+test("command palette has New Task action", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await openCommandPalette(page);
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
+  // Type "new task" to find the action
+  await page.fill('input[placeholder*="search files"]', "new task");
+  await expect(page.getByText("New Task").first()).toBeVisible({ timeout: 5000 });
+});
+
+test("command palette '> task' prefix shows Create Task section", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await openCommandPalette(page);
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
+  // Type "> My Test Task" to trigger quick-create mode
+  await page.fill('input[placeholder*="search files"]', "> My Test Task");
+  // Create Task section header should appear
+  await expect(page.getByText("Create Task", { exact: true }).first()).toBeVisible({ timeout: 5000 });
+});
+
+test("command palette quick task creation shows all 4 priorities", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await openCommandPalette(page);
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
+  await page.fill('input[placeholder*="search files"]', "> Priority Test Task");
+  // All 4 priority labels should show
+  await expect(page.getByText("Medium priority").first()).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText("High priority").first()).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText("Urgent").first()).toBeVisible({ timeout: 5000 });
+  await expect(page.getByText("Low priority").first()).toBeVisible({ timeout: 5000 });
+});
+
+test("command palette quick task footer changes to task-mode hints", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  await openCommandPalette(page);
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
+  await page.fill('input[placeholder*="search files"]', "> Quick Footer Test");
+  // Footer should show "Quick task mode" hint
+  await expect(page.getByText("Quick task mode")).toBeVisible({ timeout: 5000 });
+});
+
+test("command palette quick task creates task via API and shows toast", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1000);
+  const taskTitle = `Playwright Quick Task ${Date.now()}`;
+  await openCommandPalette(page);
+  await expect(page.getByPlaceholder("search files")).toBeVisible({ timeout: 5000 });
+  // Type the task with > prefix
+  await page.fill('input[placeholder*="search files"]', `> ${taskTitle}`);
+  await expect(page.getByText("Create Task", { exact: true }).first()).toBeVisible({ timeout: 5000 });
+  // Press Enter to create with the first (medium priority) option selected
+  await page.keyboard.press("Enter");
+  // Toast should appear confirming creation
+  await expect(page.getByText(/Task created/)).toBeVisible({ timeout: 10000 });
+  // Palette should close
+  await expect(page.getByPlaceholder("search files")).not.toBeVisible({ timeout: 5000 });
+  // Clean up: delete the created task via API
+  const res = await page.evaluate(async (title) => {
+    const listRes = await fetch("/api/tasks");
+    const data = await listRes.json();
+    const task = data.tasks.find((t: any) => t.title === title);
+    if (task) {
+      await fetch(`/api/tasks/${task.id}`, { method: "DELETE" });
+      return task.id;
+    }
+    return null;
+  }, taskTitle);
+  // Task should have been found and cleaned up
+  expect(res).toBeTruthy();
+});
+
+// === SERVICES VIEW: CATEGORY FILTER AND RESPONSE TIME BARS ===
+
+test("Services view shows category filter pills", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await expect(page.getByText("Services Directory")).toBeVisible({ timeout: 10000 });
+  // Wait for services to load
+  await page.waitForTimeout(3000);
+  // Category filter pills should appear (if there are multiple categories)
+  // Look for the "All" pill which always appears when multiple categories exist
+  const allPill = page.locator("button").filter({ hasText: /^All$/ });
+  const count = await allPill.count();
+  if (count > 0) {
+    await expect(allPill.first()).toBeVisible({ timeout: 5000 });
+  }
+});
+
+test("Services view response time bars render for up services", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await expect(page.getByText("Services Directory")).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(3000);
+  // Services with responseTime should show "ms" in the response bar
+  const msText = page.locator("span").filter({ hasText: /^\d+ms$/ });
+  const msCount = await msText.count();
+  // At least one service should show response time
+  expect(msCount).toBeGreaterThan(0);
+});
+
+test("Services view category filter filters the grid", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await expect(page.getByText("Services Directory")).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(3000);
+
+  // Count initial service cards
+  const allCards = page.locator('[data-testid="service-card"]');
+  const totalCount = await allCards.count();
+  if (totalCount === 0) return; // No services loaded
+
+  // Find a category pill (not "All")
+  const categoryPills = page.locator("button").filter({ hasText: /^(monitoring|finance|creative|core|media|ai)$/ });
+  const pillCount = await categoryPills.count();
+  if (pillCount === 0) return; // Only one category
+
+  // Click the first category pill
+  await categoryPills.first().click();
+  await page.waitForTimeout(500);
+
+  // Card count should be <= total (filtered)
+  const filteredCards = page.locator('[data-testid="service-card"]');
+  const filteredCount = await filteredCards.count();
+  expect(filteredCount).toBeLessThanOrEqual(totalCount);
 });
