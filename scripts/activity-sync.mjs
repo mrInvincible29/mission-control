@@ -115,16 +115,28 @@ export function parseLogLine(line) {
     const timestamp = new Date(data.time || data._meta?.date).getTime();
     const logLevel = data._meta?.logLevelName || 'INFO';
 
-    // Skip DEBUG heartbeat/queue noise — only keep tool calls
+    // Skip self-referential messages (this script's own output in logs)
+    if (message.includes('mission-control') || message.includes('activity-sync') || message.includes('mc-activity')) {
+      return null;
+    }
+
+    // Skip DEBUG heartbeat/queue noise — only keep interesting tool calls
+    const INTERESTING_TOOLS = new Set([
+      'message', 'web_search', 'web_fetch', 'browser', 'tts', 'image',
+      'sessions_spawn', 'sessions_send', 'nodes', 'canvas',
+    ]);
+
     if (logLevel === 'DEBUG') {
       if (message.includes('embedded run tool start:')) {
         const toolMatch = message.match(/tool=(\S+)/);
+        const tool = toolMatch?.[1] || 'unknown';
+        if (!INTERESTING_TOOLS.has(tool)) return null;
         return {
           actionType: 'tool_call',
           description: message.slice(0, 200),
           timestamp,
           status: 'success',
-          metadata: { tool: toolMatch?.[1] || 'unknown' }
+          metadata: { tool }
         };
       }
       return null;

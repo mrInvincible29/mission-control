@@ -228,6 +228,48 @@ describe('parseLogLine', () => {
     assert.equal(result.metadata.model, 'gpt-4o');
   });
 
+  it('skips self-referential mission-control messages', () => {
+    const line = JSON.stringify({
+      '0': '[mission-control-sync] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY',
+      time: ts,
+      _meta: { logLevelName: 'ERROR' }
+    });
+    assert.equal(parseLogLine(line), null);
+  });
+
+  it('skips activity-sync self-referential messages', () => {
+    const line = JSON.stringify({
+      '0': 'activity-sync crashed with error',
+      time: ts,
+      _meta: { logLevelName: 'ERROR' }
+    });
+    assert.equal(parseLogLine(line), null);
+  });
+
+  it('skips routine tool calls (exec, read, write, edit)', () => {
+    for (const tool of ['exec', 'read', 'write', 'edit', 'process', 'session_status']) {
+      const line = JSON.stringify({
+        '0': `embedded run tool start: tool=${tool}`,
+        time: ts,
+        _meta: { logLevelName: 'DEBUG' }
+      });
+      assert.equal(parseLogLine(line), null, `Should skip tool: ${tool}`);
+    }
+  });
+
+  it('keeps interesting tool calls (message, web_search, browser)', () => {
+    for (const tool of ['message', 'web_search', 'browser', 'tts', 'sessions_spawn']) {
+      const line = JSON.stringify({
+        '0': `embedded run tool start: tool=${tool}`,
+        time: ts,
+        _meta: { logLevelName: 'DEBUG' }
+      });
+      const result = parseLogLine(line);
+      assert.ok(result, `Should keep tool: ${tool}`);
+      assert.equal(result.metadata.tool, tool);
+    }
+  });
+
   it('truncates long descriptions to 200 chars', () => {
     const longMsg = 'x'.repeat(500);
     const line = JSON.stringify({
