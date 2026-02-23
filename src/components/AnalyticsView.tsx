@@ -13,7 +13,7 @@ import {
 } from "@/components/ui/tooltip";
 import { useState, useMemo } from "react";
 import { TrendingUp, TrendingDown, Minus, Zap, DollarSign, Activity, AlertTriangle } from "lucide-react";
-import { formatTokens, formatCost } from "@/lib/formatters";
+import { formatTokens, formatCost, getModelColor } from "@/lib/formatters";
 
 const TIME_RANGES = [
   { label: "7d", value: 7 },
@@ -31,20 +31,6 @@ function formatHour(hour: number): string {
   if (hour < 12) return `${hour}a`;
   if (hour === 12) return "12p";
   return `${hour - 12}p`;
-}
-
-const MODEL_COLORS: Record<string, { bg: string; bar: string; text: string; dot: string }> = {
-  haiku: { bg: "bg-green-500/15", bar: "bg-green-500", text: "text-green-400", dot: "bg-green-500" },
-  sonnet: { bg: "bg-blue-500/15", bar: "bg-blue-500", text: "text-blue-400", dot: "bg-blue-500" },
-  opus: { bg: "bg-purple-500/15", bar: "bg-purple-500", text: "text-purple-400", dot: "bg-purple-500" },
-};
-
-function getModelColorSet(model: string): { bg: string; bar: string; text: string; dot: string } {
-  const lower = model.toLowerCase();
-  for (const [key, colors] of Object.entries(MODEL_COLORS)) {
-    if (lower.includes(key)) return colors;
-  }
-  return { bg: "bg-gray-500/15", bar: "bg-gray-500", text: "text-gray-400", dot: "bg-gray-500" };
 }
 
 // Pure SVG bar chart
@@ -226,6 +212,7 @@ function StatCard({
   icon: Icon,
   color,
   trend,
+  trendPercent,
   subtitle,
 }: {
   label: string;
@@ -233,6 +220,7 @@ function StatCard({
   icon: React.ElementType;
   color: string;
   trend?: "up" | "down" | "flat";
+  trendPercent?: number;
   subtitle?: string;
 }) {
   return (
@@ -252,6 +240,11 @@ function StatCard({
             {trend === "up" ? <TrendingUp className="h-3 w-3" /> :
              trend === "down" ? <TrendingDown className="h-3 w-3" /> :
              <Minus className="h-3 w-3" />}
+            {trendPercent !== undefined && trend !== "flat" && (
+              <span className="font-mono text-[10px]">
+                {trend === "up" ? "+" : ""}{trendPercent > 0 ? trendPercent.toFixed(0) : trendPercent.toFixed(0)}%
+              </span>
+            )}
           </span>
         )}
       </div>
@@ -270,9 +263,13 @@ export function AnalyticsView() {
     { refreshInterval: 60000 }
   );
 
-  // Compute trends: compare first half vs second half
+  // Compute trends: compare first half vs second half with percentage change
   const trends = useMemo(() => {
-    if (!analytics || analytics.daily.length < 2) return { cost: "flat" as const, tokens: "flat" as const, errors: "flat" as const };
+    if (!analytics || analytics.daily.length < 2) return {
+      cost: "flat" as const, costPct: 0,
+      tokens: "flat" as const, tokensPct: 0,
+      errors: "flat" as const, errorsPct: 0,
+    };
 
     const mid = Math.floor(analytics.daily.length / 2);
     const firstHalf = analytics.daily.slice(0, mid);
@@ -282,11 +279,21 @@ export function AnalyticsView() {
     const sumTokens = (arr: typeof firstHalf) => arr.reduce((s, d) => s + d.tokens, 0);
     const sumErrors = (arr: typeof firstHalf) => arr.reduce((s, d) => s + d.errors, 0);
 
-    const costTrend = sumCost(secondHalf) > sumCost(firstHalf) * 1.1 ? "up" as const : sumCost(secondHalf) < sumCost(firstHalf) * 0.9 ? "down" as const : "flat" as const;
-    const tokenTrend = sumTokens(secondHalf) > sumTokens(firstHalf) * 1.1 ? "up" as const : sumTokens(secondHalf) < sumTokens(firstHalf) * 0.9 ? "down" as const : "flat" as const;
-    const errorTrend = sumErrors(secondHalf) > sumErrors(firstHalf) * 1.1 ? "up" as const : sumErrors(secondHalf) < sumErrors(firstHalf) * 0.9 ? "down" as const : "flat" as const;
+    const calcTrend = (first: number, second: number) => {
+      const pct = first > 0 ? ((second - first) / first) * 100 : (second > 0 ? 100 : 0);
+      const direction = second > first * 1.1 ? "up" as const : second < first * 0.9 ? "down" as const : "flat" as const;
+      return { direction, pct };
+    };
 
-    return { cost: costTrend, tokens: tokenTrend, errors: errorTrend };
+    const cost = calcTrend(sumCost(firstHalf), sumCost(secondHalf));
+    const tokens = calcTrend(sumTokens(firstHalf), sumTokens(secondHalf));
+    const errors = calcTrend(sumErrors(firstHalf), sumErrors(secondHalf));
+
+    return {
+      cost: cost.direction, costPct: cost.pct,
+      tokens: tokens.direction, tokensPct: tokens.pct,
+      errors: errors.direction, errorsPct: errors.pct,
+    };
   }, [analytics]);
 
   const avgCostPerDay = useMemo(() => {
@@ -340,6 +347,7 @@ export function AnalyticsView() {
             icon={DollarSign}
             color="bg-emerald-500/15 text-emerald-400"
             trend={trends.cost}
+            trendPercent={trends.costPct}
             subtitle={`~${formatCost(avgCostPerDay)}/day avg`}
           />
           <StatCard
@@ -348,6 +356,7 @@ export function AnalyticsView() {
             icon={Zap}
             color="bg-blue-500/15 text-blue-400"
             trend={trends.tokens}
+            trendPercent={trends.tokensPct}
             subtitle={`${analytics.models.length} model${analytics.models.length !== 1 ? "s" : ""} used`}
           />
           <StatCard
@@ -363,6 +372,7 @@ export function AnalyticsView() {
             icon={AlertTriangle}
             color={analytics.totalErrors > 0 ? "bg-red-500/15 text-red-400" : "bg-gray-500/15 text-gray-400"}
             trend={trends.errors}
+            trendPercent={trends.errorsPct}
             subtitle={analytics.totalActivities > 0 ? `${((analytics.totalErrors / analytics.totalActivities) * 100).toFixed(1)}% error rate` : undefined}
           />
         </div>
@@ -412,7 +422,7 @@ export function AnalyticsView() {
             ) : (
               <div className="space-y-3">
                 {analytics.models.map((m) => {
-                  const colors = getModelColorSet(m.model);
+                  const colors = getModelColor(m.model);
                   const pct = analytics.totalTokens > 0 ? (m.tokens / analytics.totalTokens) * 100 : 0;
                   return (
                     <div key={m.model} className="space-y-1.5">

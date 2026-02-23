@@ -81,7 +81,7 @@ const COLUMNS: {
   {
     id: "in_progress",
     label: "In Progress",
-    icon: <Loader2 className="h-4 w-4" />,
+    icon: <Loader2 className="h-4 w-4 animate-spin" />,
     color: "text-blue-500",
   },
   {
@@ -387,7 +387,7 @@ function TaskDetailSheet({
       .split(",")
       .map((t) => t.trim())
       .filter(Boolean);
-    onSave(task.id, {
+    await onSave(task.id, {
       title: editTitle.trim() || task.title,
       description: editDescription.trim() || null,
       assignee: editAssignee || null,
@@ -774,17 +774,20 @@ export function KanbanBoard() {
       );
 
       try {
-        await fetch(`/api/tasks/${id}`, {
+        const res = await fetch(`/api/tasks/${id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(patch),
         });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         mutateTasks();
+        toast("Task updated", "success");
       } catch {
         mutateTasks();
+        toast("Failed to save task", "error");
       }
     },
-    [mutateTasks]
+    [mutateTasks, toast]
   );
 
   // Delete handler
@@ -803,13 +806,16 @@ export function KanbanBoard() {
       );
 
       try {
-        await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+        const res = await fetch(`/api/tasks/${id}`, { method: "DELETE" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
         mutateTasks();
+        toast("Task deleted", "success");
       } catch {
         mutateTasks();
+        toast("Failed to delete task", "error");
       }
     },
-    [mutateTasks]
+    [mutateTasks, toast]
   );
 
   // Unique assignees present in tasks (for filter buttons)

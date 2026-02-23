@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -89,6 +89,24 @@ function formatBytes(bytes: number): string {
   if (bytes >= 1048576) return `${(bytes / 1048576).toFixed(1)} MB`;
   if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${bytes} B`;
+}
+
+function formatRate(bytesPerSec: number): string {
+  if (bytesPerSec >= 1048576) return `${(bytesPerSec / 1048576).toFixed(1)} MB/s`;
+  if (bytesPerSec >= 1024) return `${(bytesPerSec / 1024).toFixed(1)} KB/s`;
+  if (bytesPerSec > 0) return `${bytesPerSec.toFixed(0)} B/s`;
+  return "0 B/s";
+}
+
+interface NetworkRate {
+  interface: string;
+  rxRate: number;
+  txRate: number;
+}
+
+interface NetworkSnapshot {
+  timestamp: number;
+  interfaces: Record<string, { rxBytes: number; txBytes: number }>;
 }
 
 function formatMB(mb: number): string {
@@ -276,6 +294,8 @@ export function SystemHealth() {
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const [memHistory, setMemHistory] = useState<number[]>([]);
   const [, setTick] = useState(0);
+  const [networkRates, setNetworkRates] = useState<NetworkRate[]>([]);
+  const prevNetworkRef = useRef<NetworkSnapshot | null>(null);
 
   const fetchHealth = useCallback(async () => {
     try {
@@ -290,6 +310,36 @@ export function SystemHealth() {
       const cpuUsed = 100 - (json.cpu?.idle || 100);
       setCpuHistory((prev) => [...prev.slice(-29), cpuUsed]);
       setMemHistory((prev) => [...prev.slice(-29), json.memory?.usedPercent || 0]);
+
+      // Calculate network throughput rates
+      const now = Date.now();
+      const currentSnapshot: NetworkSnapshot = {
+        timestamp: now,
+        interfaces: {},
+      };
+      for (const iface of json.network || []) {
+        currentSnapshot.interfaces[iface.interface] = {
+          rxBytes: iface.rxBytes,
+          txBytes: iface.txBytes,
+        };
+      }
+      const prev = prevNetworkRef.current;
+      if (prev && now > prev.timestamp) {
+        const elapsed = (now - prev.timestamp) / 1000;
+        const rates: NetworkRate[] = [];
+        for (const iface of json.network || []) {
+          const prevIface = prev.interfaces[iface.interface];
+          if (prevIface) {
+            rates.push({
+              interface: iface.interface,
+              rxRate: Math.max(0, (iface.rxBytes - prevIface.rxBytes) / elapsed),
+              txRate: Math.max(0, (iface.txBytes - prevIface.txBytes) / elapsed),
+            });
+          }
+        }
+        setNetworkRates(rates);
+      }
+      prevNetworkRef.current = currentSnapshot;
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to fetch");
     } finally {
@@ -645,31 +695,52 @@ export function SystemHealth() {
         {/* Network */}
         {data.network.length > 0 && (
           <div className="rounded-xl border border-border/50 bg-card/30 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Network className="h-4 w-4 text-sky-400" />
-              <h3 className="text-sm font-medium">Network Interfaces</h3>
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Network className="h-4 w-4 text-sky-400" />
+                <h3 className="text-sm font-medium">Network</h3>
+              </div>
+              {networkRates.length > 0 && (
+                <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-sky-400" />
+                    RX {formatRate(networkRates.reduce((s, r) => s + r.rxRate, 0))}
+                  </span>
+                  <span className="flex items-center gap-1">
+                    <span className="inline-block w-1.5 h-1.5 rounded-full bg-amber-400" />
+                    TX {formatRate(networkRates.reduce((s, r) => s + r.txRate, 0))}
+                  </span>
+                </div>
+              )}
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="text-muted-foreground border-b border-border/30">
                     <th className="text-left py-1.5 pr-3 font-medium">Interface</th>
-                    <th className="text-right py-1.5 px-2 font-medium">RX</th>
-                    <th className="text-right py-1.5 px-2 font-medium">TX</th>
-                    <th className="text-right py-1.5 pl-2 font-medium">Packets</th>
+                    <th className="text-right py-1.5 px-2 font-medium">RX Rate</th>
+                    <th className="text-right py-1.5 px-2 font-medium">TX Rate</th>
+                    <th className="text-right py-1.5 px-2 font-medium">RX Total</th>
+                    <th className="text-right py-1.5 pl-2 font-medium">TX Total</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {data.network.map((n) => (
-                    <tr key={n.interface} className="border-b border-border/10 hover:bg-muted/20">
-                      <td className="py-1.5 pr-3 font-mono text-muted-foreground">{n.interface}</td>
-                      <td className="py-1.5 px-2 text-right text-sky-400">{formatBytes(n.rxBytes)}</td>
-                      <td className="py-1.5 px-2 text-right text-amber-400">{formatBytes(n.txBytes)}</td>
-                      <td className="py-1.5 pl-2 text-right text-muted-foreground/60">
-                        {(n.rxPackets + n.txPackets).toLocaleString()}
-                      </td>
-                    </tr>
-                  ))}
+                  {data.network.map((n) => {
+                    const rate = networkRates.find((r) => r.interface === n.interface);
+                    return (
+                      <tr key={n.interface} className="border-b border-border/10 hover:bg-muted/20">
+                        <td className="py-1.5 pr-3 font-mono text-muted-foreground">{n.interface}</td>
+                        <td className="py-1.5 px-2 text-right font-mono text-sky-400">
+                          {rate ? formatRate(rate.rxRate) : "—"}
+                        </td>
+                        <td className="py-1.5 px-2 text-right font-mono text-amber-400">
+                          {rate ? formatRate(rate.txRate) : "—"}
+                        </td>
+                        <td className="py-1.5 px-2 text-right text-muted-foreground/60">{formatBytes(n.rxBytes)}</td>
+                        <td className="py-1.5 pl-2 text-right text-muted-foreground/60">{formatBytes(n.txBytes)}</td>
+                      </tr>
+                    );
+                  })}
                 </tbody>
               </table>
             </div>
