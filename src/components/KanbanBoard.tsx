@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useCallback, useRef } from "react";
+import { useState, useCallback, useRef, useEffect, useMemo } from "react";
 import useSWR from "swr";
 import {
   DndContext,
@@ -361,6 +361,7 @@ function TaskDetailSheet({
 }) {
   const [editTitle, setEditTitle] = useState("");
   const [editDescription, setEditDescription] = useState("");
+  const [editStatus, setEditStatus] = useState<TaskStatus>("todo");
   const [editAssignee, setEditAssignee] = useState("");
   const [editPriority, setEditPriority] = useState<TaskPriority>("medium");
   const [editTags, setEditTags] = useState("");
@@ -373,6 +374,7 @@ function TaskDetailSheet({
     lastTaskId.current = task.id;
     setEditTitle(task.title);
     setEditDescription(task.description ?? "");
+    setEditStatus(task.status);
     setEditAssignee(task.assignee ?? "");
     setEditPriority(task.priority);
     setEditTags(task.tags.join(", "));
@@ -390,6 +392,7 @@ function TaskDetailSheet({
     await onSave(task.id, {
       title: editTitle.trim() || task.title,
       description: editDescription.trim() || null,
+      status: editStatus,
       assignee: editAssignee || null,
       priority: editPriority,
       tags,
@@ -426,6 +429,30 @@ function TaskDetailSheet({
                 value={editTitle}
                 onChange={(e) => setEditTitle(e.target.value)}
               />
+            </div>
+
+            {/* Status */}
+            <div>
+              <label className="text-xs font-medium text-muted-foreground mb-1 block">
+                Status
+              </label>
+              <div className="grid grid-cols-4 gap-1">
+                {COLUMNS.map((col) => (
+                  <button
+                    key={col.id}
+                    type="button"
+                    onClick={() => setEditStatus(col.id)}
+                    className={`flex items-center justify-center gap-1 rounded-md border px-2 py-1.5 text-xs transition-colors ${
+                      editStatus === col.id
+                        ? `${col.color} border-current bg-current/10 font-medium`
+                        : "border-border/50 text-muted-foreground hover:bg-muted/50"
+                    }`}
+                  >
+                    {col.icon}
+                    <span className="hidden sm:inline">{col.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
 
             {/* Description */}
@@ -571,6 +598,18 @@ export function KanbanBoard() {
   // Filters
   const [filterAssignee, setFilterAssignee] = useState<string | null>(null);
   const [filterPriority, setFilterPriority] = useState<TaskPriority | null>(null);
+
+  // Mobile column selector
+  const [mobileColumn, setMobileColumn] = useState<TaskStatus>("todo");
+  const [isMobile, setIsMobile] = useState(false);
+
+  useEffect(() => {
+    const mq = window.matchMedia("(max-width: 639px)");
+    setIsMobile(mq.matches);
+    const handler = (e: MediaQueryListEvent) => setIsMobile(e.matches);
+    mq.addEventListener("change", handler);
+    return () => mq.removeEventListener("change", handler);
+  }, []);
 
   // DnD state
   const [activeTask, setActiveTask] = useState<Task | null>(null);
@@ -887,11 +926,46 @@ export function KanbanBoard() {
           <option value="low">Low</option>
         </select>
 
-        {/* Task count */}
-        <span className="ml-auto text-xs text-muted-foreground/60">
-          {filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""}
-        </span>
+        {/* Task summary counts — colored dots with numbers */}
+        <div className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground/60 tabular-nums">
+          {COLUMNS.map((col) => {
+            const count = tasksByColumn[col.id].length;
+            const dotColor = col.id === "todo" ? "bg-gray-400" :
+              col.id === "in_progress" ? "bg-blue-500" :
+              col.id === "blocked" ? "bg-amber-500" : "bg-emerald-500";
+            return (
+              <span key={col.id} className="flex items-center gap-1" title={col.label}>
+                <span className={`w-1.5 h-1.5 rounded-full ${dotColor}`} />
+                <span>{count}</span>
+              </span>
+            );
+          })}
+        </div>
       </div>
+
+      {/* Mobile column selector */}
+      {isMobile && (
+        <div className="flex gap-1 px-4 pb-2 sm:hidden">
+          {COLUMNS.map((col) => {
+            const count = tasksByColumn[col.id].length;
+            const isActive = mobileColumn === col.id;
+            return (
+              <button
+                key={col.id}
+                onClick={() => setMobileColumn(col.id)}
+                className={`flex-1 flex items-center justify-center gap-1 rounded-lg border px-2 py-2 text-xs transition-colors ${
+                  isActive
+                    ? `${col.color} border-current bg-current/10 font-medium`
+                    : "border-border/40 text-muted-foreground/60 hover:bg-muted/30"
+                }`}
+              >
+                {col.icon}
+                <span className="tabular-nums">{count}</span>
+              </button>
+            );
+          })}
+        </div>
+      )}
 
       {/* DnD board */}
       <div className="flex-1 px-4 pb-4 pt-2">
@@ -901,8 +975,8 @@ export function KanbanBoard() {
           onDragStart={handleDragStart}
           onDragEnd={handleDragEnd}
         >
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {COLUMNS.map((col) => (
+          <div className={isMobile ? "flex flex-col gap-4" : "grid sm:grid-cols-2 lg:grid-cols-4 gap-4"}>
+            {COLUMNS.filter((col) => !isMobile || col.id === mobileColumn).map((col) => (
               <KanbanColumn
                 key={col.id}
                 column={col}
