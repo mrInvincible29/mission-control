@@ -1325,3 +1325,101 @@ test("Kanban task save shows toast notification", async ({ page }) => {
     if (task) await fetch(`/api/tasks/${task.id}`, { method: "DELETE" });
   }, taskTitle);
 });
+
+// === UX POLISH TESTS (delta CPU, keyboard shortcuts, toast, status strip) ===
+
+test("Health API returns delta-based CPU values (user+system+idle sums to ~100)", async ({ page }) => {
+  // First request primes the cache; second gives delta-based values
+  await page.goto("/");
+  const res1 = await page.evaluate(() => fetch("/api/health").then(r => r.json()));
+  // Wait a bit for CPU to accumulate some delta
+  await page.waitForTimeout(2000);
+  const res2 = await page.evaluate(() => fetch("/api/health").then(r => r.json()));
+  const cpu = res2.cpu;
+  expect(cpu.user).toBeGreaterThanOrEqual(0);
+  expect(cpu.system).toBeGreaterThanOrEqual(0);
+  expect(cpu.idle).toBeGreaterThanOrEqual(0);
+  expect(cpu.user).toBeLessThanOrEqual(100);
+  expect(cpu.system).toBeLessThanOrEqual(100);
+  expect(cpu.idle).toBeLessThanOrEqual(100);
+  const sum = cpu.user + cpu.system + cpu.idle;
+  // Sum should be close to 100 (allow some rounding tolerance)
+  expect(sum).toBeGreaterThan(95);
+  expect(sum).toBeLessThanOrEqual(100.5);
+});
+
+test("Keyboard shortcuts modal closes with Escape key", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForTimeout(1000);
+  // Open shortcuts modal with ? key
+  await page.keyboard.press("?");
+  await expect(page.getByText("Keyboard Shortcuts")).toBeVisible({ timeout: 3000 });
+  // Press Escape to close
+  await page.keyboard.press("Escape");
+  await expect(page.getByText("Keyboard Shortcuts")).not.toBeVisible({ timeout: 3000 });
+});
+
+test("Keyboard shortcuts modal has ARIA dialog role", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForTimeout(1000);
+  await page.keyboard.press("?");
+  await expect(page.getByText("Keyboard Shortcuts")).toBeVisible({ timeout: 3000 });
+  const dialog = page.locator('[role="dialog"][aria-modal="true"]');
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toHaveAttribute("aria-label", "Keyboard shortcuts");
+  // Close
+  await page.keyboard.press("Escape");
+});
+
+test("Keyboard shortcuts modal has open/close animation", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForTimeout(1000);
+  await page.keyboard.press("?");
+  // The dialog container should have transition classes
+  const dialog = page.locator('[role="dialog"]');
+  await expect(dialog).toBeVisible({ timeout: 3000 });
+  // After animation settles, should be fully visible (opacity-100, scale-100)
+  await expect(dialog).toHaveClass(/opacity-100/);
+  await expect(dialog).toHaveClass(/scale-100/);
+  await page.keyboard.press("Escape");
+});
+
+test("Toast notifications have ARIA role=status", async ({ page }) => {
+  await page.goto("/?tab=tasks");
+  await expect(page.getByText("To Do")).toBeVisible({ timeout: 10000 });
+  // Create and save a task to trigger a toast
+  const taskTitle = `ARIA Toast Test ${Date.now()}`;
+  const quickAddInput = page.getByPlaceholder("Add a task...");
+  await expect(quickAddInput).toBeVisible({ timeout: 5000 });
+  await quickAddInput.fill(taskTitle);
+  await quickAddInput.press("Enter");
+  await page.waitForTimeout(1000);
+  await page.getByText(taskTitle).click();
+  await expect(page.getByText("Task Details")).toBeVisible({ timeout: 5000 });
+  await page.getByRole("button", { name: "Save" }).click();
+  // Toast should have role="status" for screen readers
+  const toast = page.locator('[role="status"]').filter({ hasText: "Task updated" });
+  await expect(toast).toBeVisible({ timeout: 5000 });
+  // Clean up
+  await page.evaluate(async (title) => {
+    const res = await fetch("/api/tasks");
+    const data = await res.json();
+    const task = data.tasks.find((t: any) => t.title === title);
+    if (task) await fetch(`/api/tasks/${task.id}`, { method: "DELETE" });
+  }, taskTitle);
+});
+
+test("StatusStrip dot does not pulse when system is healthy", async ({ page }) => {
+  await page.goto("/");
+  // Wait for health data to load
+  await page.waitForTimeout(3000);
+  // The desktop status dot — should exist but not animate-pulse when healthy (<70%)
+  const statusDot = page.locator('div[title="System healthy"]');
+  const count = await statusDot.count();
+  if (count > 0) {
+    // If system is healthy, the dot should NOT have animate-pulse class
+    const classes = await statusDot.getAttribute("class");
+    expect(classes).not.toContain("animate-pulse");
+  }
+  // If system is at high usage, the dot will have title "High resource usage" and that's fine
+});
