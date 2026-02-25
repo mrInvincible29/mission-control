@@ -45,14 +45,14 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
     const id = nextId++;
     setToasts(prev => {
       const next = [...prev, { id, message, type }];
-      // Limit max visible toasts
       if (next.length > MAX_TOASTS) {
         return next.slice(next.length - MAX_TOASTS);
       }
       return next;
     });
-    setTimeout(() => startExit(id), TOAST_DURATION);
-  }, [startExit]);
+    // Auto-dismiss timer is managed per-item in ToastItem (supports pause-on-hover)
+    return id;
+  }, []);
 
   const removeToast = useCallback((id: number) => {
     startExit(id);
@@ -75,11 +75,33 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 function ToastItem({ toast, onDismiss, isExiting }: { toast: Toast; onDismiss: (id: number) => void; isExiting: boolean }) {
   const [entered, setEntered] = useState(false);
   const timerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  const remainingRef = useRef(TOAST_DURATION);
+  const startTimeRef = useRef(0);
 
-  useEffect(() => {
-    timerRef.current = setTimeout(() => setEntered(true), 10);
-    return () => clearTimeout(timerRef.current);
+  // Start auto-dismiss timer
+  const startTimer = useCallback(() => {
+    startTimeRef.current = Date.now();
+    timerRef.current = setTimeout(() => onDismiss(toast.id), remainingRef.current);
+  }, [onDismiss, toast.id]);
+
+  // Pause timer on hover
+  const pauseTimer = useCallback(() => {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      remainingRef.current -= Date.now() - startTimeRef.current;
+      if (remainingRef.current < 0) remainingRef.current = 0;
+    }
   }, []);
+
+  // Enter animation + start timer
+  useEffect(() => {
+    const enterTimer = setTimeout(() => setEntered(true), 10);
+    startTimer();
+    return () => {
+      clearTimeout(enterTimer);
+      if (timerRef.current) clearTimeout(timerRef.current);
+    };
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const colorMap = {
     success: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300",
@@ -91,6 +113,10 @@ function ToastItem({ toast, onDismiss, isExiting }: { toast: Toast; onDismiss: (
 
   return (
     <div
+      role="status"
+      aria-live="polite"
+      onMouseEnter={pauseTimer}
+      onMouseLeave={startTimer}
       className={`flex items-center gap-2 px-4 py-2.5 rounded-lg border backdrop-blur-sm shadow-lg transition-all duration-300 ${
         colorMap[toast.type]
       } ${visible ? "opacity-100 translate-y-0 scale-100" : "opacity-0 translate-y-2 scale-95"}`}
@@ -99,6 +125,7 @@ function ToastItem({ toast, onDismiss, isExiting }: { toast: Toast; onDismiss: (
       <button
         onClick={() => onDismiss(toast.id)}
         className="opacity-60 hover:opacity-100 transition-opacity"
+        aria-label="Dismiss notification"
       >
         <X className="h-3.5 w-3.5" />
       </button>

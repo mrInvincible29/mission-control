@@ -63,21 +63,56 @@ interface ProcessInfo {
   command: string;
 }
 
+// Module-level cache for delta-based CPU calculation.
+// On each request, we compare current /proc/stat counters with the previous
+// reading to compute actual recent CPU utilization (like top/htop) instead
+// of a meaningless lifetime average.
+let prevCpuCounters: { user: number; nice: number; system: number; idle: number; iowait: number; irq: number; softirq: number; total: number } | null = null;
+
 function getCpu(): CpuInfo {
   const loadAvg = os.loadavg() as [number, number, number];
   const cores = os.cpus().length;
 
-  // Parse /proc/stat for CPU usage
   try {
     const stat = fs.readFileSync("/proc/stat", "utf-8");
     const cpuLine = stat.split("\n")[0];
     const parts = cpuLine.split(/\s+/).slice(1).map(Number);
     const [user, nice, system, idle, iowait, irq, softirq] = parts;
     const total = user + nice + system + idle + iowait + irq + softirq;
+
+    const current = { user, nice, system, idle, iowait, irq, softirq, total };
+
+    let cpuUser: number;
+    let cpuSystem: number;
+    let cpuIdle: number;
+
+    if (prevCpuCounters) {
+      // Delta-based: compare with previous reading for real-time utilization
+      const dTotal = total - prevCpuCounters.total;
+      if (dTotal > 0) {
+        cpuUser = ((user + nice - prevCpuCounters.user - prevCpuCounters.nice) / dTotal) * 100;
+        cpuSystem = ((system + irq + softirq - prevCpuCounters.system - prevCpuCounters.irq - prevCpuCounters.softirq) / dTotal) * 100;
+        cpuIdle = ((idle + iowait - prevCpuCounters.idle - prevCpuCounters.iowait) / dTotal) * 100;
+      } else {
+        cpuUser = 0;
+        cpuSystem = 0;
+        cpuIdle = 100;
+      }
+    } else {
+      // First request after server start: use load average as a rough estimate
+      // rather than the misleading cumulative /proc/stat values
+      const loadPct = Math.min((loadAvg[0] / cores) * 100, 100);
+      cpuUser = loadPct * 0.7;
+      cpuSystem = loadPct * 0.3;
+      cpuIdle = 100 - loadPct;
+    }
+
+    prevCpuCounters = current;
+
     return {
-      user: ((user + nice) / total) * 100,
-      system: ((system + irq + softirq) / total) * 100,
-      idle: ((idle + iowait) / total) * 100,
+      user: Math.max(0, Math.min(100, cpuUser)),
+      system: Math.max(0, Math.min(100, cpuSystem)),
+      idle: Math.max(0, Math.min(100, cpuIdle)),
       loadAvg,
       cores,
     };

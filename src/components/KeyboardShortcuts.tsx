@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { Keyboard, X } from "lucide-react";
 
 interface ShortcutGroup {
@@ -21,15 +21,15 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
   {
     title: "Sub-views",
     shortcuts: [
-      { keys: ["⇧", "1"], description: "First sub-view" },
-      { keys: ["⇧", "2"], description: "Second sub-view" },
-      { keys: ["⇧", "3"], description: "Third sub-view (if available)" },
+      { keys: ["\u21e7", "1"], description: "First sub-view" },
+      { keys: ["\u21e7", "2"], description: "Second sub-view" },
+      { keys: ["\u21e7", "3"], description: "Third sub-view (if available)" },
     ],
   },
   {
     title: "Actions",
     shortcuts: [
-      { keys: ["⌘", "K"], description: "Command palette" },
+      { keys: ["\u2318", "K"], description: "Command palette" },
       { keys: ["R"], description: "Refresh current view" },
       { keys: ["?"], description: "Toggle this help" },
     ],
@@ -46,11 +46,41 @@ function Kbd({ children }: { children: string }) {
 
 export function KeyboardShortcuts() {
   const [open, setOpen] = useState(false);
+  const [visible, setVisible] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  const toggle = useCallback(() => setOpen((prev) => !prev), []);
+  const close = useCallback(() => {
+    setVisible(false);
+    setTimeout(() => setOpen(false), 200);
+  }, []);
 
+  const openDialog = useCallback(() => {
+    setOpen(true);
+    // Trigger enter animation on next frame
+    requestAnimationFrame(() => setVisible(true));
+  }, []);
+
+  const toggle = useCallback(() => {
+    if (open) close();
+    else openDialog();
+  }, [open, close, openDialog]);
+
+  // Focus the close button when dialog opens
+  useEffect(() => {
+    if (open && visible) {
+      closeButtonRef.current?.focus();
+    }
+  }, [open, visible]);
+
+  // ? key to toggle, Esc to close
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && open) {
+        e.preventDefault();
+        close();
+        return;
+      }
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
       if (e.key === "?" && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -60,7 +90,7 @@ export function KeyboardShortcuts() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [toggle]);
+  }, [toggle, close, open]);
 
   // Listen for the toggle event from the header button
   useEffect(() => {
@@ -69,16 +99,54 @@ export function KeyboardShortcuts() {
     return () => window.removeEventListener("toggle-shortcuts", handler);
   }, [toggle]);
 
+  // Focus trap — keep Tab cycling within the dialog
+  useEffect(() => {
+    if (!open) return;
+    const handleTab = (e: KeyboardEvent) => {
+      if (e.key !== "Tab" || !dialogRef.current) return;
+      const focusable = dialogRef.current.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey && document.activeElement === first) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && document.activeElement === last) {
+        e.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", handleTab);
+    return () => window.removeEventListener("keydown", handleTab);
+  }, [open]);
+
   if (!open) return null;
 
   return (
-    <div className="fixed inset-0 z-50" onClick={() => setOpen(false)}>
+    <div
+      className="fixed inset-0 z-50"
+      onClick={close}
+    >
       {/* Backdrop */}
-      <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+      <div
+        className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-200 ${
+          visible ? "opacity-100" : "opacity-0"
+        }`}
+      />
 
       {/* Dialog */}
       <div
-        className="absolute left-1/2 top-[15%] w-full max-w-md -translate-x-1/2 rounded-xl border border-border/80 bg-background shadow-2xl overflow-hidden"
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Keyboard shortcuts"
+        className={`absolute left-1/2 top-[15%] w-full max-w-md -translate-x-1/2 rounded-xl border border-border/80 bg-background shadow-2xl overflow-hidden transition-all duration-200 ${
+          visible
+            ? "opacity-100 scale-100 translate-y-0"
+            : "opacity-0 scale-95 -translate-y-2"
+        }`}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
@@ -88,7 +156,8 @@ export function KeyboardShortcuts() {
             <h2 className="text-sm font-semibold">Keyboard Shortcuts</h2>
           </div>
           <button
-            onClick={() => setOpen(false)}
+            ref={closeButtonRef}
+            onClick={close}
             className="rounded-md p-1 text-muted-foreground hover:text-foreground hover:bg-muted/50 transition-colors"
             aria-label="Close shortcuts help"
           >

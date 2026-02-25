@@ -81,7 +81,7 @@ export function StatusStrip({ compact = false }: { compact?: boolean }) {
         {!connected && <WifiOff className="h-3 w-3 text-amber-400" />}
         {data && (
           <>
-            <div className={`w-1.5 h-1.5 rounded-full ${getDotColor(Math.max(data.cpu, data.memPercent))} animate-pulse`} />
+            <div className={`w-1.5 h-1.5 rounded-full ${getDotColor(Math.max(data.cpu, data.memPercent))}${Math.max(data.cpu, data.memPercent) >= 70 ? " animate-pulse" : ""}`} />
             <span className="font-mono tabular-nums">
               <span className={getColor(data.cpu)}>CPU {data.cpu}%</span>
               {" · "}
@@ -143,7 +143,7 @@ export function StatusStrip({ compact = false }: { compact?: boolean }) {
             </>
           )}
           <div
-            className={`w-1.5 h-1.5 rounded-full ${getDotColor(Math.max(data.cpu, data.memPercent))} animate-pulse`}
+            className={`w-1.5 h-1.5 rounded-full ${getDotColor(Math.max(data.cpu, data.memPercent))}${Math.max(data.cpu, data.memPercent) >= 70 ? " animate-pulse" : ""}`}
             title={data.cpu >= 70 || data.memPercent >= 70 ? "High resource usage" : "System healthy"}
           />
         </>
