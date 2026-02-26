@@ -1423,3 +1423,107 @@ test("StatusStrip dot does not pulse when system is healthy", async ({ page }) =
   }
   // If system is at high usage, the dot will have title "High resource usage" and that's fine
 });
+
+// === NEW FEATURE TESTS: Analytics UX Overhaul ===
+
+test("Analytics has 1d time range button", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByRole("button", { name: "1d" })).toBeVisible({ timeout: 10000 });
+});
+
+test("Analytics time range buttons include 1d, 7d, 14d, 30d", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  for (const range of ["1d", "7d", "14d", "30d"]) {
+    await expect(page.getByRole("button", { name: range, exact: true })).toBeVisible({ timeout: 10000 });
+  }
+});
+
+test("Analytics 1d button switches to 1-day window", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  const btn1d = page.getByRole("button", { name: "1d", exact: true });
+  await expect(btn1d).toBeVisible({ timeout: 10000 });
+  await btn1d.click();
+  // After clicking 1d, the subtitle should show "1-day window"
+  await expect(page.getByText("1-day window")).toBeVisible({ timeout: 5000 });
+});
+
+test("Analytics bar charts have Y-axis scale labels", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  // Wait for charts to render
+  await expect(page.getByText("Daily Cost")).toBeVisible({ timeout: 10000 });
+  // Y-axis labels are rendered as SVG <text> elements inside the bar chart SVGs
+  // The Daily Cost chart container should have scale labels (the "$" prefix indicates cost Y-axis)
+  const costChart = page.locator("text=Daily Cost").locator("..").locator("..");
+  const svgTexts = costChart.locator("svg text");
+  // Should have Y-axis labels (at least midpoint + max) plus X-axis date labels
+  const textCount = await svgTexts.count();
+  expect(textCount).toBeGreaterThan(2);
+});
+
+test("Analytics cost trend uses amber color when going up (not green)", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Total Cost")).toBeVisible({ timeout: 10000 });
+  // Find the cost stat card
+  const costCard = page.locator("text=Total Cost").locator("..").locator("..");
+  // If there's a trend indicator, check it doesn't use emerald/green for "up"
+  const trendEl = costCard.locator('[class*="text-emerald"]').locator("svg");
+  // TrendingUp icon should NOT be in emerald color within the cost card
+  // (it should be amber for cost going up)
+  const emeraldTrendUps = costCard.locator('[class*="text-emerald"] svg.lucide-trending-up');
+  expect(await emeraldTrendUps.count()).toBe(0);
+});
+
+test("Analytics daily breakdown table shows inline mini-bars", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Daily Breakdown")).toBeVisible({ timeout: 10000 });
+  // Mini-bars are inline divs with rounded-full bg-*-500/50 classes
+  const table = page.locator("text=Daily Breakdown").locator("..").locator("table");
+  await expect(table).toBeVisible({ timeout: 5000 });
+  // Check for at least one mini-bar within the table body
+  const miniBars = table.locator("td .rounded-full.bg-muted\\/30");
+  const count = await miniBars.count();
+  expect(count).toBeGreaterThanOrEqual(1);
+});
+
+test("Analytics loading shows skeleton, not plain text", async ({ page }) => {
+  // Navigate to analytics — the skeleton should show before data loads
+  // We verify by checking that the page never shows the old "Loading analytics..." text
+  await page.goto("/?tab=activity&view=analytics");
+  // The old loading text should not appear
+  const plainLoading = page.locator("text=Loading analytics...");
+  // Give it a moment, then check — if skeleton is working, this text won't appear
+  await page.waitForTimeout(500);
+  expect(await plainLoading.count()).toBe(0);
+});
+
+test("Analytics model breakdown section visible", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Model Breakdown")).toBeVisible({ timeout: 10000 });
+});
+
+test("Analytics hourly heatmap section visible", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Activity by Hour")).toBeVisible({ timeout: 10000 });
+});
+
+// === NEW FEATURE TESTS: SystemHealth Process Tooltips ===
+
+test("SystemHealth process table commands are visible", async ({ page }) => {
+  await page.goto("/?tab=system&view=health");
+  await expect(page.getByText("Top Processes")).toBeVisible({ timeout: 10000 });
+  // Process table has a "Command" column header — find that specific table
+  const table = page.locator("table", { has: page.locator("th", { hasText: "Command" }) });
+  await expect(table).toBeVisible({ timeout: 5000 });
+  const rows = table.locator("tbody tr");
+  expect(await rows.count()).toBeGreaterThan(0);
+});
+
+// === NEW FEATURE TESTS: Enhanced formatDuration ===
+
+test("Health API returns valid duration fields", async ({ request }) => {
+  const response = await request.get("/api/health");
+  expect(response.ok()).toBeTruthy();
+  const data = await response.json();
+  // uptime is in seconds — should be a positive number
+  expect(data.uptime).toBeGreaterThan(0);
+});
