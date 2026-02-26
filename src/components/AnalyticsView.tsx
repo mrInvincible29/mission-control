@@ -12,10 +12,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useState, useMemo } from "react";
-import { TrendingUp, TrendingDown, Minus, Zap, DollarSign, Activity, AlertTriangle } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Zap, DollarSign, Activity, AlertTriangle, RefreshCw } from "lucide-react";
 import { formatTokens, formatCost, getModelColor } from "@/lib/formatters";
+import { AnalyticsSkeleton } from "@/components/Skeletons";
 
 const TIME_RANGES = [
+  { label: "1d", value: 1 },
   { label: "7d", value: 7 },
   { label: "14d", value: 14 },
   { label: "30d", value: 30 },
@@ -33,7 +35,7 @@ function formatHour(hour: number): string {
   return `${hour - 12}p`;
 }
 
-// Pure SVG bar chart
+// Pure SVG bar chart with Y-axis scale labels
 function BarChart({
   data,
   valueKey,
@@ -63,10 +65,13 @@ function BarChart({
   // Use a wider viewBox so SVG text doesn't scale up when stretched to fill container
   const vbWidth = 700;
   const barGap = 4;
-  const padding = 30;
-  const barWidth = Math.max(8, (vbWidth - padding * 2 - data.length * barGap) / data.length);
+  const leftPadding = 55;
+  const rightPadding = 15;
+  const usableWidth = vbWidth - leftPadding - rightPadding;
+  const barWidth = Math.max(8, (usableWidth - data.length * barGap) / data.length);
   const totalBarsWidth = data.length * (barWidth + barGap);
-  const chartWidth = totalBarsWidth + padding * 2;
+  const chartWidth = totalBarsWidth + leftPadding + rightPadding;
+  const barAreaHeight = height - 10;
 
   return (
     <TooltipProvider>
@@ -76,14 +81,33 @@ function BarChart({
           className="w-full"
           preserveAspectRatio="xMidYMid meet"
         >
+          {/* Y-axis scale labels */}
+          {[0.5, 1].map((frac) => {
+            const y = height - barAreaHeight * frac;
+            return (
+              <text
+                key={`y-${frac}`}
+                x={leftPadding - 6}
+                y={y + 3}
+                textAnchor="end"
+                fill="currentColor"
+                opacity={0.3}
+                fontSize={9}
+                fontFamily="monospace"
+              >
+                {formatValue(maxVal * frac)}
+              </text>
+            );
+          })}
+
           {/* Grid lines */}
           {[0.25, 0.5, 0.75, 1].map((frac) => (
             <line
               key={frac}
-              x1={padding}
-              y1={height - height * frac}
-              x2={chartWidth - padding}
-              y2={height - height * frac}
+              x1={leftPadding}
+              y1={height - barAreaHeight * frac}
+              x2={chartWidth - rightPadding}
+              y2={height - barAreaHeight * frac}
               stroke="currentColor"
               strokeOpacity={0.06}
               strokeWidth={0.5}
@@ -93,8 +117,8 @@ function BarChart({
           {/* Bars */}
           {data.map((d, i) => {
             const val = d[valueKey] as number;
-            const barHeight = (val / maxVal) * (height - 10);
-            const x = padding + i * (barWidth + barGap);
+            const barHeight = (val / maxVal) * barAreaHeight;
+            const x = leftPadding + i * (barWidth + barGap);
 
             return (
               <Tooltip key={i}>
@@ -138,7 +162,7 @@ function BarChart({
               i === data.length - 1 ||
               i % step === 0;
             if (!showLabel) return null;
-            const x = padding + i * (barWidth + barGap) + barWidth / 2;
+            const x = leftPadding + i * (barWidth + barGap) + barWidth / 2;
             return (
               <text
                 key={`label-${i}`}
@@ -205,7 +229,7 @@ function HourlyHeatmap({
   );
 }
 
-// Stat card with optional trend
+// Stat card with trend and semantic color coding
 function StatCard({
   label,
   value,
@@ -214,6 +238,7 @@ function StatCard({
   trend,
   trendPercent,
   subtitle,
+  trendSemantic = "positive",
 }: {
   label: string;
   value: string;
@@ -222,7 +247,15 @@ function StatCard({
   trend?: "up" | "down" | "flat";
   trendPercent?: number;
   subtitle?: string;
+  trendSemantic?: "positive" | "negative" | "neutral";
 }) {
+  const trendColor = (() => {
+    if (!trend || trend === "flat") return "text-muted-foreground";
+    if (trendSemantic === "negative") return trend === "up" ? "text-amber-400" : "text-emerald-400";
+    if (trendSemantic === "neutral") return "text-blue-400";
+    return trend === "up" ? "text-emerald-400" : "text-red-400";
+  })();
+
   return (
     <div className="rounded-xl border border-border/50 bg-card/30 p-4">
       <div className="flex items-center justify-between mb-2">
@@ -234,9 +267,7 @@ function StatCard({
       <div className="flex items-end gap-2">
         <span className="text-2xl font-bold tracking-tight">{value}</span>
         {trend && (
-          <span className={`flex items-center gap-0.5 text-xs pb-0.5 ${
-            trend === "up" ? "text-emerald-400" : trend === "down" ? "text-red-400" : "text-muted-foreground"
-          }`}>
+          <span className={`flex items-center gap-0.5 text-xs pb-0.5 ${trendColor}`}>
             {trend === "up" ? <TrendingUp className="h-3 w-3" /> :
              trend === "down" ? <TrendingDown className="h-3 w-3" /> :
              <Minus className="h-3 w-3" />}
@@ -255,9 +286,19 @@ function StatCard({
   );
 }
 
+// Inline mini-bar for daily breakdown table cells
+function MiniBar({ value, max, color }: { value: number; max: number; color: string }) {
+  const pct = max > 0 ? (value / max) * 100 : 0;
+  return (
+    <div className="w-10 h-1.5 rounded-full bg-muted/30 overflow-hidden inline-block ml-1.5 align-middle">
+      <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.max(pct, pct > 0 ? 2 : 0)}%` }} />
+    </div>
+  );
+}
+
 export function AnalyticsView() {
   const [days, setDays] = useState(14);
-  const { data: analytics } = useSWR(
+  const { data: analytics, error, mutate } = useSWR(
     ["analytics", days],
     () => getAnalytics(days),
     { refreshInterval: 60000 }
@@ -307,18 +348,50 @@ export function AnalyticsView() {
     return max.count > 0 ? max : null;
   }, [analytics]);
 
-  if (!analytics) {
+  // Max values for daily breakdown mini-bars
+  const maxDaily = useMemo(() => {
+    if (!analytics) return { count: 1, tokens: 1, cost: 1 };
+    return {
+      count: Math.max(...analytics.daily.map(d => d.count), 1),
+      tokens: Math.max(...analytics.daily.map(d => d.tokens), 1),
+      cost: Math.max(...analytics.daily.map(d => d.cost), 1),
+    };
+  }, [analytics]);
+
+  // Shimmer skeleton while loading (consistent with other views)
+  if (!analytics && !error) {
+    return <AnalyticsSkeleton />;
+  }
+
+  // Error state with retry
+  if (error && !analytics) {
     return (
       <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
         <CardContent className="flex-1 flex items-center justify-center">
-          <p className="text-muted-foreground">Loading analytics...</p>
+          <div className="text-center">
+            <AlertTriangle className="h-8 w-8 text-red-400 mx-auto mb-2" />
+            <p className="text-red-400 font-medium">Failed to load analytics</p>
+            <p className="text-sm text-muted-foreground mt-1">{error?.message || "Unknown error"}</p>
+            <Button variant="outline" size="sm" className="mt-3" onClick={() => mutate()}>
+              Retry
+            </Button>
+          </div>
         </CardContent>
       </Card>
     );
   }
 
+  if (!analytics) return null;
+
   return (
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
+      {/* Connection error banner — shown when fetch fails but stale data is displayed */}
+      {error && analytics && (
+        <div className="mx-4 mt-3 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 flex items-center gap-2 text-xs">
+          <RefreshCw className="h-3.5 w-3.5 text-amber-400 animate-spin flex-shrink-0" />
+          <span className="text-amber-300">Connection lost — retrying...</span>
+        </div>
+      )}
       <CardHeader className="pb-2 flex-shrink-0 px-4 pt-4">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg font-semibold">Usage Analytics</CardTitle>
@@ -348,6 +421,7 @@ export function AnalyticsView() {
             color="bg-emerald-500/15 text-emerald-400"
             trend={trends.cost}
             trendPercent={trends.costPct}
+            trendSemantic="negative"
             subtitle={`~${formatCost(avgCostPerDay)}/day avg`}
           />
           <StatCard
@@ -357,6 +431,7 @@ export function AnalyticsView() {
             color="bg-blue-500/15 text-blue-400"
             trend={trends.tokens}
             trendPercent={trends.tokensPct}
+            trendSemantic="neutral"
             subtitle={`${analytics.models.length} model${analytics.models.length !== 1 ? "s" : ""} used`}
           />
           <StatCard
@@ -373,6 +448,7 @@ export function AnalyticsView() {
             color={analytics.totalErrors > 0 ? "bg-red-500/15 text-red-400" : "bg-gray-500/15 text-gray-400"}
             trend={trends.errors}
             trendPercent={trends.errorsPct}
+            trendSemantic="negative"
             subtitle={analytics.totalActivities > 0 ? `${((analytics.totalErrors / analytics.totalActivities) * 100).toFixed(1)}% error rate` : undefined}
           />
         </div>
@@ -391,7 +467,7 @@ export function AnalyticsView() {
             labelKey="day"
             formatValue={formatCost}
             formatLabel={formatShortDay}
-            color="rgb(16 185 129)" // emerald-500
+            color="rgb(16 185 129)"
           />
         </div>
 
@@ -409,7 +485,7 @@ export function AnalyticsView() {
             labelKey="day"
             formatValue={formatTokens}
             formatLabel={formatShortDay}
-            color="rgb(59 130 246)" // blue-500
+            color="rgb(59 130 246)"
           />
         </div>
 
@@ -518,12 +594,17 @@ export function AnalyticsView() {
                 {[...analytics.daily].reverse().map((d) => (
                   <tr key={d.day} className="border-b border-border/10 hover:bg-muted/20 transition-colors">
                     <td className="py-1.5 pr-4 font-mono text-muted-foreground">{formatShortDay(d.day)}</td>
-                    <td className="py-1.5 px-2 text-right">{d.count}</td>
-                    <td className="py-1.5 px-2 text-right text-blue-400">
-                      {d.tokens > 0 ? formatTokens(d.tokens) : "—"}
+                    <td className="py-1.5 px-2 text-right whitespace-nowrap">
+                      {d.count}
+                      <MiniBar value={d.count} max={maxDaily.count} color="bg-purple-500/50" />
                     </td>
-                    <td className="py-1.5 px-2 text-right text-emerald-400">
+                    <td className="py-1.5 px-2 text-right text-blue-400 whitespace-nowrap">
+                      {d.tokens > 0 ? formatTokens(d.tokens) : "—"}
+                      {d.tokens > 0 && <MiniBar value={d.tokens} max={maxDaily.tokens} color="bg-blue-500/50" />}
+                    </td>
+                    <td className="py-1.5 px-2 text-right text-emerald-400 whitespace-nowrap">
                       {d.cost > 0 ? formatCost(d.cost) : "—"}
+                      {d.cost > 0 && <MiniBar value={d.cost} max={maxDaily.cost} color="bg-emerald-500/50" />}
                     </td>
                     <td className={`py-1.5 pl-2 text-right ${d.errors > 0 ? "text-red-400" : "text-muted-foreground/40"}`}>
                       {d.errors > 0 ? d.errors : "—"}

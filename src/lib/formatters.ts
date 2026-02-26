@@ -36,6 +36,8 @@ export function formatRelativeTime(timestamp?: number): string {
 }
 
 export function formatDuration(ms: number): string {
+  if (ms >= 3600000) return `${(ms / 3600000).toFixed(1)}h`;
+  if (ms >= 60000) return `${(ms / 60000).toFixed(1)}m`;
   if (ms > 1000) return `${(ms / 1000).toFixed(1)}s`;
   return `${ms}ms`;
 }

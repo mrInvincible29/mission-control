@@ -776,8 +776,19 @@ export function SystemHealth() {
                       <td className={`py-1.5 px-2 text-right font-mono ${p.mem > 50 ? "text-red-400" : p.mem > 10 ? "text-amber-400" : ""}`}>
                         {p.mem.toFixed(1)}
                       </td>
-                      <td className="py-1.5 pl-2 font-mono text-[10px] text-muted-foreground truncate max-w-[200px] sm:max-w-[350px]">
-                        {p.command}
+                      <td className="py-1.5 pl-2 max-w-[200px] sm:max-w-[350px]">
+                        <TooltipProvider>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <span className="block font-mono text-[10px] text-muted-foreground truncate">
+                                {p.command}
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-[500px]">
+                              <pre className="whitespace-pre-wrap break-all font-mono text-[10px]">{p.command}</pre>
+                            </TooltipContent>
+                          </Tooltip>
+                        </TooltipProvider>
                       </td>
                     </tr>
                   ))}
