@@ -1,9 +1,10 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { Card, CardContent, CardHeader } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   Dialog,
   DialogContent,
@@ -20,8 +21,12 @@ import {
   ChevronRight,
   History,
   Filter,
-  ArrowUpDown,
   CalendarDays,
+  Search,
+  X,
+  Copy,
+  Check,
+  ArrowRight,
 } from "lucide-react";
 
 interface CronRun {
@@ -42,6 +47,7 @@ interface JobInfo {
   name: string;
   model?: string;
   enabled?: boolean;
+  schedule?: { kind: string; expr?: string; tz?: string };
   stats: {
     total: number;
     ok: number;
@@ -75,6 +81,19 @@ function formatRelativeTime(ts: number): string {
   return new Date(ts).toLocaleDateString("en-US", { month: "short", day: "numeric" });
 }
 
+function formatCountdown(futureMs: number): string | null {
+  const diff = futureMs - Date.now();
+  if (diff <= 0) return null;
+  const minutes = Math.floor(diff / 60000);
+  if (minutes < 1) return "< 1m";
+  if (minutes < 60) return `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  if (hours < 24) return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+  const days = Math.floor(hours / 24);
+  return `${days}d`;
+}
+
 function formatDateTime(ts: number): string {
   return new Date(ts).toLocaleString("en-US", {
     month: "short",
@@ -103,24 +122,24 @@ function getModelLabel(model?: string): string {
   return model.split("/").pop() || model;
 }
 
-// Sparkline bar chart for run history
-function RunSparkline({ runs }: { runs: CronRun[] }) {
-  // Show last 14 runs as tiny bars
+// Sparkline bar chart for run history — visible on all screen sizes
+function RunSparkline({ runs, compact }: { runs: CronRun[]; compact?: boolean }) {
   const recent = runs.slice(0, 14).reverse();
   if (recent.length === 0) return null;
 
   const maxDuration = Math.max(...recent.map((r) => r.durationMs || 0), 1);
+  const barHeight = compact ? 16 : 24;
 
   return (
-    <div className="flex items-end gap-[2px] h-6">
+    <div className={`flex items-end gap-[2px]`} style={{ height: `${barHeight}px` }}>
       {recent.map((run, i) => {
         const height = run.durationMs
-          ? Math.max(4, (run.durationMs / maxDuration) * 24)
-          : 4;
+          ? Math.max(3, (run.durationMs / maxDuration) * barHeight)
+          : 3;
         return (
           <div
             key={i}
-            className={`w-1.5 rounded-t-sm transition-all ${
+            className={`${compact ? "w-1" : "w-1.5"} rounded-t-sm transition-all ${
               run.status === "ok"
                 ? "bg-emerald-500/70"
                 : "bg-red-500/70"
@@ -130,6 +149,34 @@ function RunSparkline({ runs }: { runs: CronRun[] }) {
           />
         );
       })}
+    </div>
+  );
+}
+
+// Duration comparison bar — shows latest run vs average
+function DurationBar({ latestMs, avgMs }: { latestMs: number; avgMs: number }) {
+  if (avgMs <= 0 || latestMs <= 0) return null;
+
+  const ratio = latestMs / avgMs;
+  const pct = Math.min(ratio, 2) / 2; // Normalize to 0-1, cap at 2x
+  const isFaster = ratio < 0.85;
+  const isSlower = ratio > 1.15;
+
+  return (
+    <div className="flex items-center gap-1.5" title={`Latest: ${formatDuration(latestMs)} / Avg: ${formatDuration(avgMs)}`}>
+      <div className="w-16 h-1.5 rounded-full bg-muted/50 overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all ${
+            isFaster ? "bg-emerald-500/70" : isSlower ? "bg-amber-500/70" : "bg-blue-500/50"
+          }`}
+          style={{ width: `${Math.max(8, pct * 100)}%` }}
+        />
+      </div>
+      <span className={`text-[10px] tabular-nums ${
+        isFaster ? "text-emerald-400" : isSlower ? "text-amber-400" : "text-muted-foreground"
+      }`}>
+        {ratio < 0.01 ? "<0.01x" : `${ratio.toFixed(1)}x`}
+      </span>
     </div>
   );
 }
@@ -180,6 +227,35 @@ function SuccessRing({ ok, total }: { ok: number; total: number }) {
   );
 }
 
+// Copy button with temporary "Copied!" feedback
+function CopyButton({ text, label }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* ignore */ }
+  };
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 text-muted-foreground hover:text-foreground transition-colors"
+      aria-label={label || "Copy to clipboard"}
+      title={label || "Copy to clipboard"}
+    >
+      {copied ? (
+        <Check className="size-3 text-emerald-400" />
+      ) : (
+        <Copy className="size-3" />
+      )}
+    </button>
+  );
+}
+
 type SortMode = "recent" | "name" | "runs" | "success";
 
 export function CronHistory() {
@@ -193,6 +269,10 @@ export function CronHistory() {
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [statusFilter, setStatusFilter] = useState<"all" | "ok" | "error">("all");
   const [autoRefresh, setAutoRefresh] = useState(true);
+  const [searchQuery, setSearchQuery] = useState("");
+  const [lastRefresh, setLastRefresh] = useState(0);
+  const [, setTick] = useState(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   const fetchRuns = useCallback(async () => {
     try {
@@ -206,6 +286,7 @@ export function CronHistory() {
       setRuns(data.runs || []);
       setJobs(data.jobs || []);
       setError(null);
+      setLastRefresh(Date.now());
     } catch (err) {
       console.error("Failed to fetch cron runs:", err);
       setError(err instanceof Error ? err.message : "Failed to fetch");
@@ -242,12 +323,38 @@ export function CronHistory() {
     return () => window.removeEventListener("refresh-view", handler);
   }, [fetchRuns]);
 
+  // "Updated Xs ago" ticker
+  useEffect(() => {
+    if (lastRefresh === 0) return;
+    const timer = setInterval(() => setTick(t => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [lastRefresh]);
+
+  // Countdown ticker — re-render every 60s to update next run countdowns
+  useEffect(() => {
+    const timer = setInterval(() => setTick(t => t + 1), 60000);
+    return () => clearInterval(timer);
+  }, []);
+
   // Group runs by job
   const runsByJob = useMemo(() => {
     const map: Record<string, CronRun[]> = {};
     for (const run of runs) {
       if (!map[run.jobId]) map[run.jobId] = [];
       map[run.jobId].push(run);
+    }
+    return map;
+  }, [runs]);
+
+  // Get next run time for each job (from the most recent run's nextRunAtMs)
+  const nextRunByJob = useMemo(() => {
+    const map: Record<string, number> = {};
+    for (const run of runs) {
+      if (run.nextRunAtMs && run.nextRunAtMs > Date.now()) {
+        if (!map[run.jobId] || run.ts > (runs.find(r => r.jobId === run.jobId && r.nextRunAtMs === map[run.jobId])?.ts || 0)) {
+          map[run.jobId] = run.nextRunAtMs;
+        }
+      }
     }
     return map;
   }, [runs]);
@@ -259,6 +366,15 @@ export function CronHistory() {
     // If a specific job is selected, show only that
     if (selectedJobId) {
       filtered = filtered.filter((j) => j.id === selectedJobId);
+    }
+
+    // Apply search filter
+    if (searchQuery.trim()) {
+      const lower = searchQuery.toLowerCase();
+      filtered = filtered.filter((j) =>
+        j.name.toLowerCase().includes(lower) ||
+        (j.model && getModelLabel(j.model).toLowerCase().includes(lower))
+      );
     }
 
     switch (sortMode) {
@@ -275,13 +391,13 @@ export function CronHistory() {
         filtered.sort((a, b) => {
           const aRate = a.stats.total > 0 ? a.stats.ok / a.stats.total : 0;
           const bRate = b.stats.total > 0 ? b.stats.ok / b.stats.total : 0;
-          return bRate - aRate; // Best health first
+          return bRate - aRate;
         });
         break;
     }
 
     return filtered;
-  }, [jobs, sortMode, selectedJobId]);
+  }, [jobs, sortMode, selectedJobId, searchQuery]);
 
   // Filtered runs for timeline view
   const filteredRuns = useMemo(() => {
@@ -327,11 +443,21 @@ export function CronHistory() {
     });
   };
 
+  // Get latest run duration for a job
+  const getLatestRunDuration = (jobId: string): number | null => {
+    const jobRuns = runsByJob[jobId];
+    if (!jobRuns || jobRuns.length === 0) return null;
+    return jobRuns[0].durationMs || null;
+  };
+
   if (loading) {
     return (
       <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
         <CardContent className="flex-1 flex items-center justify-center">
-          <p className="text-muted-foreground">Loading cron history...</p>
+          <div className="flex items-center gap-2 text-muted-foreground">
+            <RefreshCw className="h-4 w-4 animate-spin" />
+            <span>Loading cron history...</span>
+          </div>
         </CardContent>
       </Card>
     );
@@ -369,17 +495,25 @@ export function CronHistory() {
           <div className="flex items-center gap-2">
             <History className="size-5 text-primary" />
             <h2 className="text-lg font-semibold">Cron Run History</h2>
+            <Badge variant="outline" className="text-[10px] font-mono">
+              {jobs.length} job{jobs.length !== 1 ? "s" : ""}
+            </Badge>
           </div>
           <div className="flex-1" />
-          <Button
-            variant="ghost"
-            size="sm"
-            onClick={fetchRuns}
-            className="text-xs gap-1"
-          >
-            <RefreshCw className="size-3.5" />
-            Refresh
-          </Button>
+          <div className="flex items-center gap-2">
+            <span className="text-[10px] text-muted-foreground/60">
+              {lastRefresh > 0 && `Updated ${Math.round((Date.now() - lastRefresh) / 1000)}s ago`}
+            </span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={fetchRuns}
+              className="text-xs gap-1"
+            >
+              <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
+              Refresh
+            </Button>
+          </div>
         </div>
 
         {/* Stats banner */}
@@ -406,8 +540,30 @@ export function CronHistory() {
           </div>
         </div>
 
+        {/* Search input */}
+        <div className="relative mt-3">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            ref={searchInputRef}
+            type="text"
+            placeholder="Search jobs by name..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-8 pr-8 h-8 text-xs"
+          />
+          {searchQuery && (
+            <button
+              onClick={() => setSearchQuery("")}
+              className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <X className="h-3.5 w-3.5" />
+            </button>
+          )}
+        </div>
+
         {/* Filters */}
-        <div className="flex items-center gap-2 mt-3 flex-wrap">
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
           {selectedJobId && (
             <Button
               variant="outline"
@@ -434,6 +590,12 @@ export function CronHistory() {
               </Button>
             ))}
           </div>
+
+          {searchQuery && (
+            <span className="text-[10px] text-muted-foreground ml-1">
+              {sortedJobs.length} of {jobs.length} jobs
+            </span>
+          )}
 
           <div className="flex-1" />
 
@@ -462,6 +624,8 @@ export function CronHistory() {
             const filteredJobRuns = statusFilter === "all"
               ? jobRuns
               : jobRuns.filter((r) => r.status === statusFilter);
+            const nextRun = nextRunByJob[job.id];
+            const latestDuration = getLatestRunDuration(job.id);
 
             return (
               <div key={job.id} className="rounded-lg border border-border/50 overflow-hidden">
@@ -479,7 +643,7 @@ export function CronHistory() {
                   <SuccessRing ok={job.stats.ok} total={job.stats.total} />
 
                   <div className="flex-1 min-w-0">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <span className="font-medium text-sm truncate">{job.name}</span>
                       {job.model && (
                         <div className="flex items-center gap-1">
@@ -490,6 +654,12 @@ export function CronHistory() {
                       {job.enabled === false && (
                         <Badge variant="secondary" className="text-[10px] h-4">Disabled</Badge>
                       )}
+                      {nextRun && (
+                        <span className="text-[10px] text-primary/70 flex items-center gap-0.5" title={`Next run: ${formatDateTime(nextRun)}`}>
+                          <Clock className="size-2.5" />
+                          in {formatCountdown(nextRun)}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 mt-0.5 text-[11px] text-muted-foreground">
                       <span>{job.stats.total} runs</span>
@@ -498,11 +668,20 @@ export function CronHistory() {
                       )}
                       <span>avg {formatDuration(job.stats.avgDuration)}</span>
                       {job.stats.lastRun > 0 && (
-                        <span>last {formatRelativeTime(job.stats.lastRun)}</span>
+                        <span className="hidden sm:inline">last {formatRelativeTime(job.stats.lastRun)}</span>
+                      )}
+                      {latestDuration != null && job.stats.avgDuration > 0 && (
+                        <span className="hidden sm:inline">
+                          <DurationBar latestMs={latestDuration} avgMs={job.stats.avgDuration} />
+                        </span>
                       )}
                     </div>
                   </div>
 
+                  {/* Sparkline — visible on all sizes, compact on mobile */}
+                  <div className="sm:hidden">
+                    <RunSparkline runs={jobRuns} compact />
+                  </div>
                   <div className="hidden sm:block">
                     <RunSparkline runs={jobRuns} />
                   </div>
@@ -539,6 +718,16 @@ export function CronHistory() {
                                 <div className="flex items-center gap-1 text-[11px] text-muted-foreground mt-0.5">
                                   <Timer className="size-3" />
                                   {formatDuration(run.durationMs)}
+                                  {/* Duration vs average mini indicator */}
+                                  {job.stats.avgDuration > 0 && (
+                                    <span className={`text-[9px] ${
+                                      run.durationMs < job.stats.avgDuration * 0.85 ? "text-emerald-400" :
+                                      run.durationMs > job.stats.avgDuration * 1.15 ? "text-amber-400" :
+                                      "text-muted-foreground/50"
+                                    }`}>
+                                      ({(run.durationMs / job.stats.avgDuration).toFixed(1)}x)
+                                    </span>
+                                  )}
                                 </div>
                               )}
                             </div>
@@ -559,10 +748,20 @@ export function CronHistory() {
             );
           })}
 
-          {sortedJobs.length === 0 && (
+          {sortedJobs.length === 0 && !searchQuery && (
             <div className="text-center py-12 text-muted-foreground">
               <History className="size-12 mx-auto mb-3 opacity-30" />
               <p className="text-sm">No cron job execution history found</p>
+            </div>
+          )}
+
+          {sortedJobs.length === 0 && searchQuery && (
+            <div className="text-center py-12 text-muted-foreground">
+              <Search className="size-12 mx-auto mb-3 opacity-30" />
+              <p className="text-sm">No jobs matching &ldquo;{searchQuery}&rdquo;</p>
+              <Button variant="ghost" size="sm" className="mt-2 text-xs" onClick={() => setSearchQuery("")}>
+                Clear search
+              </Button>
             </div>
           )}
         </div>
@@ -657,7 +856,24 @@ export function CronHistory() {
                 {selectedRun.durationMs != null && (
                   <div className="rounded-lg bg-muted/50 p-3">
                     <div className="text-[11px] text-muted-foreground mb-1">Duration</div>
-                    <div className="text-sm font-medium">{formatDuration(selectedRun.durationMs)}</div>
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium">{formatDuration(selectedRun.durationMs)}</span>
+                      {/* Show comparison to average */}
+                      {(() => {
+                        const job = jobs.find(j => j.id === selectedRun.jobId);
+                        if (!job || job.stats.avgDuration <= 0 || !selectedRun.durationMs) return null;
+                        const ratio = selectedRun.durationMs / job.stats.avgDuration;
+                        const isFaster = ratio < 0.85;
+                        const isSlower = ratio > 1.15;
+                        return (
+                          <span className={`text-[10px] ${
+                            isFaster ? "text-emerald-400" : isSlower ? "text-amber-400" : "text-muted-foreground/60"
+                          }`}>
+                            {ratio.toFixed(1)}x avg
+                          </span>
+                        );
+                      })()}
+                    </div>
                   </div>
                 )}
               </div>
@@ -672,16 +888,22 @@ export function CronHistory() {
               {selectedRun.sessionId && (
                 <div>
                   <div className="text-[11px] text-muted-foreground mb-1">Session ID</div>
-                  <code className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
-                    {selectedRun.sessionId}
-                  </code>
+                  <div className="flex items-center gap-2">
+                    <code className="text-xs text-muted-foreground bg-muted px-2 py-1 rounded">
+                      {selectedRun.sessionId}
+                    </code>
+                    <CopyButton text={selectedRun.sessionId} label="Copy session ID" />
+                  </div>
                 </div>
               )}
 
               {/* Summary */}
               {selectedRun.summary && (
                 <div>
-                  <div className="text-[11px] text-muted-foreground mb-1">Summary</div>
+                  <div className="flex items-center justify-between mb-1">
+                    <div className="text-[11px] text-muted-foreground">Summary</div>
+                    <CopyButton text={selectedRun.summary} label="Copy summary" />
+                  </div>
                   <div className="text-sm bg-muted/50 rounded-lg p-3 whitespace-pre-wrap break-words leading-relaxed">
                     {selectedRun.summary}
                   </div>

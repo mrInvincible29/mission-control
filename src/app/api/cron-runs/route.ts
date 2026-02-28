@@ -135,7 +135,11 @@ export async function GET(request: NextRequest) {
 
     // Build enriched jobs list
     const jobs = Object.values(jobsMap).map((j) => ({
-      ...j,
+      id: j.id,
+      name: j.name,
+      model: j.model,
+      enabled: j.enabled,
+      schedule: j.schedule,
       stats: jobStats[j.id] || { total: 0, ok: 0, error: 0, avgDuration: 0, lastRun: 0 },
     }));
 
