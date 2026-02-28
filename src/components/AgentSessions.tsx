@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, X, RefreshCw, Clock } from "lucide-react";
+import { Search, X, RefreshCw, Clock, ChevronDown, ChevronRight, Copy, Check, Timer } from "lucide-react";
 import { formatTokens, formatCost, formatRelativeTime } from "@/lib/formatters";
 
 interface SessionMeta {
@@ -46,7 +46,86 @@ function getPromptLabel(prompt: string): string {
   return firstLine.slice(0, 80) + (firstLine.length > 80 ? "..." : "");
 }
 
+/** Format a duration in ms to a human-readable string */
+function formatDuration(ms: number): string {
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = Math.floor(ms / 1000);
+  if (seconds < 60) return `${seconds}s`;
+  const minutes = Math.floor(seconds / 60);
+  const secs = seconds % 60;
+  if (minutes < 60) return secs > 0 ? `${minutes}m ${secs}s` : `${minutes}m`;
+  const hours = Math.floor(minutes / 60);
+  const mins = minutes % 60;
+  return mins > 0 ? `${hours}h ${mins}m` : `${hours}h`;
+}
+
+/** Try to pretty-print a JSON string; returns null if not valid JSON */
+function tryFormatJson(str: string): string | null {
+  if (!str || (!str.startsWith("{") && !str.startsWith("["))) return null;
+  try {
+    const parsed = JSON.parse(str);
+    return JSON.stringify(parsed, null, 2);
+  } catch {
+    return null;
+  }
+}
+
+/** Compute session duration from timeline timestamps */
+function getSessionDuration(detail: SessionDetail): number | null {
+  const timestamps = detail.timeline
+    .map((item) => item.timestamp)
+    .filter((t): t is number => t != null && t > 0);
+  if (timestamps.length < 2) return null;
+  const min = Math.min(...timestamps);
+  const max = Math.max(...timestamps);
+  const diff = max - min;
+  return diff > 0 ? diff : null;
+}
+
+/** Copy text to clipboard with a temporary visual confirmation */
+function CopyButton({ text, label }: { text: string; label?: string }) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = useCallback(async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    } catch {
+      // Fallback for non-HTTPS contexts
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.opacity = "0";
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand("copy");
+      document.body.removeChild(ta);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 1500);
+    }
+  }, [text]);
+
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+      title={label || "Copy to clipboard"}
+      aria-label={label || "Copy to clipboard"}
+    >
+      {copied ? (
+        <Check className="size-3 text-emerald-400" />
+      ) : (
+        <Copy className="size-3" />
+      )}
+      {copied && <span className="text-emerald-400">Copied</span>}
+    </button>
+  );
+}
+
 const PAGE_SIZE = 25;
+const THINKING_COLLAPSE_THRESHOLD = 200;
 
 export function AgentSessions() {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
@@ -321,7 +400,7 @@ export function AgentSessions() {
                       disabled={page === 0}
                       onClick={() => setPage(p => p - 1)}
                     >
-                      ← Prev
+                      Prev
                     </Button>
                     <span className="text-xs text-muted-foreground">
                       {page + 1} / {totalPages}
@@ -333,7 +412,7 @@ export function AgentSessions() {
                       disabled={page >= totalPages - 1}
                       onClick={() => setPage(p => p + 1)}
                     >
-                      Next →
+                      Next
                     </Button>
                   </div>
                 )}
@@ -355,7 +434,7 @@ export function AgentSessions() {
                 className="text-xs h-7 px-2 lg:hidden"
                 onClick={() => setSelectedId(null)}
               >
-                ← Back
+                Back
               </Button>
             )}
           </div>
@@ -392,6 +471,13 @@ function SessionListItem({
   isSelected: boolean;
   onSelect: (id: string) => void;
 }) {
+  // Compute session duration from first to last activity
+  const durationLabel = useMemo(() => {
+    if (!session.timestamp || !session.lastActivity) return null;
+    const diff = session.lastActivity - session.timestamp;
+    return diff > 0 ? formatDuration(diff) : null;
+  }, [session.timestamp, session.lastActivity]);
+
   return (
     <div
       role="button"
@@ -444,6 +530,14 @@ function SessionListItem({
             {session.toolCallCount} tools
           </Badge>
         )}
+        {durationLabel && (
+          <Badge
+            variant="outline"
+            className="text-[10px] px-1.5 py-0 bg-orange-500/20 text-orange-400 border-orange-500/30"
+          >
+            {durationLabel}
+          </Badge>
+        )}
       </div>
 
       <div className="flex items-center justify-between text-xs text-muted-foreground">
@@ -455,6 +549,8 @@ function SessionListItem({
 }
 
 function SessionDetailView({ detail }: { detail: SessionDetail }) {
+  const duration = useMemo(() => getSessionDuration(detail), [detail]);
+
   return (
     <ScrollArea className="h-full pr-1 sm:pr-4">
       <div className="space-y-4 min-w-0">
@@ -462,7 +558,8 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
         <div className="rounded-lg bg-muted/50 p-3 space-y-1.5 overflow-hidden">
           <div className="flex items-start gap-2">
             <span className="text-xs text-muted-foreground w-20 shrink-0">Session ID</span>
-            <span className="text-xs font-mono break-all min-w-0">{detail.id}</span>
+            <span className="text-xs font-mono break-all min-w-0 flex-1">{detail.id}</span>
+            <CopyButton text={detail.id} label="Copy session ID" />
           </div>
           <div className="flex items-center gap-2">
             <span className="text-xs text-muted-foreground w-20 shrink-0">Model</span>
@@ -489,6 +586,15 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
             <span className="text-xs text-muted-foreground w-20 shrink-0">Total Tokens</span>
             <span className="text-xs text-blue-400">{formatTokens(detail.totalTokens)}</span>
           </div>
+          {duration != null && (
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">Duration</span>
+              <span className="text-xs text-orange-400 flex items-center gap-1">
+                <Timer className="size-3" />
+                {formatDuration(duration)}
+              </span>
+            </div>
+          )}
         </div>
 
         {/* Initial Prompt */}
@@ -501,11 +607,13 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
           </div>
         )}
 
-        {/* Timeline */}
+        {/* Timeline — chronological order (oldest first) */}
         <div className="space-y-3">
-          <div className="text-xs font-medium text-muted-foreground">Timeline</div>
-          {[...detail.timeline].reverse().map((item, idx) => (
-            <TimelineMessage key={idx} item={item} />
+          <div className="text-xs font-medium text-muted-foreground">
+            Timeline ({detail.timeline.length} messages)
+          </div>
+          {detail.timeline.map((item, idx) => (
+            <TimelineMessage key={idx} item={item} index={idx + 1} />
           ))}
         </div>
       </div>
@@ -513,7 +621,7 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
   );
 }
 
-function TimelineMessage({ item }: { item: TimelineItem }) {
+function TimelineMessage({ item, index }: { item: TimelineItem; index: number }) {
   const borderColor =
     item.role === "user"
       ? "border-blue-500/50"
@@ -525,31 +633,29 @@ function TimelineMessage({ item }: { item: TimelineItem }) {
     <div className={`rounded-lg border-2 ${borderColor} bg-card/50 p-2 sm:p-3 space-y-2 min-w-0`}>
       {/* Header */}
       <div className="flex items-center justify-between">
-        <Badge
-          variant="outline"
-          className={`text-[10px] px-1.5 py-0 ${
-            item.role === "user"
-              ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
-              : item.role === "assistant"
-              ? "bg-purple-500/20 text-purple-400 border-purple-500/30"
-              : "bg-gray-500/20 text-gray-400 border-gray-500/30"
-          }`}
-        >
-          {item.role}
-        </Badge>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-muted-foreground/50 font-mono">#{index}</span>
+          <Badge
+            variant="outline"
+            className={`text-[10px] px-1.5 py-0 ${
+              item.role === "user"
+                ? "bg-blue-500/20 text-blue-400 border-blue-500/30"
+                : item.role === "assistant"
+                ? "bg-purple-500/20 text-purple-400 border-purple-500/30"
+                : "bg-gray-500/20 text-gray-400 border-gray-500/30"
+            }`}
+          >
+            {item.role}
+          </Badge>
+        </div>
         {item.timestamp && (
           <span className="text-xs text-muted-foreground">{formatRelativeTime(item.timestamp)}</span>
         )}
       </div>
 
-      {/* Thinking Block */}
+      {/* Collapsible Thinking Block */}
       {item.thinking && (
-        <div className="rounded bg-muted/50 p-2 border border-border/40">
-          <div className="text-[10px] font-medium text-muted-foreground mb-1">💭 Thinking</div>
-          <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words">
-            {item.thinking}
-          </div>
-        </div>
+        <CollapsibleThinking text={item.thinking} />
       )}
 
       {/* Text Content */}
@@ -559,21 +665,11 @@ function TimelineMessage({ item }: { item: TimelineItem }) {
         </div>
       )}
 
-      {/* Tool Calls */}
+      {/* Tool Calls with JSON formatting and copy */}
       {item.tools.length > 0 && (
         <div className="space-y-1.5">
           {item.tools.map((tool, toolIdx) => (
-            <div
-              key={toolIdx}
-              className="rounded bg-cyan-500/10 border border-cyan-500/20 p-1.5 sm:p-2"
-            >
-              <div className="text-[10px] font-medium text-cyan-400 mb-1">
-                🔧 {tool.name}
-              </div>
-              <pre className="text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono overflow-x-auto">
-                {tool.arguments}
-              </pre>
-            </div>
+            <ToolCallBlock key={toolIdx} tool={tool} />
           ))}
         </div>
       )}
@@ -585,6 +681,86 @@ function TimelineMessage({ item }: { item: TimelineItem }) {
           {item.usage.cost && (
             <span className="text-emerald-400">{formatCost(item.usage.cost)}</span>
           )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Collapsible thinking block — collapses long thinking text by default */
+function CollapsibleThinking({ text }: { text: string }) {
+  const isLong = text.length > THINKING_COLLAPSE_THRESHOLD;
+  const [expanded, setExpanded] = useState(!isLong);
+
+  return (
+    <div className="rounded bg-muted/50 border border-border/40 overflow-hidden">
+      <button
+        onClick={() => setExpanded(!expanded)}
+        className="w-full flex items-center gap-1.5 px-2 py-1.5 hover:bg-muted/70 transition-colors text-left"
+        aria-label={expanded ? "Collapse thinking" : "Expand thinking"}
+      >
+        {expanded ? (
+          <ChevronDown className="size-3 text-muted-foreground flex-shrink-0" />
+        ) : (
+          <ChevronRight className="size-3 text-muted-foreground flex-shrink-0" />
+        )}
+        <span className="text-[10px] font-medium text-muted-foreground">Thinking</span>
+        {!expanded && (
+          <span className="text-[10px] text-muted-foreground/50 truncate ml-1">
+            {text.slice(0, 80)}...
+          </span>
+        )}
+        <span className="text-[10px] text-muted-foreground/40 ml-auto flex-shrink-0">
+          {text.length > 1000
+            ? `${(text.length / 1000).toFixed(1)}K chars`
+            : `${text.length} chars`}
+        </span>
+      </button>
+      {expanded && (
+        <div className="px-2 pb-2 border-t border-border/30">
+          <div className="text-xs text-muted-foreground whitespace-pre-wrap break-words mt-1.5 max-h-[300px] overflow-y-auto">
+            {text}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Tool call block with JSON formatting and copy button */
+function ToolCallBlock({ tool }: { tool: { name: string; arguments: string } }) {
+  const [expanded, setExpanded] = useState(true);
+  const formatted = useMemo(() => tryFormatJson(tool.arguments), [tool.arguments]);
+  const displayText = formatted || tool.arguments;
+  const isLong = displayText.length > 300;
+
+  return (
+    <div className="rounded bg-cyan-500/10 border border-cyan-500/20 overflow-hidden">
+      <div className="flex items-center justify-between px-2 py-1.5">
+        <button
+          onClick={() => setExpanded(!expanded)}
+          className="flex items-center gap-1.5 text-left hover:text-cyan-300 transition-colors"
+        >
+          {isLong && (
+            expanded ? (
+              <ChevronDown className="size-3 text-cyan-400/60 flex-shrink-0" />
+            ) : (
+              <ChevronRight className="size-3 text-cyan-400/60 flex-shrink-0" />
+            )
+          )}
+          <span className="text-[10px] font-medium text-cyan-400">
+            {tool.name}
+          </span>
+        </button>
+        <CopyButton text={tool.arguments} label={`Copy ${tool.name} arguments`} />
+      </div>
+      {expanded && (
+        <div className="px-2 pb-2 border-t border-cyan-500/10">
+          <pre className={`text-xs text-muted-foreground whitespace-pre-wrap break-words font-mono mt-1.5 ${
+            isLong ? "max-h-[200px] overflow-y-auto" : ""
+          }`}>
+            {displayText}
+          </pre>
         </div>
       )}
     </div>

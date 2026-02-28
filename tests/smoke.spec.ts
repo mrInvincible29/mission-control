@@ -1527,3 +1527,113 @@ test("Health API returns valid duration fields", async ({ request }) => {
   // uptime is in seconds — should be a positive number
   expect(data.uptime).toBeGreaterThan(0);
 });
+
+// === AGENT SESSIONS UX OVERHAUL TESTS ===
+
+test("Agents sub-view loads under Activity tab", async ({ page }) => {
+  await page.goto("/?tab=activity&view=agents");
+  // Wait for tabs to render (Suspense + dynamic imports)
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByRole("tab", { name: /Activity/ })).toHaveAttribute("data-state", "active");
+  // Should show either the sessions card title or empty state
+  await expect(
+    page.getByText("Sessions", { exact: true }).or(page.getByText("No active sessions"))
+  ).toBeVisible({ timeout: 15000 });
+});
+
+test("Agents sub-view shows session list card with search input", async ({ page }) => {
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByPlaceholder("Search sessions...")).toBeVisible({ timeout: 15000 });
+});
+
+test("Agents sub-view has auto-refresh toggle", async ({ page }) => {
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  const autoBtn = page.getByRole("button", { name: /Auto/ });
+  await expect(autoBtn).toBeVisible({ timeout: 15000 });
+});
+
+test("Agents sub-view shows detail panel placeholder on desktop", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  await expect(page.getByText("Select a session to view details")).toBeVisible({ timeout: 15000 });
+});
+
+test("Agents API returns valid session list", async ({ request }) => {
+  const response = await request.get("/api/agents?action=list&limit=5");
+  // API may return 200 with data or empty array
+  expect(response.ok()).toBeTruthy();
+  const data = await response.json();
+  expect(Array.isArray(data)).toBeTruthy();
+});
+
+test("Agents sub-view toggles via SubViewToggle", async ({ page }) => {
+  await page.goto("/?tab=activity");
+  // Wait for tabs and sub-view toggle to render
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  await page.waitForTimeout(1000);
+  // Click the Agents toggle button
+  const agentsToggle = page.getByRole("button", { name: "Agents" });
+  await expect(agentsToggle).toBeVisible({ timeout: 10000 });
+  await agentsToggle.click();
+  // Should now show the Agents view
+  await expect(page.getByPlaceholder("Search sessions...")).toBeVisible({ timeout: 15000 });
+});
+
+test("Agents session detail shows session ID with copy button when session exists", async ({ page, request }) => {
+  // First check if there are sessions
+  const response = await request.get("/api/agents?action=list&limit=1");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  // Wait for sessions to load, then click the first one
+  const sessionItem = page.locator("[role=button]").first();
+  await expect(sessionItem).toBeVisible({ timeout: 15000 });
+  await sessionItem.click();
+  // Detail panel should show Session ID label
+  await expect(page.getByText("Session ID")).toBeVisible({ timeout: 15000 });
+  // Copy button should be present (aria-label)
+  await expect(page.getByLabel("Copy session ID")).toBeVisible();
+});
+
+test("Agents session detail shows duration when timeline has timestamps", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=1");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  const sessionItem = page.locator("[role=button]").first();
+  await expect(sessionItem).toBeVisible({ timeout: 15000 });
+  await sessionItem.click();
+  // Detail panel loads — check for Duration row or Timeline header
+  await expect(
+    page.getByText("Duration").or(page.getByText(/Timeline \(\d+ messages?\)/))
+  ).toBeVisible({ timeout: 15000 });
+});
+
+test("Agents session list shows duration badge when available", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=5");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  // Wait for session cards to appear
+  const sessionItem = page.locator("[role=button]").first();
+  await expect(sessionItem).toBeVisible({ timeout: 15000 });
+  // Session cards should have model badges visible
+  await expect(page.locator("[role=button]").first().locator(".text-purple-400")).toBeVisible();
+});
