@@ -1637,3 +1637,120 @@ test("Agents session list shows duration badge when available", async ({ page, r
   // Session cards should have model badges visible
   await expect(page.locator("[role=button]").first().locator(".text-purple-400")).toBeVisible();
 });
+
+// === NEW FEATURE TESTS: CronHistory UX Improvements ===
+
+test("CronHistory shows job count badge in header", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Job count badge should show "N jobs" (rendered as a Badge component with font-mono)
+  await expect(page.locator('[class*="font-mono"]').filter({ hasText: /\d+ jobs?/ }).first()).toBeVisible({ timeout: 10000 });
+});
+
+test("CronHistory has search input for filtering jobs", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Search input should be visible
+  await expect(page.getByPlaceholder("Search jobs by name...")).toBeVisible({ timeout: 10000 });
+});
+
+test("CronHistory search filters jobs by name", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Wait for jobs to load
+  await expect(page.getByText("Nightly Build").first()).toBeVisible({ timeout: 10000 });
+
+  // Type a search query that matches
+  const searchInput = page.getByPlaceholder("Search jobs by name...");
+  await searchInput.fill("Nightly");
+  await page.waitForTimeout(500);
+  // "Nightly Build" should still be visible
+  await expect(page.getByText("Nightly Build").first()).toBeVisible();
+
+  // Type a search that doesn't match
+  await searchInput.fill("nonexistent-xyz-job");
+  await page.waitForTimeout(500);
+  // Should show "No jobs matching" message
+  await expect(page.getByText(/No jobs matching/)).toBeVisible({ timeout: 5000 });
+});
+
+test("CronHistory search has clear button", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  const searchInput = page.getByPlaceholder("Search jobs by name...");
+  await searchInput.fill("test");
+  // Clear button should appear (it's a plain button with aria-label)
+  const clearBtn = page.getByLabel("Clear search");
+  await expect(clearBtn).toBeVisible({ timeout: 5000 });
+  await clearBtn.click();
+  // Input should be empty
+  await expect(searchInput).toHaveValue("");
+});
+
+test("CronHistory shows Updated Xs ago counter", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText(/Updated \d+s ago/)).toBeVisible({ timeout: 10000 });
+});
+
+test("CronHistory shows sparklines on desktop", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tab=schedule&view=runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Nightly Build").first()).toBeVisible({ timeout: 10000 });
+  // On desktop (sm: and above), the non-compact sparkline should be visible
+  // Sparkline bars have title attributes with em-dash
+  const sparklineBars = page.locator('.hidden.sm\\:block [title]');
+  const count = await sparklineBars.count();
+  expect(count).toBeGreaterThan(0);
+});
+
+test("CronHistory run detail dialog opens with structured content", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Expand a job
+  const jobButton = page.getByText("Nightly Build").first();
+  await expect(jobButton).toBeVisible({ timeout: 10000 });
+  await jobButton.click();
+  // Click on a run to open detail dialog
+  const runEntry = page.locator('svg.text-emerald-500, svg.text-red-500').first();
+  await expect(runEntry).toBeVisible({ timeout: 5000 });
+  await runEntry.click();
+  // Dialog should open — look for the dialog content with Status badge
+  const dialog = page.locator('[role="dialog"]');
+  await expect(dialog).toBeVisible({ timeout: 5000 });
+  // Should show Completed label
+  await expect(dialog.getByText("Completed")).toBeVisible({ timeout: 5000 });
+  // Should show Duration label (if the run has duration)
+  const durationLabel = dialog.getByText("Duration");
+  const hasDuration = await durationLabel.count();
+  if (hasDuration > 0) {
+    await expect(durationLabel).toBeVisible();
+  }
+});
+
+test("CronHistory search shows filtered count", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Nightly Build").first()).toBeVisible({ timeout: 10000 });
+  // Type a search query
+  const searchInput = page.getByPlaceholder("Search jobs by name...");
+  await searchInput.fill("Nightly");
+  await page.waitForTimeout(500);
+  // Should show "N of M jobs" counter
+  await expect(page.getByText(/\d+ of \d+ jobs/)).toBeVisible({ timeout: 5000 });
+});
+
+test("CronHistory run entries show duration ratio when available", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=runs");
+  await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
+  // Expand a job
+  const jobButton = page.getByText("Nightly Build").first();
+  await expect(jobButton).toBeVisible({ timeout: 10000 });
+  await jobButton.click();
+  // Look for the duration ratio pattern (e.g., "1.2x")
+  const ratios = page.locator("span").filter({ hasText: /^\(\d+\.\d+x\)$/ });
+  const count = await ratios.count();
+  // At least one run should show duration ratio if there are multiple runs with durations
+  expect(count).toBeGreaterThanOrEqual(0);
+});

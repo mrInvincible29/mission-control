@@ -5,7 +5,7 @@ export default defineConfig({
   timeout: 30000,
   retries: 0,
   use: {
-    baseURL: "http://localhost:39151",
+    baseURL: "http://172.29.0.1:39151",
     headless: true,
     viewport: { width: 1280, height: 720 },
   },
