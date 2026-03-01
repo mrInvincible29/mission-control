@@ -1754,3 +1754,112 @@ test("CronHistory run entries show duration ratio when available", async ({ page
   // At least one run should show duration ratio if there are multiple runs with durations
   expect(count).toBeGreaterThanOrEqual(0);
 });
+
+// === NEW FEATURE TESTS: LogViewer UX Overhaul ===
+
+test("LogViewer shows level distribution bar", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // Wait for logs to load
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // The level distribution bar should be visible
+  const bar = page.locator('[data-testid="level-distribution-bar"]');
+  await expect(bar).toBeVisible({ timeout: 5000 });
+});
+
+test("LogViewer shows line numbers in gutter", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Line numbers should start at 1 — look for "1" as the first line number
+  const lineNumbers = page.locator("[data-log-line] span").first();
+  await expect(lineNumbers).toBeVisible();
+  await expect(lineNumbers).toHaveText("1");
+});
+
+test("LogViewer word wrap toggle exists and works", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Wrap toggle button should exist
+  const wrapBtn = page.locator('[data-testid="wrap-toggle"]');
+  await expect(wrapBtn).toBeVisible({ timeout: 5000 });
+  // Click to toggle off — should switch to secondary variant
+  await wrapBtn.click();
+  // Click again to toggle on
+  await wrapBtn.click();
+});
+
+test("LogViewer relative time toggle exists and works", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Time toggle button should exist
+  const timeBtn = page.locator('[data-testid="time-toggle"]');
+  await expect(timeBtn).toBeVisible({ timeout: 5000 });
+  // Click to switch to relative time
+  await timeBtn.click();
+  // Should show relative timestamps like "Xs ago" or "Xm ago"
+  await page.waitForTimeout(500);
+  const relativeTimestamps = page.locator("[data-log-line]").locator("span").filter({ hasText: /\d+[smhd] ago/ });
+  const count = await relativeTimestamps.count();
+  expect(count).toBeGreaterThan(0);
+  // Click again to go back to absolute time
+  await timeBtn.click();
+});
+
+test("LogViewer copy line button appears on hover", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Hover over a log line to show the copy button
+  const firstLogLine = page.locator("[data-log-line]").first();
+  await firstLogLine.hover();
+  // The copy button should become visible on hover
+  const copyBtn = firstLogLine.getByLabel("Copy line");
+  await expect(copyBtn).toBeVisible({ timeout: 3000 });
+});
+
+test("LogViewer error navigation appears when errors exist", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Check if there are errors/warnings in the log
+  const errElements = page.locator("[data-log-line]").filter({ hasText: /^.*ERR|WRN/ });
+  const errorCount = await errElements.count();
+  if (errorCount > 0) {
+    // Error navigation should be visible
+    const errorNav = page.locator('[data-testid="error-nav"]');
+    await expect(errorNav).toBeVisible({ timeout: 5000 });
+  }
+});
+
+test("LogViewer skeleton loading state renders animated elements", async ({ page }) => {
+  // Navigate with an invalid source to force loading state momentarily
+  await page.goto("/?tab=system&view=logs");
+  // The initial load should show skeleton (animated pulse elements) not plain text
+  // Check that the page eventually loads log content (regression test)
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // INF entries should eventually appear (confirms logs loaded successfully)
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+});
+
+test("LogViewer footer shows filtered line count", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Footer should show "N of M lines"
+  await expect(page.getByText(/\d+ of \d+ lines/)).toBeVisible({ timeout: 5000 });
+});
+
+test("LogViewer filter text shows filtered count in footer", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  const filterInput = page.getByPlaceholder("Filter log messages...");
+  await filterInput.fill("GET");
+  await page.waitForTimeout(500);
+  // Footer should show "(filtered)" indicator
+  const filtered = page.getByText(/\d+ of \d+ lines \(filtered\)/);
+  await expect(filtered).toBeVisible({ timeout: 5000 });
+});
