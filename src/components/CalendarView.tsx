@@ -17,7 +17,7 @@ import {
   HoverCardContent,
 } from "@/components/ui/hover-card";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Plus, RefreshCw } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, RefreshCw, Clock, Copy, Check, Filter, Timer } from "lucide-react";
 import type { CronJob } from "@/types";
 import { CreateCronDialog } from "@/components/CreateCronDialog";
 import { useToast } from "@/components/Toast";
@@ -262,6 +262,134 @@ interface BannerTask {
   schedule: string;
 }
 
+function formatCountdown(ms: number): string {
+  if (ms <= 0) return "now";
+  const totalMinutes = Math.floor(ms / 60000);
+  const hours = Math.floor(totalMinutes / 60);
+  const minutes = totalMinutes % 60;
+  if (hours > 24) {
+    const days = Math.floor(hours / 24);
+    const remainingHours = hours % 24;
+    return `${days}d ${remainingHours}h`;
+  }
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  return `${minutes}m`;
+}
+
+function formatRelativeShort(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  if (diff < 60000) return "just now";
+  if (diff < 3600000) return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  return `${Math.floor(diff / 86400000)}d ago`;
+}
+
+function getModelLabel(model?: string): string {
+  if (!model) return "unknown";
+  const lower = model.toLowerCase();
+  if (lower.includes("haiku")) return "Haiku";
+  if (lower.includes("sonnet")) return "Sonnet";
+  if (lower.includes("opus")) return "Opus";
+  return model;
+}
+
+type ModelFilter = "all" | "haiku" | "sonnet" | "opus";
+
+function matchesModelFilter(model: string | undefined, filter: ModelFilter): boolean {
+  if (filter === "all") return true;
+  if (!model) return false;
+  return model.toLowerCase().includes(filter);
+}
+
+/** Compact "Next Up" bar showing upcoming cron jobs with countdowns */
+function NextUpBar({ jobs, currentTime, onJobClick }: {
+  jobs: CronJob[];
+  currentTime: Date;
+  onJobClick: (job: CronJob) => void;
+}) {
+  const upcoming = useMemo(() => {
+    const now = currentTime.getTime();
+    return jobs
+      .filter(j => j.enabled && j.nextRun && j.nextRun > now)
+      .sort((a, b) => (a.nextRun || 0) - (b.nextRun || 0))
+      .slice(0, 3);
+  }, [jobs, currentTime]);
+
+  if (upcoming.length === 0) return null;
+
+  return (
+    <div className="flex items-center gap-2 px-4 py-2 border-b border-border/30 bg-muted/20 overflow-x-auto" data-testid="next-up-bar">
+      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 font-medium flex-shrink-0 uppercase tracking-wider">
+        <Timer className="h-3 w-3" />
+        Next
+      </div>
+      <div className="flex items-center gap-2 flex-shrink-0">
+        {upcoming.map((job, i) => {
+          const timeUntil = (job.nextRun || 0) - currentTime.getTime();
+          return (
+            <button
+              key={job.id}
+              onClick={() => onJobClick(job)}
+              className={`flex items-center gap-2 px-2.5 py-1 rounded-lg text-xs transition-colors cursor-pointer border border-border/30 hover:border-border/60 bg-card/40 hover:bg-card/60 ${
+                i === 0 ? "ring-1 ring-primary/20" : ""
+              }`}
+            >
+              <div className={`w-2 h-2 rounded-full flex-shrink-0 ${getModelColor(job.model)}`} />
+              <span className="font-medium truncate max-w-[120px]">{job.name}</span>
+              <span className={`font-mono text-[10px] flex-shrink-0 ${
+                timeUntil < 3600000 ? "text-amber-400" : "text-muted-foreground"
+              }`}>
+                {formatCountdown(timeUntil)}
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Model filter chip bar */
+function ModelFilterBar({
+  filter,
+  onChange,
+  counts
+}: {
+  filter: ModelFilter;
+  onChange: (f: ModelFilter) => void;
+  counts: Record<ModelFilter, number>;
+}) {
+  const filters: { value: ModelFilter; label: string; color: string }[] = [
+    { value: "all", label: "All", color: "" },
+    { value: "haiku", label: "Haiku", color: "bg-green-500" },
+    { value: "sonnet", label: "Sonnet", color: "bg-blue-500" },
+    { value: "opus", label: "Opus", color: "bg-purple-500" },
+  ];
+
+  return (
+    <div className="flex items-center gap-1" data-testid="model-filter">
+      <Filter className="h-3 w-3 text-muted-foreground/40 mr-0.5" />
+      {filters.map(f => (
+        <button
+          key={f.value}
+          onClick={() => onChange(f.value)}
+          className={`flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-medium transition-colors ${
+            filter === f.value
+              ? "bg-primary/15 text-primary border border-primary/30"
+              : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/50 border border-transparent"
+          }`}
+        >
+          {f.color && <span className={`w-1.5 h-1.5 rounded-full ${f.color}`} />}
+          {f.label}
+          {counts[f.value] > 0 && (
+            <span className="text-[9px] opacity-60">{counts[f.value]}</span>
+          )}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 function TaskCardPopover({ job }: { job: CronJob }) {
   return (
     <div className="space-y-2">
@@ -301,6 +429,8 @@ export function CalendarView() {
   const [referenceDate, setReferenceDate] = useState<Date>(() => new Date());
   const [viewMode, setViewMode] = useState<"week" | "day">("week");
   const [isMobile, setIsMobile] = useState(false);
+  const [modelFilter, setModelFilter] = useState<ModelFilter>("all");
+  const [copiedCommand, setCopiedCommand] = useState(false);
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const hasScrolledRef = useRef(false);
 
@@ -527,29 +657,55 @@ export function CalendarView() {
     return { scheduledTasks: tasks, bannerTasks: banners };
   }, [cronJobs, weekDates]);
 
+  // Model filter counts (unfiltered totals)
+  const modelCounts = useMemo((): Record<ModelFilter, number> => {
+    if (!cronJobs) return { all: 0, haiku: 0, sonnet: 0, opus: 0 };
+    const counts = { all: cronJobs.length, haiku: 0, sonnet: 0, opus: 0 };
+    for (const job of cronJobs) {
+      const m = (job.model || "").toLowerCase();
+      if (m.includes("haiku")) counts.haiku++;
+      else if (m.includes("sonnet")) counts.sonnet++;
+      else if (m.includes("opus")) counts.opus++;
+    }
+    return counts;
+  }, [cronJobs]);
+
   // Filter tasks and remap dayIndex to visible column index
   const visibleTasks = useMemo(() => {
     const visibleDayIndices = visibleDates.map(d => {
-      // Find the original dayIndex in weekDates
       return weekDates.findIndex(wd => wd.toDateString() === d.toDateString());
     });
 
     return scheduledTasks
-      .filter(t => visibleDayIndices.includes(t.dayIndex))
+      .filter(t => visibleDayIndices.includes(t.dayIndex) && matchesModelFilter(t.job.model, modelFilter))
       .map(t => ({
         ...t,
         colIndex: visibleDayIndices.indexOf(t.dayIndex),
       }));
-  }, [scheduledTasks, visibleDates, weekDates]);
+  }, [scheduledTasks, visibleDates, weekDates, modelFilter]);
 
-  // Banner tasks mapped to visible columns for all-day row
+  // Banner tasks filtered by model
   const visibleBannerTasks = useMemo(() => {
-    // Banner tasks appear on every visible day, so just return them as-is
-    return bannerTasks;
-  }, [bannerTasks]);
+    return bannerTasks.filter(t => matchesModelFilter(t.job.model, modelFilter));
+  }, [bannerTasks, modelFilter]);
+
+  // Task count per visible day column (for badges in headers)
+  const dayTaskCounts = useMemo(() => {
+    const counts: Record<number, number> = {};
+    for (const task of visibleTasks) {
+      counts[task.colIndex] = (counts[task.colIndex] || 0) + 1;
+    }
+    // Add banner task count to each day
+    if (visibleBannerTasks.length > 0) {
+      for (let i = 0; i < visibleDates.length; i++) {
+        counts[i] = (counts[i] || 0) + visibleBannerTasks.length;
+      }
+    }
+    return counts;
+  }, [visibleTasks, visibleBannerTasks, visibleDates]);
 
   const currentTimePosition = useMemo(() => {
-    if (!currentTime) return { dayIndex: 0, topPosition: 0, visibleColIndex: -1 };
+    if (!currentTime) return { dayIndex: 0, topPosition: 0, visibleColIndex: -1, istTimeLabel: "" };
     const now = currentTime;
     // Convert current time to IST for positioning on the grid
     const istOffset = 5.5 * 60; // IST = UTC+5:30 in minutes
@@ -557,14 +713,17 @@ export function CalendarView() {
     const istTotalMinutes = (utcMinutes + istOffset) % 1440;
     const istHour = Math.floor(istTotalMinutes / 60);
     const istMinute = Math.floor(istTotalMinutes % 60);
-    
+
     const dayIndex = now.getDay();
     const topPosition = (istHour * HOUR_HEIGHT) + (istMinute / 60 * HOUR_HEIGHT);
 
     // Find if today is in visible dates
     const visibleColIndex = visibleDates.findIndex(d => d.toDateString() === now.toDateString());
 
-    return { dayIndex, topPosition, visibleColIndex };
+    // Format IST time for the label
+    const istTimeLabel = formatTime12h(istHour, istMinute);
+
+    return { dayIndex, topPosition, visibleColIndex, istTimeLabel };
   }, [currentTime, visibleDates]);
 
   const colCount = visibleDates.length;
@@ -643,6 +802,11 @@ export function CalendarView() {
           {/* Spacer */}
           <div className="flex-1" />
 
+          {/* Model filter */}
+          <div className="hidden sm:flex">
+            <ModelFilterBar filter={modelFilter} onChange={setModelFilter} counts={modelCounts} />
+          </div>
+
           {/* View toggle */}
           <div className="bg-muted rounded-lg p-0.5 flex gap-0.5">
             <Button
@@ -661,10 +825,19 @@ export function CalendarView() {
             </Button>
           </div>
         </div>
+        {/* Mobile model filter row */}
+        <div className="flex sm:hidden mt-2">
+          <ModelFilterBar filter={modelFilter} onChange={setModelFilter} counts={modelCounts} />
+        </div>
       </CardHeader>
 
       <CardContent className="flex-1 overflow-hidden p-0">
         <div className="h-full flex flex-col">
+          {/* Next Up countdown bar */}
+          {cronJobs && cronJobs.length > 0 && currentTime && (
+            <NextUpBar jobs={cronJobs} currentTime={currentTime} onJobClick={setSelectedJob} />
+          )}
+
           {/* Day headers — Google Calendar style */}
           <div
             className="grid border-b border-border/50 bg-background sticky top-0 z-10"
@@ -675,6 +848,7 @@ export function CalendarView() {
             </div>
             {visibleDates.map((date, i) => {
               const isToday = date.toDateString() === currentTime.toDateString();
+              const taskCount = dayTaskCounts[i] || 0;
 
               return (
                 <div
@@ -684,14 +858,24 @@ export function CalendarView() {
                   <div className={`text-[10px] font-medium tracking-wider ${isToday ? "text-primary" : "text-muted-foreground"}`}>
                     {DAY_NAMES_SHORT[date.getDay()]}
                   </div>
-                  <div
-                    className={`text-xl sm:text-2xl font-medium mt-0.5 leading-none inline-flex items-center justify-center ${
-                      isToday
-                        ? "bg-primary text-primary-foreground rounded-full w-8 h-8 sm:w-10 sm:h-10"
-                        : ""
-                    }`}
-                  >
-                    {date.getDate()}
+                  <div className="relative inline-flex items-center justify-center">
+                    <div
+                      className={`text-xl sm:text-2xl font-medium mt-0.5 leading-none inline-flex items-center justify-center ${
+                        isToday
+                          ? "bg-primary text-primary-foreground rounded-full w-8 h-8 sm:w-10 sm:h-10"
+                          : ""
+                      }`}
+                    >
+                      {date.getDate()}
+                    </div>
+                    {taskCount > 0 && (
+                      <span
+                        className="absolute -top-1 -right-3 min-w-[14px] h-[14px] rounded-full bg-muted text-[9px] font-bold text-muted-foreground inline-flex items-center justify-center px-0.5"
+                        data-testid="day-task-count"
+                      >
+                        {taskCount}
+                      </span>
+                    )}
                   </div>
                 </div>
               );
@@ -904,14 +1088,30 @@ export function CalendarView() {
                       left: `${gutterWidth}px`,
                     }}
                   />
-                  {/* Red dot at the left edge of time gutter */}
+                  {/* Pulsing red dot at the left edge of time gutter */}
                   <div
-                    className="absolute w-3 h-3 bg-red-500 rounded-full z-[3] pointer-events-none"
+                    className="absolute z-[3] pointer-events-none"
                     style={{
                       top: `${currentTimePosition.topPosition - 5}px`,
                       left: `${gutterWidth - 6}px`,
                     }}
-                  />
+                  >
+                    <div className="w-3 h-3 bg-red-500 rounded-full" />
+                    <div className="absolute inset-0 w-3 h-3 bg-red-500 rounded-full animate-ping opacity-40" />
+                  </div>
+                  {/* "Now" time label in the gutter */}
+                  <div
+                    className="absolute z-[6] pointer-events-none"
+                    data-testid="current-time-label"
+                    style={{
+                      top: `${currentTimePosition.topPosition - 8}px`,
+                      left: `2px`,
+                    }}
+                  >
+                    <span className="text-[8px] font-bold text-red-500 bg-background/90 px-0.5 rounded">
+                      {currentTimePosition.istTimeLabel}
+                    </span>
+                  </div>
                 </>
               )}
             </div>
@@ -927,55 +1127,86 @@ export function CalendarView() {
         onCreated={handleSync}
       />
 
-      {/* Task details dialog */}
+      {/* Task details dialog — enhanced layout */}
       <Dialog open={!!selectedJob} onOpenChange={(open) => !open && setSelectedJob(null)}>
-        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto">
+        <DialogContent className="sm:max-w-2xl max-h-[85vh] overflow-y-auto" data-testid="job-detail-dialog">
           <DialogHeader>
-            <DialogTitle>{selectedJob?.name}</DialogTitle>
-          </DialogHeader>
-          {selectedJob && (
-            <div className="space-y-3 mt-4">
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">Schedule</label>
-                <p className="text-sm">{selectedJob.schedule}</p>
-              </div>
-              <div>
-                <label className="text-sm font-medium text-muted-foreground">Command</label>
-                <pre className="text-sm bg-muted p-2 rounded mt-1 whitespace-pre-wrap break-words max-h-[50vh] overflow-y-auto">
-                  {selectedJob.command}
-                </pre>
-              </div>
-              <div className="flex flex-wrap gap-4">
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Status</label>
-                  <Badge variant={selectedJob.enabled ? "default" : "secondary"} className="ml-2">
-                    {selectedJob.enabled ? "Enabled" : "Disabled"}
-                  </Badge>
-                </div>
-                {selectedJob.model && (
-                  <div className="flex items-center gap-2">
-                    <label className="text-sm font-medium text-muted-foreground">Model</label>
-                    <div className="flex items-center gap-1.5">
-                      <div className={`w-3 h-3 rounded-full ${getModelColor(selectedJob.model)}`} />
-                      <Badge variant="outline" className="border-border">
-                        {selectedJob.model}
+            <div className="flex items-center gap-3">
+              {selectedJob?.model && (
+                <div className={`w-3 h-12 rounded-full flex-shrink-0 ${getModelColor(selectedJob.model)}`} />
+              )}
+              <div className="min-w-0">
+                <DialogTitle className="text-lg">{selectedJob?.name}</DialogTitle>
+                {selectedJob && (
+                  <div className="flex items-center gap-2 mt-1">
+                    <Badge variant={selectedJob.enabled ? "default" : "secondary"} className="text-[10px] h-5">
+                      {selectedJob.enabled ? "Enabled" : "Disabled"}
+                    </Badge>
+                    {selectedJob.model && (
+                      <Badge variant="outline" className="text-[10px] h-5 gap-1">
+                        <span className={`w-1.5 h-1.5 rounded-full ${getModelColor(selectedJob.model)}`} />
+                        {getModelLabel(selectedJob.model)}
                       </Badge>
-                    </div>
+                    )}
                   </div>
                 )}
               </div>
-              {selectedJob.lastRun && (
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Last Run</label>
-                  <p className="text-sm">{new Date(selectedJob.lastRun).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST</p>
+            </div>
+          </DialogHeader>
+          {selectedJob && (
+            <div className="space-y-4 mt-2">
+              {/* Schedule & timing */}
+              <div className="rounded-lg bg-muted/30 border border-border/30 p-3 space-y-2">
+                <div className="flex items-center gap-2">
+                  <Clock className="h-3.5 w-3.5 text-muted-foreground" />
+                  <span className="text-sm font-medium">{selectedJob.schedule}</span>
                 </div>
-              )}
-              {selectedJob.nextRun && (
-                <div>
-                  <label className="text-sm font-medium text-muted-foreground">Next Run</label>
-                  <p className="text-sm">{new Date(selectedJob.nextRun).toLocaleString("en-IN", { timeZone: "Asia/Kolkata" })} IST</p>
+                <div className="grid grid-cols-2 gap-3 text-xs">
+                  {selectedJob.lastRun && (
+                    <div>
+                      <span className="text-muted-foreground/60 text-[10px] uppercase tracking-wider">Last run</span>
+                      <p className="mt-0.5 font-mono">
+                        {new Date(selectedJob.lastRun).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })}
+                      </p>
+                      <p className="text-[10px] text-muted-foreground">{formatRelativeShort(selectedJob.lastRun)}</p>
+                    </div>
+                  )}
+                  {selectedJob.nextRun && (
+                    <div>
+                      <span className="text-muted-foreground/60 text-[10px] uppercase tracking-wider">Next run</span>
+                      <p className="mt-0.5 font-mono">
+                        {new Date(selectedJob.nextRun).toLocaleString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit", day: "numeric", month: "short" })}
+                      </p>
+                      {selectedJob.nextRun > Date.now() && (
+                        <p className="text-[10px] text-amber-400 font-medium">in {formatCountdown(selectedJob.nextRun - Date.now())}</p>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
+              </div>
+
+              {/* Command */}
+              <div>
+                <div className="flex items-center justify-between mb-1.5">
+                  <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Prompt / Command</span>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-6 px-2 text-[10px] gap-1"
+                    onClick={() => {
+                      navigator.clipboard.writeText(selectedJob.command || "");
+                      setCopiedCommand(true);
+                      setTimeout(() => setCopiedCommand(false), 2000);
+                    }}
+                  >
+                    {copiedCommand ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+                    {copiedCommand ? "Copied" : "Copy"}
+                  </Button>
+                </div>
+                <pre className="text-xs bg-black/20 dark:bg-black/40 p-3 rounded-lg whitespace-pre-wrap break-words max-h-[40vh] overflow-y-auto font-mono leading-relaxed border border-border/20">
+                  {selectedJob.command}
+                </pre>
+              </div>
             </div>
           )}
         </DialogContent>
