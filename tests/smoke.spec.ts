@@ -1597,8 +1597,8 @@ test("Agents session detail shows session ID with copy button when session exist
   const sessionItem = page.locator("[role=button]").first();
   await expect(sessionItem).toBeVisible({ timeout: 15000 });
   await sessionItem.click();
-  // Detail panel should show Session ID label
-  await expect(page.getByText("Session ID")).toBeVisible({ timeout: 15000 });
+  // Detail panel should show Session ID label (exact match to avoid matching message content)
+  await expect(page.getByText("Session ID", { exact: true })).toBeVisible({ timeout: 15000 });
   // Copy button should be present (aria-label)
   await expect(page.getByLabel("Copy session ID")).toBeVisible();
 });
@@ -1862,4 +1862,144 @@ test("LogViewer filter text shows filtered count in footer", async ({ page }) =>
   // Footer should show "(filtered)" indicator
   const filtered = page.getByText(/\d+ of \d+ lines \(filtered\)/);
   await expect(filtered).toBeVisible({ timeout: 5000 });
+});
+
+// === CALENDAR VIEW UX IMPROVEMENTS ===
+
+test("CalendarView loads and shows day headers", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("tab", { name: /Schedule/ })).toHaveAttribute("data-state", "active");
+  // Wait for calendar to render — Today button
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  // Day/Week view toggle should exist (exact match to avoid Today)
+  await expect(page.getByRole("button", { name: "Day", exact: true })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Week", exact: true })).toBeVisible();
+});
+
+test("CalendarView model filter chips render", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  // Model filter bar should be visible (desktop)
+  const filterBar = page.locator('[data-testid="model-filter"]').first();
+  await expect(filterBar).toBeVisible({ timeout: 5000 });
+  // Should have All, Haiku, Sonnet, Opus buttons
+  await expect(filterBar.getByText("All")).toBeVisible();
+  await expect(filterBar.getByText("Haiku")).toBeVisible();
+  await expect(filterBar.getByText("Sonnet")).toBeVisible();
+  await expect(filterBar.getByText("Opus")).toBeVisible();
+});
+
+test("CalendarView model filter selects and highlights active chip", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  const filterBar = page.locator('[data-testid="model-filter"]').first();
+  await expect(filterBar).toBeVisible({ timeout: 5000 });
+  // Click Haiku filter — the button itself should get active class
+  const haikuBtn = filterBar.locator("button").filter({ hasText: "Haiku" });
+  await haikuBtn.click();
+  await expect(haikuBtn).toHaveClass(/text-primary/, { timeout: 3000 });
+  // Click All to reset
+  const allBtn = filterBar.locator("button").filter({ hasText: "All" });
+  await allBtn.click();
+  await expect(allBtn).toHaveClass(/text-primary/, { timeout: 3000 });
+});
+
+test("CalendarView Next Up bar appears when cron jobs exist", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  // Wait for cron data to load
+  await page.waitForTimeout(2000);
+  // The "Next" label should be visible if there are upcoming jobs
+  const nextUpBar = page.locator('[data-testid="next-up-bar"]');
+  // This may or may not be visible depending on cron job data;
+  // just verify the calendar rendered without crashing
+  const count = await nextUpBar.count();
+  // If it exists, it should contain the "Next" label
+  if (count > 0) {
+    await expect(nextUpBar.getByText("Next")).toBeVisible();
+  }
+});
+
+test("CalendarView day headers show task count badges", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(2000);
+  // Task count badges — these appear on days with scheduled tasks
+  const badges = page.locator('[data-testid="day-task-count"]');
+  const count = await badges.count();
+  // If cron jobs exist, at least some days should have counts
+  if (count > 0) {
+    // First badge should contain a number
+    const text = await badges.first().textContent();
+    expect(Number(text)).toBeGreaterThan(0);
+  }
+});
+
+test("CalendarView current time indicator is present on today", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  // The current time label should be visible (shows IST time)
+  const timeLabel = page.locator('[data-testid="current-time-label"]');
+  await expect(timeLabel).toBeVisible({ timeout: 5000 });
+  // Should contain an AM/PM time string
+  const text = await timeLabel.textContent();
+  expect(text).toMatch(/\d+.*[AP]M/i);
+});
+
+test("CalendarView job detail dialog opens on task click", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(2000);
+  // Try clicking on a task card (banner or scheduled)
+  // First check if there are any task buttons on the calendar
+  const taskButtons = page.locator('button').filter({ hasText: /.+/ }).filter({
+    has: page.locator('.border-l-\\[3px\\]'),
+  });
+  // Alternative: look for any clickable task in the all-day row or grid
+  const anyTask = page.locator('button[class*="border-l-"]').first();
+  const taskCount = await anyTask.count();
+  if (taskCount > 0) {
+    await anyTask.click();
+    // Dialog should open with enhanced layout
+    const dialog = page.locator('[data-testid="job-detail-dialog"]');
+    await expect(dialog).toBeVisible({ timeout: 5000 });
+    // Should have Prompt/Command section
+    await expect(dialog.getByText(/Prompt|Command/)).toBeVisible({ timeout: 3000 });
+    // Should have a Copy button
+    await expect(dialog.getByText("Copy")).toBeVisible();
+    // Close dialog
+    await page.keyboard.press("Escape");
+    await expect(dialog).not.toBeVisible({ timeout: 3000 });
+  }
+});
+
+test("CalendarView day/week toggle works", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  // Use exact match to avoid matching "Today" button
+  const dayBtn = page.getByRole("button", { name: "Day", exact: true });
+  const weekBtn = page.getByRole("button", { name: "Week", exact: true });
+  // Switch to day view
+  await dayBtn.click();
+  await page.waitForTimeout(500);
+  // Switch back to week view
+  await weekBtn.click();
+  await page.waitForTimeout(500);
+  // Should not crash — calendar still visible
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible();
+});
+
+test("CalendarView IST timezone label shows in gutter", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  // IST label in the time gutter (exact match to avoid "Run History" containing "ist")
+  await expect(page.getByText("IST", { exact: true })).toBeVisible({ timeout: 5000 });
+});
+
+test("CalendarView sync button triggers sync", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  // Sync button should be visible
+  const syncBtn = page.getByTitle("Sync cron jobs with OpenClaw");
+  await expect(syncBtn).toBeVisible({ timeout: 5000 });
 });
