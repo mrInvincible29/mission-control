@@ -7,11 +7,18 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
 import { useState, useMemo, useCallback, useEffect, Fragment } from "react";
 import {
-  Search, X, ChevronDown,
+  Search, X, ChevronDown, ChevronRight, ArrowRight,
   Bot, MessageSquare, XCircle, AlertTriangle, Circle, RefreshCw,
   Zap, BookOpen, Pencil, Mail, CheckCircle2, Wrench, Settings,
+  CalendarDays,
 } from "lucide-react";
 import type { Activity } from "@/types";
 import { formatTokens, formatCost, formatRelativeTime, formatDuration } from "@/lib/formatters";
@@ -22,6 +29,14 @@ const CATEGORY_COLORS: Record<string, string> = {
   message: "bg-blue-500/20 text-blue-400 border-blue-500/30",
   system: "bg-gray-500/20 text-gray-400 border-gray-500/30",
   noise: "bg-zinc-500/20 text-zinc-500 border-zinc-500/30",
+};
+
+const CATEGORY_DOT_COLORS: Record<string, string> = {
+  important: "bg-red-400",
+  model: "bg-purple-400",
+  message: "bg-blue-400",
+  system: "bg-gray-400",
+  noise: "bg-zinc-400",
 };
 
 const ACTION_TYPE_ICONS: Record<string, React.ReactNode> = {
@@ -44,6 +59,12 @@ const STATUS_COLORS: Record<string, string> = {
   success: "bg-emerald-500/20 text-emerald-400",
   error: "bg-red-500/20 text-red-400",
   pending: "bg-amber-500/20 text-amber-400",
+};
+
+const STATUS_BAR_COLORS: Record<string, string> = {
+  success: "bg-emerald-500",
+  error: "bg-red-500",
+  pending: "bg-amber-500",
 };
 
 /** Left border color per category — for quick visual scanning */
@@ -80,6 +101,91 @@ function DateSeparator({ label }: { label: string }) {
   );
 }
 
+/** Session group header — shown when multiple activities share the same session */
+function SessionHeader({
+  sessionId,
+  count,
+  totalTokens,
+  totalCost,
+  isCollapsed,
+  onToggle,
+}: {
+  sessionId: string;
+  count: number;
+  totalTokens: number;
+  totalCost: number;
+  isCollapsed: boolean;
+  onToggle: () => void;
+}) {
+  return (
+    <button
+      onClick={onToggle}
+      data-testid="session-group-header"
+      className="w-full flex items-center gap-2 py-1.5 px-2 rounded-md bg-muted/30 hover:bg-muted/50 transition-colors text-left group"
+    >
+      <ChevronRight className={`h-3 w-3 text-muted-foreground/60 transition-transform ${isCollapsed ? "" : "rotate-90"}`} />
+      <Bot className="h-3 w-3 text-muted-foreground/40" />
+      <span className="text-[10px] font-mono text-muted-foreground/60 truncate max-w-[120px]">
+        {sessionId.slice(0, 8)}...
+      </span>
+      <span className="text-[10px] text-muted-foreground/40">
+        {count} activities
+      </span>
+      {totalTokens > 0 && (
+        <span className="text-[10px] px-1.5 py-0 rounded bg-purple-500/10 text-purple-400/70">
+          {formatTokens(totalTokens)}
+        </span>
+      )}
+      {totalCost > 0 && (
+        <span className="text-[10px] px-1.5 py-0 rounded bg-green-500/10 text-green-400/70">
+          {formatCost(totalCost)}
+        </span>
+      )}
+    </button>
+  );
+}
+
+/** Status distribution mini-bar */
+function StatusDistribution({ byStatus, total }: { byStatus: Record<string, number>; total: number }) {
+  if (total === 0) return null;
+  const statuses = ["success", "error", "pending"] as const;
+  const entries = statuses
+    .map(s => ({ status: s, count: byStatus[s] ?? 0 }))
+    .filter(e => e.count > 0);
+
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="flex items-center gap-2" data-testid="status-distribution">
+      <div className="flex-1 h-1.5 rounded-full bg-muted/30 overflow-hidden flex">
+        {entries.map(({ status, count }) => (
+          <TooltipProvider key={status}>
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <div
+                  className={`h-full ${STATUS_BAR_COLORS[status]} transition-all duration-500 first:rounded-l-full last:rounded-r-full`}
+                  style={{ width: `${(count / total) * 100}%` }}
+                />
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                {status}: {count} ({((count / total) * 100).toFixed(0)}%)
+              </TooltipContent>
+            </Tooltip>
+          </TooltipProvider>
+        ))}
+      </div>
+      <div className="flex items-center gap-2 text-[10px] text-muted-foreground/60 shrink-0">
+        {entries.map(({ status, count }) => (
+          <span key={status} className="flex items-center gap-1">
+            <span className={`w-1.5 h-1.5 rounded-full ${STATUS_BAR_COLORS[status]}`} />
+            {count}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const DATE_RANGES = [
   { label: "Today", value: 1 },
   { label: "7 days", value: 7 },
@@ -103,11 +209,15 @@ function getDateLabel(days: number): string {
 
 const PAGE_SIZE = 50;
 
+/** Minimum session size to show a group header */
+const SESSION_GROUP_MIN = 3;
+
 export function ActivityFeed() {
   const [category, setCategory] = useState<string>("");
   const [dateRange, setDateRange] = useState<number>(1);
   const [cursors, setCursors] = useState<(number | undefined)[]>([undefined]);
   const [searchText, setSearchText] = useState("");
+  const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
 
   const [mounted, setMounted] = useState(false);
   useEffect(() => { setMounted(true); }, []);
@@ -122,10 +232,9 @@ export function ActivityFeed() {
     return () => clearInterval(interval);
   }, []);
 
-  // Reset cursors and search when filters change
+  // Reset cursors when filters change (preserve search text)
   useEffect(() => {
     setCursors([undefined]);
-    setSearchText("");
   }, [dateRange, category]);
 
   // Listen for command palette filter events
@@ -188,9 +297,47 @@ export function ActivityFeed() {
     const lower = searchText.toLowerCase();
     return rawActivities.filter(a =>
       a.description.toLowerCase().includes(lower) ||
-      a.actionType.toLowerCase().includes(lower)
+      a.actionType.toLowerCase().includes(lower) ||
+      (a.metadata?.model?.toLowerCase().includes(lower)) ||
+      (a.metadata?.tool?.toLowerCase().includes(lower))
     );
   }, [rawActivities, searchText]);
+
+  // Build session groups from activities — group consecutive activities with same session
+  const sessionGroups = useMemo(() => {
+    if (!activities) return new Map<string, { indices: number[]; tokens: number; cost: number }>();
+    const groups = new Map<string, { indices: number[]; tokens: number; cost: number }>();
+    for (let i = 0; i < activities.length; i++) {
+      const session = activities[i].metadata?.session;
+      if (!session) continue;
+      const existing = groups.get(session);
+      if (existing) {
+        existing.indices.push(i);
+        existing.tokens += activities[i].metadata?.tokens ?? 0;
+        existing.cost += activities[i].metadata?.cost ?? 0;
+      } else {
+        groups.set(session, {
+          indices: [i],
+          tokens: activities[i].metadata?.tokens ?? 0,
+          cost: activities[i].metadata?.cost ?? 0,
+        });
+      }
+    }
+    // Only keep groups with enough activities to merit grouping
+    for (const [key, val] of groups) {
+      if (val.indices.length < SESSION_GROUP_MIN) groups.delete(key);
+    }
+    return groups;
+  }, [activities]);
+
+  const toggleSession = useCallback((sessionId: string) => {
+    setCollapsedSessions(prev => {
+      const next = new Set(prev);
+      if (next.has(sessionId)) next.delete(sessionId);
+      else next.add(sessionId);
+      return next;
+    });
+  }, []);
 
   const loadNext = useCallback(() => {
     if (nextCursor !== undefined) {
@@ -203,6 +350,10 @@ export function ActivityFeed() {
   }, []);
 
   const dateLabel = getDateLabel(dateRange);
+
+  // Count of items on current page after search filter
+  const displayCount = activities?.length ?? 0;
+  const searchActive = searchText.trim().length > 0;
 
   return (
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
@@ -227,55 +378,79 @@ export function ActivityFeed() {
 
         {/* Stats Banner */}
         {stats && (
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 mt-3">
-            <div className="rounded-lg bg-muted/50 p-2.5">
-              <div className="text-xs text-muted-foreground">{dateLabel} Activities</div>
-              <div className="text-base sm:text-lg font-semibold mt-0.5">{stats.total}</div>
-            </div>
-            <div className="rounded-lg bg-purple-500/5 border border-purple-500/10 p-2.5">
-              <div className="text-xs text-purple-400">Tokens</div>
-              <div className="text-base sm:text-lg font-semibold text-purple-400 dark:text-purple-300 mt-0.5">
-                {stats.totalTokens > 0 ? formatTokens(stats.totalTokens) : "\u2014"}
+          <div className="space-y-2 mt-3">
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+              <div className="rounded-lg bg-muted/50 p-2.5">
+                <div className="text-xs text-muted-foreground">{dateLabel} Activities</div>
+                <div className="text-base sm:text-lg font-semibold mt-0.5">{stats.total}</div>
+              </div>
+              <div className="rounded-lg bg-purple-500/5 border border-purple-500/10 p-2.5">
+                <div className="text-xs text-purple-400">Tokens</div>
+                <div className="text-base sm:text-lg font-semibold text-purple-400 dark:text-purple-300 mt-0.5">
+                  {stats.totalTokens > 0 ? formatTokens(stats.totalTokens) : "\u2014"}
+                </div>
+              </div>
+              <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
+                <div className="text-xs text-emerald-400">Cost</div>
+                <div className="text-base sm:text-lg font-semibold text-emerald-400 dark:text-emerald-300 mt-0.5">
+                  {stats.totalCost > 0 ? formatCost(stats.totalCost) : "\u2014"}
+                </div>
+              </div>
+              <div className="rounded-lg bg-blue-500/5 border border-blue-500/10 p-2.5">
+                <div className="text-xs text-blue-400">Categories</div>
+                <div className="flex flex-wrap gap-1 mt-1 min-h-[24px]">
+                  {Object.entries(stats.byCategory).map(([cat, count]) => (
+                    <Badge
+                      key={cat}
+                      variant="outline"
+                      className={`text-[9px] px-1 py-0 cursor-pointer hover:opacity-80 ${CATEGORY_COLORS[cat] ?? CATEGORY_COLORS.system} ${
+                        category === cat ? "ring-1 ring-current" : ""
+                      }`}
+                      onClick={() => setCategory(category === cat ? "" : cat)}
+                    >
+                      {cat} {count}
+                    </Badge>
+                  ))}
+                </div>
               </div>
             </div>
-            <div className="rounded-lg bg-emerald-500/5 border border-emerald-500/10 p-2.5">
-              <div className="text-xs text-emerald-400">Cost</div>
-              <div className="text-base sm:text-lg font-semibold text-emerald-400 dark:text-emerald-300 mt-0.5">
-                {stats.totalCost > 0 ? formatCost(stats.totalCost) : "\u2014"}
-              </div>
-            </div>
-            <div className="rounded-lg bg-blue-500/5 border border-blue-500/10 p-2.5">
-              <div className="text-xs text-blue-400">Categories</div>
-              <div className="flex flex-wrap gap-1 mt-1 min-h-[24px]">
-                {Object.entries(stats.byCategory).map(([cat, count]) => (
-                  <Badge
-                    key={cat}
-                    variant="outline"
-                    className={`text-[9px] px-1 py-0 ${CATEGORY_COLORS[cat] ?? CATEGORY_COLORS.system}`}
-                  >
-                    {cat} {count}
-                  </Badge>
-                ))}
-              </div>
-            </div>
+            {/* Status distribution bar */}
+            {stats.byStatus && stats.total > 0 && (
+              <StatusDistribution byStatus={stats.byStatus} total={stats.total} />
+            )}
           </div>
         )}
 
         {/* Filters */}
         <div className="flex flex-col sm:flex-row sm:items-center gap-2 mt-3">
           <div className="flex flex-wrap items-center gap-1">
-            {CATEGORIES.map(cat => (
-              <Button
-                key={cat.value}
-                variant={category === cat.value ? "default" : "outline"}
-                size="sm"
-                className="text-xs h-7 px-2"
-                onClick={() => setCategory(cat.value)}
-              >
-                <span className="sm:hidden">{cat.value ? cat.label.split(" ")[0] : "All"}</span>
-                <span className="hidden sm:inline">{cat.label}</span>
-              </Button>
-            ))}
+            {CATEGORIES.map(cat => {
+              const count = cat.value
+                ? stats?.byCategory[cat.value] ?? 0
+                : stats?.total ?? 0;
+              return (
+                <Button
+                  key={cat.value}
+                  variant={category === cat.value ? "default" : "outline"}
+                  size="sm"
+                  className="text-xs h-7 px-2 gap-1"
+                  onClick={() => setCategory(cat.value)}
+                >
+                  {cat.value && (
+                    <span className={`w-1.5 h-1.5 rounded-full ${CATEGORY_DOT_COLORS[cat.value] ?? "bg-gray-400"}`} />
+                  )}
+                  <span className="sm:hidden">{cat.value ? cat.label.split(" ")[0] : "All"}</span>
+                  <span className="hidden sm:inline">{cat.label}</span>
+                  {stats && count > 0 && (
+                    <span className={`text-[9px] tabular-nums ${
+                      category === cat.value ? "opacity-80" : "text-muted-foreground/50"
+                    }`}>
+                      {count > 999 ? `${(count / 1000).toFixed(1)}k` : count}
+                    </span>
+                  )}
+                </Button>
+              );
+            })}
           </div>
           <div className="flex items-center gap-1 sm:ml-auto">
             {DATE_RANGES.map(range => (
@@ -297,7 +472,7 @@ export function ActivityFeed() {
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
           <Input
             type="text"
-            placeholder="Filter activities..."
+            placeholder="Filter by description, type, model, or tool..."
             value={searchText}
             onChange={(e) => setSearchText(e.target.value)}
             className="pl-8 pr-8 h-8 text-xs"
@@ -312,6 +487,23 @@ export function ActivityFeed() {
             </button>
           )}
         </div>
+
+        {/* Search/filter context info */}
+        {activities && (searchActive || displayCount > 0) && (
+          <div className="flex items-center justify-between mt-1.5 text-[10px] text-muted-foreground/50">
+            <span>
+              {searchActive
+                ? `${displayCount} matching${rawActivities ? ` of ${rawActivities.length}` : ""}`
+                : `${displayCount} activities`}
+            </span>
+            {sessionGroups.size > 0 && (
+              <span className="flex items-center gap-1">
+                <Bot className="h-2.5 w-2.5" />
+                {sessionGroups.size} session{sessionGroups.size !== 1 ? "s" : ""}
+              </span>
+            )}
+          </div>
+        )}
       </CardHeader>
 
       <CardContent className="flex-1 overflow-hidden flex flex-col px-4">
@@ -321,35 +513,65 @@ export function ActivityFeed() {
               Loading activities...
             </div>
           ) : activities.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2">
-              {searchText ? (
-                <>
-                  <Search className="size-8 opacity-20" />
-                  <p className="text-sm">No activities matching &ldquo;{searchText}&rdquo;</p>
-                </>
-              ) : (
-                <>
-                  <Circle className="size-8 opacity-20" />
-                  <p className="text-sm">No activities in this period</p>
-                  <p className="text-xs text-muted-foreground/50">Agent activity will appear here as it happens</p>
-                </>
-              )}
-            </div>
+            <EmptyState
+              searchText={searchText}
+              category={category}
+              dateRange={dateRange}
+              onClearSearch={() => setSearchText("")}
+              onClearCategory={() => setCategory("")}
+              onExpandDateRange={() => setDateRange(dateRange === 1 ? 7 : dateRange === 7 ? 14 : 30)}
+            />
           ) : (
             <div className="space-y-1.5">
-              {activities.map((activity: Activity, index: number) => {
-                const prevActivity = index > 0 ? activities[index - 1] : null;
-                const currentGroup = getActivityDateGroup(activity.timestamp);
-                const prevGroup = prevActivity ? getActivityDateGroup(prevActivity.timestamp) : null;
-                const showSeparator = currentGroup !== prevGroup;
+              {(() => {
+                // Build a set of activities to hide (collapsed session members)
+                const hidden = new Set<number>();
+                const sessionFirstIndex = new Map<string, number>();
+                for (const [sessionId, group] of sessionGroups) {
+                  sessionFirstIndex.set(sessionId, group.indices[0]);
+                  if (collapsedSessions.has(sessionId)) {
+                    // Hide all except the first
+                    for (let i = 1; i < group.indices.length; i++) {
+                      hidden.add(group.indices[i]);
+                    }
+                  }
+                }
 
-                return (
-                  <Fragment key={activity.id}>
-                    {showSeparator && <DateSeparator label={currentGroup} />}
-                    <ActivityItem activity={activity} />
-                  </Fragment>
-                );
-              })}
+                return activities.map((activity: Activity, index: number) => {
+                  if (hidden.has(index)) return null;
+
+                  const prevActivity = index > 0 ? activities[index - 1] : null;
+                  const currentGroup = getActivityDateGroup(activity.timestamp);
+                  const prevGroup = prevActivity ? getActivityDateGroup(prevActivity.timestamp) : null;
+                  const showSeparator = currentGroup !== prevGroup;
+
+                  // Check if this is the first activity in a session group
+                  const session = activity.metadata?.session;
+                  const group = session ? sessionGroups.get(session) : undefined;
+                  const isSessionFirst = group && sessionFirstIndex.get(session!) === index;
+                  const isInSession = group && !isSessionFirst;
+                  const isCollapsed = session ? collapsedSessions.has(session) : false;
+
+                  return (
+                    <Fragment key={activity.id}>
+                      {showSeparator && <DateSeparator label={currentGroup} />}
+                      {isSessionFirst && group && session && (
+                        <SessionHeader
+                          sessionId={session}
+                          count={group.indices.length}
+                          totalTokens={group.tokens}
+                          totalCost={group.cost}
+                          isCollapsed={isCollapsed}
+                          onToggle={() => toggleSession(session)}
+                        />
+                      )}
+                      <div className={isInSession ? "ml-4 border-l-2 border-muted/40 pl-2" : ""}>
+                        <ActivityItem activity={activity} />
+                      </div>
+                    </Fragment>
+                  );
+                });
+              })()}
             </div>
           )}
         </ScrollArea>
@@ -366,8 +588,9 @@ export function ActivityFeed() {
             >
               Newer
             </Button>
-            <span className="text-xs text-muted-foreground">
+            <span className="text-xs text-muted-foreground tabular-nums">
               Page {currentPage}
+              {!hasMore && !hasPrev ? "" : hasMore ? "+" : ""}
             </span>
             <Button
               variant="outline"
@@ -385,6 +608,71 @@ export function ActivityFeed() {
   );
 }
 
+/** Contextual empty state with actionable suggestions */
+function EmptyState({
+  searchText,
+  category,
+  dateRange,
+  onClearSearch,
+  onClearCategory,
+  onExpandDateRange,
+}: {
+  searchText: string;
+  category: string;
+  dateRange: number;
+  onClearSearch: () => void;
+  onClearCategory: () => void;
+  onExpandDateRange: () => void;
+}) {
+  if (searchText) {
+    return (
+      <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-3">
+        <Search className="size-8 opacity-20" />
+        <p className="text-sm">No activities matching &ldquo;{searchText}&rdquo;</p>
+        <button
+          onClick={onClearSearch}
+          className="text-xs text-primary hover:text-primary/80 flex items-center gap-1 transition-colors"
+        >
+          Clear search <X className="h-3 w-3" />
+        </button>
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-3" data-testid="empty-state">
+      <Circle className="size-8 opacity-20" />
+      <p className="text-sm">
+        {category
+          ? `No ${category} activities in this period`
+          : "No activities in this period"}
+      </p>
+      <div className="flex flex-wrap items-center gap-2 justify-center">
+        {category && (
+          <button
+            onClick={onClearCategory}
+            className="text-xs text-primary hover:text-primary/80 flex items-center gap-1 px-2 py-1 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors"
+          >
+            Show all categories <ArrowRight className="h-3 w-3" />
+          </button>
+        )}
+        {dateRange < 30 && (
+          <button
+            onClick={onExpandDateRange}
+            className="text-xs text-primary hover:text-primary/80 flex items-center gap-1 px-2 py-1 rounded-md bg-primary/5 hover:bg-primary/10 transition-colors"
+          >
+            <CalendarDays className="h-3 w-3" />
+            Try {dateRange === 1 ? "7 days" : dateRange === 7 ? "14 days" : "30 days"}
+          </button>
+        )}
+        {!category && dateRange >= 30 && (
+          <p className="text-xs text-muted-foreground/50">Agent activity will appear here as it happens</p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function ActivityItem({ activity }: { activity: Activity }) {
   const [expanded, setExpanded] = useState(false);
   const icon = ACTION_TYPE_ICONS[activity.actionType] || <Circle className="h-4 w-4" />;
@@ -396,6 +684,15 @@ function ActivityItem({ activity }: { activity: Activity }) {
     meta.error || meta.tool || meta.session || meta.sessionKey || meta.channel ||
     meta.model || meta.tokens || meta.cost || meta.duration
   );
+
+  const absoluteTime = new Date(activity.timestamp).toLocaleString("en-US", {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+  });
 
   return (
     <div
@@ -430,12 +727,21 @@ function ActivityItem({ activity }: { activity: Activity }) {
                 error
               </Badge>
             )}
-            <span className="text-xs text-muted-foreground ml-auto flex items-center gap-1">
-              {formatRelativeTime(activity.timestamp)}
-              {hasExpandableContent && (
-                <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
-              )}
-            </span>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <span className="text-xs text-muted-foreground ml-auto flex items-center gap-1 cursor-default">
+                    {formatRelativeTime(activity.timestamp)}
+                    {hasExpandableContent && (
+                      <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
+                    )}
+                  </span>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  {absoluteTime}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
           </div>
 
           <p className={`text-sm text-foreground/90 mt-1 ${expanded ? "" : "line-clamp-2"}`}>
