@@ -10,6 +10,7 @@ import {
   Search,
   Server,
   Zap,
+  ArrowUpDown,
 } from "lucide-react";
 
 interface ServiceData {
@@ -74,6 +75,7 @@ export function ServicesView() {
   const [filter, setFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [lastRefresh, setLastRefresh] = useState<number>(0);
+  const [sortBy, setSortBy] = useState<"name" | "status" | "response">("status");
   const [, setTick] = useState(0);
 
   const fetchServices = useCallback(async () => {
@@ -125,16 +127,36 @@ export function ServicesView() {
     return Math.max(...times, 1);
   }, [services]);
 
-  const filtered = services.filter((svc) => {
-    if (categoryFilter && svc.category !== categoryFilter) return false;
-    if (!filter.trim()) return true;
-    const q = filter.toLowerCase();
-    return (
-      svc.name.toLowerCase().includes(q) ||
-      svc.category.toLowerCase().includes(q) ||
-      svc.url.toLowerCase().includes(q)
-    );
-  });
+  const categoryCounts = useMemo(() => {
+    const counts: Record<string, { total: number; up: number }> = {};
+    for (const svc of services) {
+      if (!counts[svc.category]) counts[svc.category] = { total: 0, up: 0 };
+      counts[svc.category].total++;
+      if (svc.status === "up") counts[svc.category].up++;
+    }
+    return counts;
+  }, [services]);
+
+  const filtered = useMemo(() => {
+    const statusOrder = { down: 0, degraded: 1, up: 2 };
+    return services
+      .filter((svc) => {
+        if (categoryFilter && svc.category !== categoryFilter) return false;
+        if (!filter.trim()) return true;
+        const q = filter.toLowerCase();
+        return (
+          svc.name.toLowerCase().includes(q) ||
+          svc.category.toLowerCase().includes(q) ||
+          svc.url.toLowerCase().includes(q)
+        );
+      })
+      .sort((a, b) => {
+        if (sortBy === "name") return a.name.localeCompare(b.name);
+        if (sortBy === "response") return (a.responseTime ?? 9999) - (b.responseTime ?? 9999);
+        // status: down first, then degraded, then up
+        return statusOrder[a.status] - statusOrder[b.status] || a.name.localeCompare(b.name);
+      });
+  }, [services, categoryFilter, filter, sortBy]);
 
   const upCount = services.filter((s) => s.status === "up").length;
 
@@ -210,34 +232,65 @@ export function ServicesView() {
           />
         </div>
 
-        {/* Category filter pills */}
-        {categories.length > 1 && (
-          <div className="flex flex-wrap gap-1.5 mt-2">
-            <button
-              onClick={() => setCategoryFilter("")}
-              className={`text-[10px] rounded-full px-2.5 py-0.5 border transition-colors ${
-                categoryFilter === ""
-                  ? "bg-primary/15 text-primary border-primary/30 font-medium"
-                  : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/50"
-              }`}
-            >
-              All
-            </button>
-            {categories.map((cat) => (
+        {/* Sort + Category filter pills */}
+        <div className="flex items-center gap-2 mt-2 flex-wrap">
+          {/* Sort toggle */}
+          <div className="flex items-center gap-1 mr-1">
+            <ArrowUpDown className="h-3 w-3 text-muted-foreground/50" />
+            {(["status", "name", "response"] as const).map((s) => (
               <button
-                key={cat}
-                onClick={() => setCategoryFilter(categoryFilter === cat ? "" : cat)}
-                className={`text-[10px] rounded-full px-2.5 py-0.5 border transition-colors capitalize ${
-                  categoryFilter === cat
-                    ? `${CATEGORY_COLORS[cat] || "bg-muted/50 text-muted-foreground"} font-medium`
+                key={s}
+                onClick={() => setSortBy(s)}
+                data-testid={`sort-${s}`}
+                className={`text-[10px] rounded-full px-2 py-0.5 border transition-colors capitalize ${
+                  sortBy === s
+                    ? "bg-primary/15 text-primary border-primary/30 font-medium"
                     : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/50"
                 }`}
               >
-                {cat}
+                {s === "response" ? "speed" : s}
               </button>
             ))}
           </div>
-        )}
+
+          {/* Separator */}
+          <div className="h-4 w-px bg-border/40 hidden sm:block" />
+
+          {/* Category filter pills with counts */}
+          {categories.length > 1 && (
+            <div className="flex flex-wrap gap-1.5">
+              <button
+                onClick={() => setCategoryFilter("")}
+                className={`text-[10px] rounded-full px-2.5 py-0.5 border transition-colors ${
+                  categoryFilter === ""
+                    ? "bg-primary/15 text-primary border-primary/30 font-medium"
+                    : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/50"
+                }`}
+              >
+                All <span className="text-muted-foreground/50 ml-0.5">{services.length}</span>
+              </button>
+              {categories.map((cat) => {
+                const cc = categoryCounts[cat];
+                return (
+                  <button
+                    key={cat}
+                    onClick={() => setCategoryFilter(categoryFilter === cat ? "" : cat)}
+                    className={`text-[10px] rounded-full px-2.5 py-0.5 border transition-colors capitalize ${
+                      categoryFilter === cat
+                        ? `${CATEGORY_COLORS[cat] || "bg-muted/50 text-muted-foreground"} font-medium`
+                        : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/50"
+                    }`}
+                  >
+                    {cat}{" "}
+                    <span className={cc && cc.up < cc.total ? "text-red-400/70" : "text-muted-foreground/50"}>
+                      {cc ? `${cc.up}/${cc.total}` : ""}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          )}
+        </div>
       </CardHeader>
 
       <CardContent className="flex-1 overflow-y-auto px-4">

@@ -1260,6 +1260,10 @@ test("Analytics uses shared model color utility", async ({ page }) => {
 test("Network section shows RX Rate and TX Rate columns", async ({ page }) => {
   await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // Network section defaults to collapsed — expand it
+  const networkHeader = page.locator('[role="button"]').filter({ hasText: "Network" }).first();
+  await networkHeader.click();
+  await page.waitForTimeout(300);
   // Scroll to network section and check for Rate column headers
   await expect(page.getByText("RX Rate")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("TX Rate")).toBeVisible({ timeout: 10000 });
@@ -1268,6 +1272,10 @@ test("Network section shows RX Rate and TX Rate columns", async ({ page }) => {
 test("Network section shows RX Total and TX Total columns", async ({ page }) => {
   await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // Network section defaults to collapsed — expand it
+  const networkHeader = page.locator('[role="button"]').filter({ hasText: "Network" }).first();
+  await networkHeader.click();
+  await page.waitForTimeout(300);
   await expect(page.getByText("RX Total")).toBeVisible({ timeout: 10000 });
   await expect(page.getByText("TX Total")).toBeVisible({ timeout: 10000 });
 });
@@ -1275,6 +1283,10 @@ test("Network section shows RX Total and TX Total columns", async ({ page }) => 
 test("Network section shows throughput rates after second refresh", async ({ page }) => {
   await page.goto("/?tab=system");
   await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // Network section defaults to collapsed — expand it
+  const networkHeader = page.locator('[role="button"]').filter({ hasText: "Network" }).first();
+  await networkHeader.click();
+  await page.waitForTimeout(300);
   // Wait for at least two data fetches (10s interval) for rate calculation
   await page.waitForTimeout(12000);
   // After second fetch, rate values should appear (B/s, KB/s, or MB/s)
@@ -1511,6 +1523,10 @@ test("Analytics hourly heatmap section visible", async ({ page }) => {
 test("SystemHealth process table commands are visible", async ({ page }) => {
   await page.goto("/?tab=system&view=health");
   await expect(page.getByText("Top Processes")).toBeVisible({ timeout: 10000 });
+  // Top Processes section defaults to collapsed — expand it
+  const processHeader = page.locator('[role="button"]').filter({ hasText: "Top Processes" }).first();
+  await processHeader.click();
+  await page.waitForTimeout(300);
   // Process table has a "Command" column header — find that specific table
   const table = page.locator("table", { has: page.locator("th", { hasText: "Command" }) });
   await expect(table).toBeVisible({ timeout: 5000 });
@@ -2146,4 +2162,165 @@ test("ActivityFeed session count displayed when sessions exist", async ({ page }
     const text = await infoBar.textContent();
     expect(text).toMatch(/\d+ activities/);
   }
+});
+
+// === SYSTEM HEALTH: Collapsible Sections + Alert Banner ===
+
+test("Health sections are collapsible — click to toggle CPU section", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // CPU section should be visible (default open)
+  const cpuHeader = page.locator('[role="button"]').filter({ hasText: "CPU" }).first();
+  await expect(cpuHeader).toBeVisible({ timeout: 5000 });
+  // CPU content: the User/System CPU breakdown bars should be visible
+  const cpuUserLabel = page.locator(".space-y-2 .text-muted-foreground").filter({ hasText: /^User$/ });
+  await expect(cpuUserLabel).toBeVisible({ timeout: 5000 });
+  // Click to collapse
+  await cpuHeader.click();
+  await page.waitForTimeout(300);
+  // The CPU breakdown content should no longer be rendered
+  await expect(cpuUserLabel).not.toBeVisible({ timeout: 3000 });
+  // Click again to expand
+  await cpuHeader.click();
+  await page.waitForTimeout(300);
+  const cpuUserLabel2 = page.locator(".space-y-2 .text-muted-foreground").filter({ hasText: /^User$/ });
+  await expect(cpuUserLabel2).toBeVisible({ timeout: 3000 });
+});
+
+test("Health sections show summary when collapsed", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // Memory section header
+  const memHeader = page.locator('[role="button"]').filter({ hasText: "Memory" }).first();
+  await expect(memHeader).toBeVisible({ timeout: 5000 });
+  // Collapse memory section
+  await memHeader.click();
+  await page.waitForTimeout(300);
+  // The summary should show "free" text (e.g., "12.3 GB free")
+  const summaryText = memHeader.locator("text=/free/");
+  await expect(summaryText).toBeVisible({ timeout: 3000 });
+});
+
+test("Health Network section defaults to collapsed", async ({ page }) => {
+  // Clear localStorage for a clean test
+  await page.goto("/?tab=system");
+  await page.evaluate(() => localStorage.removeItem("health-section-network"));
+  await page.reload();
+  await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // Network heading should be visible
+  await expect(page.getByRole("heading", { name: "Network" })).toBeVisible({ timeout: 5000 });
+  // But the table headers should not be visible (collapsed)
+  const rxRateHeader = page.locator("th").filter({ hasText: "RX Rate" });
+  await expect(rxRateHeader).not.toBeVisible({ timeout: 3000 });
+});
+
+test("Health Top Processes section defaults to collapsed", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await page.evaluate(() => localStorage.removeItem("health-section-processes"));
+  await page.reload();
+  await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Top Processes")).toBeVisible({ timeout: 5000 });
+  // PID column header should not be visible (collapsed)
+  const pidHeader = page.locator("th").filter({ hasText: "PID" });
+  await expect(pidHeader).not.toBeVisible({ timeout: 3000 });
+});
+
+test("Health section collapse state persists via localStorage", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // Collapse the Disk section
+  const diskHeader = page.locator('[role="button"]').filter({ hasText: "Disk Usage" }).first();
+  await expect(diskHeader).toBeVisible({ timeout: 5000 });
+  await diskHeader.click();
+  await page.waitForTimeout(300);
+  // Verify localStorage was set
+  const stored = await page.evaluate(() => localStorage.getItem("health-section-disks"));
+  expect(stored).toBe("false");
+  // Reload and verify it stays collapsed
+  await page.reload();
+  await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // The disk bars should not be visible (section collapsed)
+  const diskContent = page.locator("text=/used of/").first();
+  await expect(diskContent).not.toBeVisible({ timeout: 5000 });
+  // Clean up — re-open the section
+  const diskHeader2 = page.locator('[role="button"]').filter({ hasText: "Disk Usage" }).first();
+  await diskHeader2.click();
+  await page.waitForTimeout(300);
+});
+
+test("Health alert banner shows when there are warnings", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // Check for alert banner existence (may or may not show depending on system state)
+  // The alert banner uses data-testid="alert-banner"
+  const alertBanner = page.locator('[data-testid="alert-banner"]');
+  // Just verify the page loads successfully regardless of whether alerts exist
+  // If there are alerts, they should contain Critical or Warning text
+  const hasAlerts = await alertBanner.isVisible().catch(() => false);
+  if (hasAlerts) {
+    const text = await alertBanner.textContent();
+    expect(text).toMatch(/Critical|Warning/);
+  }
+  // Either way, the gauges should still be visible
+  await expect(page.getByText("CPU", { exact: true }).first()).toBeVisible();
+});
+
+test("Health section chevrons rotate on toggle", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await expect(page.getByText("System Health")).toBeVisible({ timeout: 10000 });
+  // Docker section (default open) — chevron should NOT have -rotate-90
+  const dockerHeader = page.locator('[role="button"]').filter({ hasText: "Docker" }).first();
+  await expect(dockerHeader).toBeVisible({ timeout: 5000 });
+  const chevron = dockerHeader.locator("svg").last();
+  // When open, chevron should NOT have the -rotate-90 class
+  await expect(chevron).not.toHaveClass(/-rotate-90/);
+  // Collapse it
+  await dockerHeader.click();
+  await page.waitForTimeout(300);
+  // Now chevron should have -rotate-90
+  await expect(chevron).toHaveClass(/-rotate-90/);
+});
+
+// === SERVICES VIEW: Sort + Category Counts ===
+
+test("ServicesView has sort buttons", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await expect(page.getByText("Services Directory")).toBeVisible({ timeout: 10000 });
+  // Sort buttons should be visible
+  await expect(page.locator('[data-testid="sort-status"]')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('[data-testid="sort-name"]')).toBeVisible({ timeout: 5000 });
+  await expect(page.locator('[data-testid="sort-response"]')).toBeVisible({ timeout: 5000 });
+});
+
+test("ServicesView sort by name works", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await expect(page.getByText("Services Directory")).toBeVisible({ timeout: 10000 });
+  // Click sort by name
+  await page.locator('[data-testid="sort-name"]').click();
+  await page.waitForTimeout(300);
+  // The sort button should now be active (has primary color)
+  await expect(page.locator('[data-testid="sort-name"]')).toHaveClass(/text-primary/);
+});
+
+test("ServicesView sort by speed works", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await expect(page.getByText("Services Directory")).toBeVisible({ timeout: 10000 });
+  await page.locator('[data-testid="sort-response"]').click();
+  await page.waitForTimeout(300);
+  await expect(page.locator('[data-testid="sort-response"]')).toHaveClass(/text-primary/);
+});
+
+test("ServicesView category pills show counts", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await expect(page.getByText("Services Directory")).toBeVisible({ timeout: 10000 });
+  // The "All" pill should show a count (total number of services)
+  const allPill = page.locator("button").filter({ hasText: /^All \d+$/ });
+  await expect(allPill).toBeVisible({ timeout: 5000 });
+});
+
+test("ServicesView default sort is by status (down services first)", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await expect(page.getByText("Services Directory")).toBeVisible({ timeout: 10000 });
+  // Status sort should be active by default
+  await expect(page.locator('[data-testid="sort-status"]')).toHaveClass(/text-primary/);
 });

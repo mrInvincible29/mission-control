@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, type ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -23,6 +23,9 @@ import {
   CircleCheck,
   CircleX,
   Gauge,
+  ChevronDown,
+  AlertTriangle,
+  ShieldAlert,
 } from "lucide-react";
 
 interface HealthData {
@@ -253,6 +256,163 @@ function LoadAvgBars({ loadAvg, cores }: { loadAvg: [number, number, number]; co
   );
 }
 
+/** Collapsible section wrapper with localStorage persistence */
+function CollapsibleSection({
+  id,
+  icon,
+  iconColor,
+  title,
+  badge,
+  summary,
+  children,
+  defaultOpen = true,
+}: {
+  id: string;
+  icon: ReactNode;
+  iconColor: string;
+  title: string;
+  badge?: ReactNode;
+  summary?: ReactNode;
+  children: ReactNode;
+  defaultOpen?: boolean;
+}) {
+  const storageKey = `health-section-${id}`;
+  const [open, setOpen] = useState(() => {
+    if (typeof window === "undefined") return defaultOpen;
+    const stored = localStorage.getItem(storageKey);
+    return stored !== null ? stored === "true" : defaultOpen;
+  });
+
+  const toggle = () => {
+    const next = !open;
+    setOpen(next);
+    localStorage.setItem(storageKey, String(next));
+  };
+
+  return (
+    <div className="rounded-xl border border-border/50 bg-card/30 overflow-hidden">
+      <div
+        role="button"
+        tabIndex={0}
+        onClick={toggle}
+        onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); toggle(); } }}
+        className="w-full flex items-center gap-2 p-4 text-left hover:bg-muted/20 transition-colors cursor-pointer select-none"
+      >
+        <span className={iconColor}>{icon}</span>
+        <h3 className="text-sm font-medium flex-1">{title}</h3>
+        {!open && summary && (
+          <span className="text-xs text-muted-foreground mr-2 hidden sm:flex items-center gap-2">
+            {summary}
+          </span>
+        )}
+        {badge}
+        <ChevronDown
+          className={`h-4 w-4 text-muted-foreground/60 transition-transform duration-200 ${
+            open ? "" : "-rotate-90"
+          }`}
+        />
+      </div>
+      {open && (
+        <div className="px-4 pb-4">{children}</div>
+      )}
+    </div>
+  );
+}
+
+/** Alert conditions detected from health data */
+interface Alert {
+  level: "critical" | "warn";
+  label: string;
+  detail: string;
+}
+
+function detectAlerts(data: HealthData): Alert[] {
+  const alerts: Alert[] = [];
+  const cpuUsed = 100 - data.cpu.idle;
+
+  if (cpuUsed >= 90) {
+    alerts.push({ level: "critical", label: "CPU Critical", detail: `${cpuUsed.toFixed(0)}% used` });
+  } else if (cpuUsed >= 80) {
+    alerts.push({ level: "warn", label: "CPU High", detail: `${cpuUsed.toFixed(0)}% used` });
+  }
+
+  if (data.memory.usedPercent >= 90) {
+    alerts.push({ level: "critical", label: "Memory Critical", detail: `${data.memory.usedPercent.toFixed(0)}% used` });
+  } else if (data.memory.usedPercent >= 80) {
+    alerts.push({ level: "warn", label: "Memory High", detail: `${data.memory.usedPercent.toFixed(0)}% used` });
+  }
+
+  for (const disk of data.disks) {
+    if (disk.usedPercent >= 90) {
+      alerts.push({ level: "critical", label: `Disk ${disk.mountpoint}`, detail: `${disk.usedPercent}% full` });
+    } else if (disk.usedPercent >= 80) {
+      alerts.push({ level: "warn", label: `Disk ${disk.mountpoint}`, detail: `${disk.usedPercent}% full` });
+    }
+  }
+
+  const downServices = data.services.filter(s => !s.active);
+  if (downServices.length > 0) {
+    alerts.push({
+      level: "critical",
+      label: `${downServices.length} service${downServices.length > 1 ? "s" : ""} down`,
+      detail: downServices.map(s => s.name).join(", "),
+    });
+  }
+
+  const loadRatio = data.cpu.loadAvg[0] / data.cpu.cores;
+  if (loadRatio >= 2) {
+    alerts.push({ level: "critical", label: "Load Average", detail: `${data.cpu.loadAvg[0].toFixed(1)} (${(loadRatio * 100).toFixed(0)}% of ${data.cpu.cores} cores)` });
+  } else if (loadRatio >= 1) {
+    alerts.push({ level: "warn", label: "Load Average", detail: `${data.cpu.loadAvg[0].toFixed(1)} (${(loadRatio * 100).toFixed(0)}% of ${data.cpu.cores} cores)` });
+  }
+
+  return alerts;
+}
+
+function AlertBanner({ alerts }: { alerts: Alert[] }) {
+  if (alerts.length === 0) return null;
+
+  const critical = alerts.filter(a => a.level === "critical");
+  const warnings = alerts.filter(a => a.level === "warn");
+
+  return (
+    <div data-testid="alert-banner" className="space-y-2">
+      {critical.length > 0 && (
+        <div className="rounded-lg bg-red-500/10 border border-red-500/20 px-3 py-2.5 flex items-start gap-2">
+          <ShieldAlert className="h-4 w-4 text-red-400 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <span className="text-xs font-medium text-red-400">Critical</span>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mt-0.5">
+              {critical.map((a, i) => (
+                <span key={i} className="text-xs text-red-300/80">
+                  <span className="font-medium">{a.label}</span>{" "}
+                  <span className="text-red-300/60">{a.detail}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+      {warnings.length > 0 && (
+        <div className="rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2.5 flex items-start gap-2">
+          <AlertTriangle className="h-4 w-4 text-amber-400 mt-0.5 flex-shrink-0" />
+          <div className="flex-1 min-w-0">
+            <span className="text-xs font-medium text-amber-400">Warning</span>
+            <div className="flex flex-wrap gap-x-3 gap-y-1 mt-0.5">
+              {warnings.map((a, i) => (
+                <span key={i} className="text-xs text-amber-300/80">
+                  <span className="font-medium">{a.label}</span>{" "}
+                  <span className="text-amber-300/60">{a.detail}</span>
+                </span>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 /** Tiny circular countdown showing time until next auto-refresh */
 function RefreshCountdown({ lastRefresh, interval }: { lastRefresh: number; interval: number }) {
   const [progress, setProgress] = useState(0);
@@ -461,7 +621,10 @@ export function SystemHealth() {
       </CardHeader>
 
       <CardContent className="flex-1 overflow-y-auto px-4 space-y-4">
-        {/* Overview Gauges */}
+        {/* Alert Summary Banner */}
+        <AlertBanner alerts={detectAlerts(data)} />
+
+        {/* Overview Gauges — always visible */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="rounded-xl border border-border/50 bg-card/30 p-4 flex flex-col items-center">
             <div className="relative">
@@ -494,14 +657,22 @@ export function SystemHealth() {
           </div>
         </div>
 
-        {/* CPU & Memory Detail */}
+        {/* CPU & Memory Detail — collapsible */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          <div className="rounded-xl border border-border/50 bg-card/30 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Cpu className="h-4 w-4 text-blue-400" />
-                <h3 className="text-sm font-medium">CPU</h3>
-              </div>
+          <CollapsibleSection
+            id="cpu"
+            icon={<Cpu className="h-4 w-4" />}
+            iconColor="text-blue-400"
+            title="CPU"
+            summary={
+              <>
+                <span className={`font-mono ${getUsageColor(cpuUsed)}`}>{cpuUsed.toFixed(0)}%</span>
+                <span className="text-muted-foreground/40">·</span>
+                <span>Load {data.cpu.loadAvg[0].toFixed(1)}</span>
+              </>
+            }
+          >
+            <div className="flex items-center justify-end mb-3">
               <LoadAvgBars loadAvg={data.cpu.loadAvg} cores={data.cpu.cores} />
             </div>
             <div className="space-y-2">
@@ -519,7 +690,6 @@ export function SystemHealth() {
               <div className="h-1.5 rounded-full bg-muted/50 overflow-hidden">
                 <div className="h-full rounded-full bg-purple-500 transition-all duration-500" style={{ width: `${data.cpu.system}%` }} />
               </div>
-              {/* Mini sparkline */}
               {cpuHistory.length > 1 && (
                 <div className="mt-2 pt-2 border-t border-border/30">
                   <div className="flex items-center justify-between text-[10px] text-muted-foreground/60 mb-1">
@@ -530,13 +700,21 @@ export function SystemHealth() {
                 </div>
               )}
             </div>
-          </div>
+          </CollapsibleSection>
 
-          <div className="rounded-xl border border-border/50 bg-card/30 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <MemoryStick className="h-4 w-4 text-emerald-400" />
-              <h3 className="text-sm font-medium">Memory</h3>
-            </div>
+          <CollapsibleSection
+            id="memory"
+            icon={<MemoryStick className="h-4 w-4" />}
+            iconColor="text-emerald-400"
+            title="Memory"
+            summary={
+              <>
+                <span className={`font-mono ${getUsageColor(data.memory.usedPercent)}`}>{data.memory.usedPercent.toFixed(0)}%</span>
+                <span className="text-muted-foreground/40">·</span>
+                <span>{formatMB(data.memory.availableMB)} free</span>
+              </>
+            }
+          >
             <UsageBar
               used={data.memory.usedMB}
               total={data.memory.totalMB}
@@ -553,7 +731,6 @@ export function SystemHealth() {
                 />
               </div>
             )}
-            {/* Mini sparkline */}
             {memHistory.length > 1 && (
               <div className="mt-2 pt-2 border-t border-border/30">
                 <div className="flex items-center justify-between text-[10px] text-muted-foreground/60 mb-1">
@@ -563,16 +740,28 @@ export function SystemHealth() {
                 <Sparkline data={memHistory} height={24} color="rgb(16 185 129)" />
               </div>
             )}
-          </div>
+          </CollapsibleSection>
         </div>
 
-        {/* Disks */}
+        {/* Disks — collapsible */}
         {data.disks.length > 0 && (
-          <div className="rounded-xl border border-border/50 bg-card/30 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <HardDrive className="h-4 w-4 text-amber-400" />
-              <h3 className="text-sm font-medium">Disk Usage</h3>
-            </div>
+          <CollapsibleSection
+            id="disks"
+            icon={<HardDrive className="h-4 w-4" />}
+            iconColor="text-amber-400"
+            title="Disk Usage"
+            summary={
+              <>
+                {data.disks.map((d, i) => (
+                  <span key={d.mountpoint}>
+                    {i > 0 && <span className="text-muted-foreground/40 mx-1">·</span>}
+                    <code className="text-[10px] font-mono">{d.mountpoint}</code>{" "}
+                    <span className={`font-mono ${getUsageColor(d.usedPercent)}`}>{d.usedPercent}%</span>
+                  </span>
+                ))}
+              </>
+            }
+          >
             <div className="space-y-3">
               {data.disks.map((disk) => (
                 <div key={disk.mountpoint}>
@@ -599,22 +788,25 @@ export function SystemHealth() {
                 </div>
               ))}
             </div>
-          </div>
+          </CollapsibleSection>
         )}
 
-        {/* Docker & Services row */}
+        {/* Docker & Services — collapsible side by side */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {/* Docker Containers */}
-          <div className="rounded-xl border border-border/50 bg-card/30 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Container className="h-4 w-4 text-cyan-400" />
-                <h3 className="text-sm font-medium">Docker</h3>
-              </div>
+          <CollapsibleSection
+            id="docker"
+            icon={<Container className="h-4 w-4" />}
+            iconColor="text-cyan-400"
+            title="Docker"
+            badge={
               <Badge variant="outline" className="text-[10px]">
                 {data.docker.length} running
               </Badge>
-            </div>
+            }
+            summary={
+              <span>{data.docker.filter(c => c.state === "running").length} up</span>
+            }
+          >
             {data.docker.length === 0 ? (
               <p className="text-xs text-muted-foreground">No running containers</p>
             ) : (
@@ -647,19 +839,28 @@ export function SystemHealth() {
                 ))}
               </div>
             )}
-          </div>
+          </CollapsibleSection>
 
-          {/* Services */}
-          <div className="rounded-xl border border-border/50 bg-card/30 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Server className="h-4 w-4 text-violet-400" />
-                <h3 className="text-sm font-medium">Services</h3>
-              </div>
+          <CollapsibleSection
+            id="services"
+            icon={<Server className="h-4 w-4" />}
+            iconColor="text-violet-400"
+            title="Services"
+            badge={
               <Badge variant="outline" className="text-[10px]">
                 {data.services.filter((s) => s.active).length}/{data.services.length} active
               </Badge>
-            </div>
+            }
+            summary={
+              <>
+                {data.services.some(s => !s.active) && (
+                  <span className="text-red-400 font-medium">
+                    {data.services.filter(s => !s.active).length} down
+                  </span>
+                )}
+              </>
+            }
+          >
             <div className="space-y-2">
               {data.services.map((s) => (
                 <div key={s.name} className="flex items-center justify-between text-xs rounded-lg bg-muted/20 px-2.5 py-2">
@@ -689,19 +890,32 @@ export function SystemHealth() {
                 </div>
               ))}
             </div>
-          </div>
+          </CollapsibleSection>
         </div>
 
-        {/* Network */}
+        {/* Network — collapsible */}
         {data.network.length > 0 && (
-          <div className="rounded-xl border border-border/50 bg-card/30 p-4">
-            <div className="flex items-center justify-between mb-3">
-              <div className="flex items-center gap-2">
-                <Network className="h-4 w-4 text-sky-400" />
-                <h3 className="text-sm font-medium">Network</h3>
-              </div>
-              {networkRates.length > 0 && (
-                <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+          <CollapsibleSection
+            id="network"
+            icon={<Network className="h-4 w-4" />}
+            iconColor="text-sky-400"
+            title="Network"
+            defaultOpen={false}
+            summary={
+              networkRates.length > 0 ? (
+                <>
+                  <span className="text-sky-400">
+                    ↓ {formatRate(networkRates.reduce((s, r) => s + r.rxRate, 0))}
+                  </span>
+                  <span className="text-amber-400">
+                    ↑ {formatRate(networkRates.reduce((s, r) => s + r.txRate, 0))}
+                  </span>
+                </>
+              ) : undefined
+            }
+            badge={
+              networkRates.length > 0 ? (
+                <div className="flex items-center gap-3 text-[10px] text-muted-foreground sm:hidden">
                   <span className="flex items-center gap-1">
                     <span className="inline-block w-1.5 h-1.5 rounded-full bg-sky-400" />
                     RX {formatRate(networkRates.reduce((s, r) => s + r.rxRate, 0))}
@@ -711,8 +925,9 @@ export function SystemHealth() {
                     TX {formatRate(networkRates.reduce((s, r) => s + r.txRate, 0))}
                   </span>
                 </div>
-              )}
-            </div>
+              ) : undefined
+            }
+          >
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -744,16 +959,28 @@ export function SystemHealth() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </CollapsibleSection>
         )}
 
-        {/* Top Processes */}
+        {/* Top Processes — collapsible, default closed */}
         {data.topProcesses.length > 0 && (
-          <div className="rounded-xl border border-border/50 bg-card/30 p-4">
-            <div className="flex items-center gap-2 mb-3">
-              <Gauge className="h-4 w-4 text-orange-400" />
-              <h3 className="text-sm font-medium">Top Processes</h3>
-            </div>
+          <CollapsibleSection
+            id="processes"
+            icon={<Gauge className="h-4 w-4" />}
+            iconColor="text-orange-400"
+            title="Top Processes"
+            defaultOpen={false}
+            summary={
+              <>
+                <span>
+                  Top: {data.topProcesses[0]?.command.split("/").pop()?.split(" ")[0] || "—"}
+                </span>
+                <span className={`font-mono ${data.topProcesses[0]?.cpu > 50 ? "text-red-400" : data.topProcesses[0]?.cpu > 10 ? "text-amber-400" : ""}`}>
+                  {data.topProcesses[0]?.cpu.toFixed(1)}% CPU
+                </span>
+              </>
+            }
+          >
             <div className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -795,7 +1022,7 @@ export function SystemHealth() {
                 </tbody>
               </table>
             </div>
-          </div>
+          </CollapsibleSection>
         )}
       </CardContent>
     </Card>
