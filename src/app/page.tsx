@@ -41,6 +41,11 @@ const StatusStrip = dynamic(
   { ssr: false }
 );
 
+const QuickStats = dynamic(
+  () => import("@/components/QuickStats").then((mod) => ({ default: mod.QuickStats })),
+  { ssr: false }
+);
+
 const VALID_TABS = ["activity", "schedule", "tasks", "system"] as const;
 type TabValue = (typeof VALID_TABS)[number];
 
@@ -339,11 +344,14 @@ export default function Home() {
                 <h1 className="text-2xl sm:text-3xl font-bold bg-gradient-to-r from-primary to-primary/60 bg-clip-text text-transparent">
                   Mission Control
                 </h1>
-                <div className="mt-1.5 hidden sm:block">
+                <div className="mt-1.5 hidden sm:flex sm:items-center sm:gap-3">
                   <StatusStrip />
+                  <span className="text-border">|</span>
+                  <QuickStats />
                 </div>
-                <div className="mt-1 sm:hidden">
+                <div className="mt-1 sm:hidden space-y-1">
                   <StatusStrip compact />
+                  <QuickStats />
                 </div>
               </div>
               <div className="flex items-center gap-2">

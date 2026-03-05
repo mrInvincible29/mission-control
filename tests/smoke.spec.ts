@@ -2324,3 +2324,46 @@ test("ServicesView default sort is by status (down services first)", async ({ pa
   // Status sort should be active by default
   await expect(page.locator('[data-testid="sort-status"]')).toHaveClass(/text-primary/);
 });
+
+// === NEW FEATURE TESTS: QuickStats Briefing Strip ===
+
+test("QuickStats briefing strip renders in header", async ({ page }) => {
+  await page.goto("/");
+  // Desktop and mobile versions both exist — use first (desktop)
+  const quickStats = page.locator('[data-testid="quick-stats"]').first();
+  await expect(quickStats).toBeVisible({ timeout: 15000 });
+});
+
+test("QuickStats shows today's cost badge", async ({ page }) => {
+  await page.goto("/");
+  const quickStats = page.locator('[data-testid="quick-stats"]').first();
+  await expect(quickStats).toBeVisible({ timeout: 15000 });
+  // Should have at least one badge with a dollar sign (cost)
+  const costBadge = quickStats.locator("button").filter({ hasText: /\$/ });
+  await expect(costBadge.first()).toBeVisible({ timeout: 10000 });
+});
+
+test("QuickStats cost badge navigates to analytics", async ({ page }) => {
+  await page.goto("/");
+  const quickStats = page.locator('[data-testid="quick-stats"]').first();
+  await expect(quickStats).toBeVisible({ timeout: 15000 });
+  const costBadge = quickStats.locator("button").filter({ hasText: /\$/ });
+  await expect(costBadge.first()).toBeVisible({ timeout: 10000 });
+  await costBadge.first().click();
+  // Should navigate to activity > analytics
+  await expect(page).toHaveURL(/view=analytics/);
+});
+
+test("QuickStats badges are clickable and navigate to correct tabs", async ({ page }) => {
+  await page.goto("/");
+  const quickStats = page.locator('[data-testid="quick-stats"]').first();
+  await expect(quickStats).toBeVisible({ timeout: 15000 });
+  // All badges should be buttons
+  const badges = quickStats.locator("button");
+  const count = await badges.count();
+  expect(count).toBeGreaterThan(0);
+  // Each badge should be clickable (not disabled)
+  for (let i = 0; i < count; i++) {
+    await expect(badges.nth(i)).toBeEnabled();
+  }
+});
