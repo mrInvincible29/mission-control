@@ -34,7 +34,7 @@ export function useHealthData(activeTab?: string) {
   // Faster refresh when System tab is active
   const interval = activeTab === "system" ? 10000 : 30000;
 
-  const { data, error, isLoading, mutate } = useSWR(
+  const { data, error, isLoading, isValidating, mutate } = useSWR(
     paused ? null : "health-data",
     fetcher,
     {
@@ -63,6 +63,7 @@ export function useHealthData(activeTab?: string) {
     data,
     error,
     isLoading,
+    isValidating,
     connected: !error,
     healthStatus,
     refresh: () => mutate(),

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Cpu, MemoryStick, Container, HardDrive, Clock, WifiOff } from "lucide-react";
 import { useHealthData } from "@/hooks/useHealthData";
@@ -21,6 +21,38 @@ function getBarColor(pct: number): string {
   if (pct >= 90) return "bg-red-500";
   if (pct >= 70) return "bg-amber-500";
   return "bg-emerald-500";
+}
+
+/** Smoothly animates between number values over ~400ms */
+function useAnimatedNumber(target: number, duration = 400): number {
+  const [display, setDisplay] = useState(target);
+  const rafRef = useRef<number>(0);
+  const startRef = useRef({ value: target, time: 0 });
+
+  useEffect(() => {
+    const from = display;
+    if (from === target) return;
+
+    startRef.current = { value: from, time: performance.now() };
+
+    const animate = (now: number) => {
+      const elapsed = now - startRef.current.time;
+      const progress = Math.min(elapsed / duration, 1);
+      // Ease-out cubic
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const current = Math.round(startRef.current.value + (target - startRef.current.value) * eased);
+      setDisplay(current);
+      if (progress < 1) {
+        rafRef.current = requestAnimationFrame(animate);
+      }
+    };
+
+    rafRef.current = requestAnimationFrame(animate);
+    return () => cancelAnimationFrame(rafRef.current);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [target, duration]);
+
+  return display;
 }
 
 function MiniBar({ percent, color }: { percent: number; color: string }) {
@@ -67,8 +99,14 @@ function useISTClock(): string {
   return time;
 }
 
+/** Animated percentage display with color transitions */
+function AnimatedPercent({ value, className }: { value: number; className?: string }) {
+  const animated = useAnimatedNumber(value);
+  return <span className={className}>{animated}%</span>;
+}
+
 export function StatusStrip({ compact = false }: { compact?: boolean }) {
-  const { data, connected } = useHealthData();
+  const { data, connected, isValidating } = useHealthData();
   const router = useRouter();
   const istTime = useISTClock();
 
@@ -81,11 +119,11 @@ export function StatusStrip({ compact = false }: { compact?: boolean }) {
         {!connected && <WifiOff className="h-3 w-3 text-amber-400" />}
         {data && (
           <>
-            <div className={`w-1.5 h-1.5 rounded-full ${getDotColor(Math.max(data.cpu, data.memPercent))}${Math.max(data.cpu, data.memPercent) >= 70 ? " animate-pulse" : ""}`} />
+            <div className={`w-1.5 h-1.5 rounded-full transition-colors duration-500 ${getDotColor(Math.max(data.cpu, data.memPercent))}${Math.max(data.cpu, data.memPercent) >= 70 ? " animate-pulse" : ""}${isValidating ? " ring-2 ring-current/20" : ""}`} />
             <span className="font-mono tabular-nums">
-              <span className={getColor(data.cpu)}>CPU {data.cpu}%</span>
+              <span className={`transition-colors duration-500 ${getColor(data.cpu)}`}>CPU <AnimatedPercent value={data.cpu} /></span>
               {" · "}
-              <span className={getColor(data.memPercent)}>Mem {data.memPercent}%</span>
+              <span className={`transition-colors duration-500 ${getColor(data.memPercent)}`}>Mem <AnimatedPercent value={data.memPercent} /></span>
             </span>
             {istTime && (
               <span className="text-muted-foreground/50 ml-0.5">
@@ -110,19 +148,19 @@ export function StatusStrip({ compact = false }: { compact?: boolean }) {
           <span className="flex items-center gap-1.5" title={`CPU: ${data.cpu}%`}>
             <Cpu className="h-3 w-3" />
             <MiniBar percent={data.cpu} color={getBarColor(data.cpu)} />
-            <span className={`font-mono tabular-nums ${getColor(data.cpu)}`}>{data.cpu}%</span>
+            <AnimatedPercent value={data.cpu} className={`font-mono tabular-nums transition-colors duration-500 ${getColor(data.cpu)}`} />
           </span>
           <span className="text-border">|</span>
           <span className="flex items-center gap-1.5" title={`Memory: ${data.memPercent}%`}>
             <MemoryStick className="h-3 w-3" />
             <MiniBar percent={data.memPercent} color={getBarColor(data.memPercent)} />
-            <span className={`font-mono tabular-nums ${getColor(data.memPercent)}`}>{data.memPercent}%</span>
+            <AnimatedPercent value={data.memPercent} className={`font-mono tabular-nums transition-colors duration-500 ${getColor(data.memPercent)}`} />
           </span>
           <span className="text-border">|</span>
           <span className="flex items-center gap-1.5" title={`Disk: ${data.diskPercent}%`}>
             <HardDrive className="h-3 w-3" />
             <MiniBar percent={data.diskPercent} color={getBarColor(data.diskPercent)} />
-            <span className={`font-mono tabular-nums ${getColor(data.diskPercent)}`}>{data.diskPercent}%</span>
+            <AnimatedPercent value={data.diskPercent} className={`font-mono tabular-nums transition-colors duration-500 ${getColor(data.diskPercent)}`} />
           </span>
           <span className="text-border">|</span>
           <span className="flex items-center gap-1" title={`${data.containers} containers running`}>
@@ -143,7 +181,7 @@ export function StatusStrip({ compact = false }: { compact?: boolean }) {
             </>
           )}
           <div
-            className={`w-1.5 h-1.5 rounded-full ${getDotColor(Math.max(data.cpu, data.memPercent))}${Math.max(data.cpu, data.memPercent) >= 70 ? " animate-pulse" : ""}`}
+            className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${getDotColor(Math.max(data.cpu, data.memPercent))}${Math.max(data.cpu, data.memPercent) >= 70 ? " animate-pulse" : ""}${isValidating ? " scale-150 opacity-60" : ""}`}
             title={data.cpu >= 70 || data.memPercent >= 70 ? "High resource usage" : "System healthy"}
           />
         </>
