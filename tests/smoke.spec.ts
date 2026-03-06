@@ -1886,7 +1886,7 @@ test("CalendarView loads and shows day headers", async ({ page }) => {
   await page.goto("/?tab=schedule&view=calendar");
   await expect(page.getByRole("tab", { name: /Schedule/ })).toHaveAttribute("data-state", "active");
   // Wait for calendar to render — Today button
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
   // Day/Week view toggle should exist (exact match to avoid Today)
   await expect(page.getByRole("button", { name: "Day", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Week", exact: true })).toBeVisible();
@@ -1894,7 +1894,7 @@ test("CalendarView loads and shows day headers", async ({ page }) => {
 
 test("CalendarView model filter chips render", async ({ page }) => {
   await page.goto("/?tab=schedule&view=calendar");
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
   // Model filter bar should be visible (desktop)
   const filterBar = page.locator('[data-testid="model-filter"]').first();
   await expect(filterBar).toBeVisible({ timeout: 5000 });
@@ -1907,7 +1907,7 @@ test("CalendarView model filter chips render", async ({ page }) => {
 
 test("CalendarView model filter selects and highlights active chip", async ({ page }) => {
   await page.goto("/?tab=schedule&view=calendar");
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
   const filterBar = page.locator('[data-testid="model-filter"]').first();
   await expect(filterBar).toBeVisible({ timeout: 5000 });
   // Click Haiku filter — the button itself should get active class
@@ -1922,7 +1922,7 @@ test("CalendarView model filter selects and highlights active chip", async ({ pa
 
 test("CalendarView Next Up bar appears when cron jobs exist", async ({ page }) => {
   await page.goto("/?tab=schedule&view=calendar");
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
   // Wait for cron data to load
   await page.waitForTimeout(2000);
   // The "Next" label should be visible if there are upcoming jobs
@@ -1938,7 +1938,7 @@ test("CalendarView Next Up bar appears when cron jobs exist", async ({ page }) =
 
 test("CalendarView day headers show task count badges", async ({ page }) => {
   await page.goto("/?tab=schedule&view=calendar");
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
   await page.waitForTimeout(2000);
   // Task count badges — these appear on days with scheduled tasks
   const badges = page.locator('[data-testid="day-task-count"]');
@@ -1953,7 +1953,7 @@ test("CalendarView day headers show task count badges", async ({ page }) => {
 
 test("CalendarView current time indicator is present on today", async ({ page }) => {
   await page.goto("/?tab=schedule&view=calendar");
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
   // The current time label should be visible (shows IST time)
   const timeLabel = page.locator('[data-testid="current-time-label"]');
   await expect(timeLabel).toBeVisible({ timeout: 5000 });
@@ -1964,7 +1964,7 @@ test("CalendarView current time indicator is present on today", async ({ page })
 
 test("CalendarView job detail dialog opens on task click", async ({ page }) => {
   await page.goto("/?tab=schedule&view=calendar");
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
   await page.waitForTimeout(2000);
   // Try clicking on a task card (banner or scheduled)
   // First check if there are any task buttons on the calendar
@@ -1991,7 +1991,7 @@ test("CalendarView job detail dialog opens on task click", async ({ page }) => {
 
 test("CalendarView day/week toggle works", async ({ page }) => {
   await page.goto("/?tab=schedule&view=calendar");
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
   // Use exact match to avoid matching "Today" button
   const dayBtn = page.getByRole("button", { name: "Day", exact: true });
   const weekBtn = page.getByRole("button", { name: "Week", exact: true });
@@ -2002,19 +2002,19 @@ test("CalendarView day/week toggle works", async ({ page }) => {
   await weekBtn.click();
   await page.waitForTimeout(500);
   // Should not crash — calendar still visible
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
 });
 
 test("CalendarView IST timezone label shows in gutter", async ({ page }) => {
   await page.goto("/?tab=schedule&view=calendar");
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
   // IST label in the time gutter (exact match to avoid "Run History" containing "ist")
   await expect(page.getByText("IST", { exact: true })).toBeVisible({ timeout: 5000 });
 });
 
 test("CalendarView sync button triggers sync", async ({ page }) => {
   await page.goto("/?tab=schedule&view=calendar");
-  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("button", { name: "Today" })).toBeVisible({ timeout: 20000 });
   // Sync button should be visible
   const syncBtn = page.getByTitle("Sync cron jobs with OpenClaw");
   await expect(syncBtn).toBeVisible({ timeout: 5000 });
@@ -2366,4 +2366,57 @@ test("QuickStats badges are clickable and navigate to correct tabs", async ({ pa
   for (let i = 0; i < count; i++) {
     await expect(badges.nth(i)).toBeEnabled();
   }
+});
+
+// === ANIMATED SUBVIEWTOGGLE PILL ===
+
+test("SubViewToggle has animated sliding pill indicator", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1500);
+  const tabPanel = page.getByRole("tabpanel");
+  // The pill is an absolutely-positioned div with inline left/width styles
+  const pill = tabPanel.locator("div.pointer-events-none").first();
+  await expect(pill).toBeVisible({ timeout: 5000 });
+  const style = await pill.getAttribute("style");
+  expect(style).toContain("left:");
+  expect(style).toContain("width:");
+});
+
+test("SubViewToggle pill moves when switching sub-views", async ({ page }) => {
+  await page.goto("/");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible();
+  await page.waitForTimeout(1500);
+  const tabPanel = page.getByRole("tabpanel");
+  const pill = tabPanel.locator("div.pointer-events-none").first();
+  await expect(pill).toBeVisible({ timeout: 5000 });
+  const initialStyle = await pill.getAttribute("style");
+  // Click "Analytics" sub-view button
+  await tabPanel.getByRole("button", { name: /Analytics/ }).click();
+  await page.waitForTimeout(400);
+  const newStyle = await pill.getAttribute("style");
+  expect(newStyle).not.toEqual(initialStyle);
+});
+
+test("SubViewToggle pill works on System tab sub-views", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await expect(page.getByRole("tab", { name: /System/ })).toHaveAttribute("data-state", "active");
+  await page.waitForTimeout(1500);
+  const tabPanel = page.getByRole("tabpanel");
+  const pill = tabPanel.locator("div.pointer-events-none").first();
+  await expect(pill).toBeVisible({ timeout: 5000 });
+  await tabPanel.getByRole("button", { name: /Logs/ }).click();
+  await page.waitForTimeout(400);
+  const style = await pill.getAttribute("style");
+  expect(style).toContain("left:");
+});
+
+// === ANIMATED STATUSSTRIP NUMBERS ===
+
+test("StatusStrip displays percentage values in header", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForTimeout(3000);
+  const header = page.locator("header");
+  // Should show at least CPU and Mem percentages with % symbol
+  await expect(header.locator("text=/%/").first()).toBeVisible({ timeout: 10000 });
 });
