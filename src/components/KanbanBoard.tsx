@@ -42,8 +42,10 @@ import {
   Loader2,
   MessageSquare,
   Timer,
+  Clock,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
+import { formatRelativeTime } from "@/lib/formatters";
 import type { Task, TaskStatus, TaskPriority, Assignee } from "@/types";
 
 // ---------------------------------------------------------------------------
@@ -127,6 +129,21 @@ function formatDate(ts: number): string {
   }).format(new Date(ts));
 }
 
+const STALE_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+
+function isStale(task: Task): boolean {
+  if (task.status !== "blocked" && task.status !== "in_progress") return false;
+  return Date.now() - task.updatedAt > STALE_THRESHOLD_MS;
+}
+
+const PRIORITY_ORDER: TaskPriority[] = ["urgent", "high", "medium", "low"];
+const PRIORITY_BAR_COLORS: Record<TaskPriority, string> = {
+  urgent: "bg-red-500",
+  high: "bg-orange-500",
+  medium: "bg-blue-500",
+  low: "bg-gray-400",
+};
+
 // ---------------------------------------------------------------------------
 // KanbanCard — draggable task card
 // ---------------------------------------------------------------------------
@@ -161,13 +178,15 @@ function KanbanCard({
   const assignee = assignees.find((a) => a.name === task.assignee);
   const colorClass = ASSIGNEE_COLORS[task.assignee ?? ""] ?? "bg-gray-500/20 text-gray-400";
 
+  const stale = isStale(task);
+
   return (
     <div
       ref={isDragOverlay ? undefined : setNodeRef}
       style={style}
-      className={`rounded-lg border border-border/30 bg-card p-3 cursor-pointer hover:border-border/60 transition-colors border-l-4 ${
+      className={`rounded-lg border border-border/30 bg-card p-3 cursor-pointer hover:border-border/60 hover:shadow-md hover:-translate-y-px transition-all duration-150 border-l-4 ${
         PRIORITY_COLORS[task.priority]
-      } ${isDragging ? "opacity-30" : ""} ${isDragOverlay ? "shadow-xl ring-2 ring-primary/20 rotate-2" : ""}`}
+      } ${isDragging ? "opacity-30" : ""} ${isDragOverlay ? "shadow-xl ring-2 ring-primary/20 rotate-2" : ""} ${stale ? "ring-1 ring-amber-500/30" : ""}`}
       onClick={onClick}
       {...(isDragOverlay ? {} : attributes)}
     >
@@ -214,6 +233,13 @@ function KanbanCard({
 
             {/* Source icon */}
             {task.source !== "manual" && SOURCE_ICONS[task.source]}
+
+            {/* Relative time */}
+            <span className={`text-[10px] flex items-center gap-0.5 ml-auto ${stale ? "text-amber-500" : "text-muted-foreground/50"}`} title={formatDate(task.updatedAt)}>
+              {stale && <AlertTriangle className="h-2.5 w-2.5" />}
+              <Clock className="h-2.5 w-2.5" />
+              {formatRelativeTime(task.updatedAt)}
+            </span>
           </div>
         </div>
 
@@ -246,16 +272,18 @@ function KanbanColumn({
   assignees,
   onCardClick,
   onQuickAdd,
+  quickAddInputRef,
 }: {
   column: (typeof COLUMNS)[number];
   tasks: Task[];
   assignees: Assignee[];
   onCardClick: (task: Task) => void;
   onQuickAdd?: (title: string) => void;
+  quickAddInputRef?: React.RefObject<HTMLInputElement | null>;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const [quickAddValue, setQuickAddValue] = useState("");
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = quickAddInputRef ?? useRef<HTMLInputElement>(null);
 
   const handleQuickAddSubmit = () => {
     const title = quickAddValue.trim();
@@ -278,9 +306,27 @@ function KanbanColumn({
           {column.icon}
           {column.label}
         </div>
-        <span className="text-xs text-muted-foreground/60 tabular-nums">
-          {tasks.length}
-        </span>
+        <div className="flex items-center gap-1.5">
+          {/* Priority breakdown dots */}
+          {tasks.length > 0 && (
+            <div className="flex items-center gap-0.5">
+              {PRIORITY_ORDER.map((p) => {
+                const count = tasks.filter((t) => t.priority === p).length;
+                if (count === 0) return null;
+                return (
+                  <span
+                    key={p}
+                    className={`w-1.5 h-1.5 rounded-full ${PRIORITY_BAR_COLORS[p]}`}
+                    title={`${p}: ${count}`}
+                  />
+                );
+              })}
+            </div>
+          )}
+          <span className="text-xs text-muted-foreground/60 tabular-nums">
+            {tasks.length}
+          </span>
+        </div>
       </div>
 
       {/* Quick-add for To Do column */}
@@ -857,10 +903,38 @@ export function KanbanBoard() {
     [mutateTasks, toast]
   );
 
+  // Keyboard shortcut: 'n' focuses quick-add input
+  const quickAddRef = useRef<HTMLInputElement>(null);
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      if (e.key === "n" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        quickAddRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
+
   // Unique assignees present in tasks (for filter buttons)
   const assigneeNames = [
     ...new Set(tasks.map((t) => t.assignee).filter(Boolean)),
   ] as string[];
+
+  // Priority distribution across all filtered tasks
+  const priorityDistribution = useMemo(() => {
+    const total = filteredTasks.length;
+    if (total === 0) return [];
+    return PRIORITY_ORDER.map((p) => {
+      const count = filteredTasks.filter((t) => t.priority === p).length;
+      return { priority: p, count, pct: (count / total) * 100 };
+    }).filter((d) => d.count > 0);
+  }, [filteredTasks]);
+
+  // Stale task count
+  const staleCount = useMemo(() => filteredTasks.filter(isStale).length, [filteredTasks]);
 
   return (
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
@@ -928,6 +1002,12 @@ export function KanbanBoard() {
 
         {/* Task summary counts — colored dots with numbers */}
         <div className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground/60 tabular-nums">
+          {staleCount > 0 && (
+            <span className="flex items-center gap-1 text-amber-500" title={`${staleCount} stale task${staleCount > 1 ? "s" : ""} (>3 days)`}>
+              <AlertTriangle className="h-3 w-3" />
+              <span>{staleCount}</span>
+            </span>
+          )}
           {COLUMNS.map((col) => {
             const count = tasksByColumn[col.id].length;
             const dotColor = col.id === "todo" ? "bg-gray-400" :
@@ -942,6 +1022,22 @@ export function KanbanBoard() {
           })}
         </div>
       </div>
+
+      {/* Priority distribution bar */}
+      {filteredTasks.length > 0 && (
+        <div className="px-4 pb-2">
+          <div className="flex h-1.5 rounded-full overflow-hidden bg-muted/30" data-testid="priority-bar">
+            {priorityDistribution.map((d) => (
+              <div
+                key={d.priority}
+                className={`${PRIORITY_BAR_COLORS[d.priority]} transition-all duration-300`}
+                style={{ width: `${d.pct}%` }}
+                title={`${d.priority}: ${d.count}`}
+              />
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Mobile column selector */}
       {isMobile && (
@@ -984,6 +1080,7 @@ export function KanbanBoard() {
                 assignees={assignees}
                 onCardClick={setSelectedTask}
                 onQuickAdd={col.id === "todo" ? handleQuickAdd : undefined}
+                quickAddInputRef={col.id === "todo" ? quickAddRef : undefined}
               />
             ))}
           </div>
