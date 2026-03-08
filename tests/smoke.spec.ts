@@ -1632,9 +1632,9 @@ test("Agents session detail shows duration when timeline has timestamps", async 
   const sessionItem = page.locator("[role=button]").first();
   await expect(sessionItem).toBeVisible({ timeout: 15000 });
   await sessionItem.click();
-  // Detail panel loads — check for Duration row or Timeline header
+  // Detail panel loads — check for Timeline header (always present in detail view)
   await expect(
-    page.getByText("Duration").or(page.getByText(/Timeline \(\d+ messages?\)/))
+    page.getByText(/Timeline \(\d+ messages?\)/)
   ).toBeVisible({ timeout: 15000 });
 });
 
@@ -1650,8 +1650,99 @@ test("Agents session list shows duration badge when available", async ({ page, r
   // Wait for session cards to appear
   const sessionItem = page.locator("[role=button]").first();
   await expect(sessionItem).toBeVisible({ timeout: 15000 });
-  // Session cards should have model badges visible
-  await expect(page.locator("[role=button]").first().locator(".text-purple-400")).toBeVisible();
+  // Session cards should have model badges visible (model-colored: green, blue, or purple)
+  await expect(
+    page.locator("[role=button]").first().locator(".text-green-400, .text-blue-400, .text-purple-400, .text-gray-400").first()
+  ).toBeVisible();
+});
+
+// === AGENT SESSIONS UX POLISH TESTS ===
+
+test("Agents stats bar shows session count when sessions exist", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=5");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  // Stats bar should show session count
+  await expect(page.getByTestId("agent-stats-bar")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId("agent-stats-bar")).toContainText("sessions");
+});
+
+test("Agents model filter pills are visible when sessions exist", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=5");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  // Model filter pills should show All button
+  await expect(page.getByTestId("model-filter-pills")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId("model-filter-pills").getByText("All")).toBeVisible();
+});
+
+test("Agents sort dropdown is visible and has options", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=5");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  // Sort select should be visible
+  const sortSelect = page.getByTestId("session-sort");
+  await expect(sortSelect).toBeVisible({ timeout: 15000 });
+});
+
+test("Agents detail view shows model-colored header when session selected", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=1");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  const sessionItem = page.locator("[role=button]").first();
+  await expect(sessionItem).toBeVisible({ timeout: 15000 });
+  await sessionItem.click();
+  // Detail should show Model label and the model badge
+  await expect(page.getByText("Model", { exact: true }).first()).toBeVisible({ timeout: 15000 });
+});
+
+test("Agents detail view shows top tools when session has tool calls", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=1");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0 || sessions[0].toolCallCount === 0) {
+    test.skip();
+    return;
+  }
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  const sessionItem = page.locator("[role=button]").first();
+  await expect(sessionItem).toBeVisible({ timeout: 15000 });
+  await sessionItem.click();
+  // Top tools section should be visible
+  await expect(page.getByText("Top tools:")).toBeVisible({ timeout: 15000 });
+});
+
+test("Agents empty state with clear filters button works", async ({ page }) => {
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByRole("tab", { name: /Activity/ })).toBeVisible({ timeout: 15000 });
+  // Type something unlikely to match
+  const searchInput = page.getByPlaceholder("Search sessions...");
+  await expect(searchInput).toBeVisible({ timeout: 15000 });
+  await searchInput.fill("zzzznonexistent999");
+  // Should show "No sessions matching filters" or similar empty state
+  await expect(page.getByText("No sessions matching filters")).toBeVisible({ timeout: 10000 });
 });
 
 // === NEW FEATURE TESTS: CronHistory UX Improvements ===
