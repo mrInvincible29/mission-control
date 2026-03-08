@@ -6,8 +6,8 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, X, RefreshCw, Clock, ChevronDown, ChevronRight, Copy, Check, Timer } from "lucide-react";
-import { formatTokens, formatCost, formatRelativeTime } from "@/lib/formatters";
+import { Search, X, RefreshCw, Clock, ChevronDown, ChevronRight, Copy, Check, Timer, DollarSign, Zap, ArrowUpDown, Bot } from "lucide-react";
+import { formatTokens, formatCost, formatRelativeTime, getModelColor } from "@/lib/formatters";
 
 interface SessionMeta {
   id: string;
@@ -38,7 +38,7 @@ interface SessionDetail extends SessionMeta {
   timeline: TimelineItem[];
 }
 
-// formatTokens, formatCost, formatRelativeTime imported from @/lib/formatters
+type SortMode = "recent" | "cost" | "tokens" | "duration";
 
 function getPromptLabel(prompt: string): string {
   if (!prompt) return "No prompt";
@@ -82,6 +82,35 @@ function getSessionDuration(detail: SessionDetail): number | null {
   return diff > 0 ? diff : null;
 }
 
+/** Get session duration from meta (timestamp to lastActivity) */
+function getMetaDuration(session: SessionMeta): number | null {
+  if (!session.timestamp || !session.lastActivity) return null;
+  const diff = session.lastActivity - session.timestamp;
+  return diff > 0 ? diff : null;
+}
+
+/** Check if session was active recently (within last 5 minutes) */
+function isRecentlyActive(session: SessionMeta): boolean {
+  const lastTs = session.lastActivity || session.timestamp;
+  if (!lastTs) return false;
+  return Date.now() - lastTs < 5 * 60 * 1000;
+}
+
+/** Extract unique model names from sessions */
+function getUniqueModels(sessions: SessionMeta[]): string[] {
+  const models = new Set<string>();
+  for (const s of sessions) {
+    if (s.model) models.add(s.model);
+  }
+  return Array.from(models).sort();
+}
+
+/** Get model badge styling using shared getModelColor */
+function getModelBadgeClasses(model: string): string {
+  const colors = getModelColor(model);
+  return `${colors.bg} ${colors.text} ${colors.border}`;
+}
+
 /** Copy text to clipboard with a temporary visual confirmation */
 function CopyButton({ text, label }: { text: string; label?: string }) {
   const [copied, setCopied] = useState(false);
@@ -93,7 +122,6 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Fallback for non-HTTPS contexts
       const ta = document.createElement("textarea");
       ta.value = text;
       ta.style.position = "fixed";
@@ -127,6 +155,13 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 const PAGE_SIZE = 25;
 const THINKING_COLLAPSE_THRESHOLD = 200;
 
+const SORT_OPTIONS: { value: SortMode; label: string }[] = [
+  { value: "recent", label: "Recent" },
+  { value: "cost", label: "Cost" },
+  { value: "tokens", label: "Tokens" },
+  { value: "duration", label: "Duration" },
+];
+
 export function AgentSessions() {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -137,6 +172,8 @@ export function AgentSessions() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [lastFetch, setLastFetch] = useState<number>(0);
   const [page, setPage] = useState(0);
+  const [sortMode, setSortMode] = useState<SortMode>("recent");
+  const [modelFilter, setModelFilter] = useState<string | null>(null);
 
   // Abort controllers to prevent request pileup
   const sessionsAbortRef = useRef<AbortController | null>(null);
@@ -259,31 +296,71 @@ export function AgentSessions() {
     return () => window.removeEventListener("refresh-view", handler);
   }, [fetchSessions, fetchDetail, selectedId]);
 
-  // Filter sessions by search
+  // Unique models for filter pills
+  const uniqueModels = useMemo(() => getUniqueModels(sessions), [sessions]);
+
+  // Aggregate stats
+  const stats = useMemo(() => {
+    const totalCost = sessions.reduce((s, sess) => s + sess.totalCost, 0);
+    const totalTokens = sessions.reduce((s, sess) => s + sess.totalTokens, 0);
+    const activeCount = sessions.filter(isRecentlyActive).length;
+    return { totalCost, totalTokens, activeCount, total: sessions.length };
+  }, [sessions]);
+
+  // Filter sessions by search + model
   const filteredSessions = useMemo(() => {
-    if (!searchText.trim()) return sessions;
-    const lower = searchText.toLowerCase();
-    return sessions.filter(
-      (s) =>
-        s.prompt.toLowerCase().includes(lower) ||
-        s.model.toLowerCase().includes(lower) ||
-        s.id.toLowerCase().includes(lower)
-    );
-  }, [sessions, searchText]);
+    let result = sessions;
+
+    if (modelFilter) {
+      result = result.filter((s) => s.model === modelFilter);
+    }
+
+    if (searchText.trim()) {
+      const lower = searchText.toLowerCase();
+      result = result.filter(
+        (s) =>
+          s.prompt.toLowerCase().includes(lower) ||
+          s.model.toLowerCase().includes(lower) ||
+          s.id.toLowerCase().includes(lower)
+      );
+    }
+
+    return result;
+  }, [sessions, searchText, modelFilter]);
+
+  // Sort sessions
+  const sortedSessions = useMemo(() => {
+    const sorted = [...filteredSessions];
+    switch (sortMode) {
+      case "cost":
+        sorted.sort((a, b) => b.totalCost - a.totalCost);
+        break;
+      case "tokens":
+        sorted.sort((a, b) => b.totalTokens - a.totalTokens);
+        break;
+      case "duration":
+        sorted.sort((a, b) => (getMetaDuration(b) || 0) - (getMetaDuration(a) || 0));
+        break;
+      case "recent":
+      default:
+        sorted.sort((a, b) => (b.lastActivity || b.timestamp || 0) - (a.lastActivity || a.timestamp || 0));
+        break;
+    }
+    return sorted;
+  }, [filteredSessions, sortMode]);
 
   // Pagination
-  const totalPages = Math.ceil(filteredSessions.length / PAGE_SIZE);
+  const totalPages = Math.ceil(sortedSessions.length / PAGE_SIZE);
   const paginatedSessions = useMemo(() => {
     const start = page * PAGE_SIZE;
-    return filteredSessions.slice(start, start + PAGE_SIZE);
-  }, [filteredSessions, page]);
+    return sortedSessions.slice(start, start + PAGE_SIZE);
+  }, [sortedSessions, page]);
 
-  // Reset page when search changes
+  // Reset page when search/filter/sort changes
   useEffect(() => {
     setPage(0);
-  }, [searchText]);
+  }, [searchText, modelFilter, sortMode]);
 
-  // Prevent unnecessary re-renders with memoization
   const handleSelectSession = useCallback((id: string) => {
     setSelectedId(id);
   }, []);
@@ -296,168 +373,259 @@ export function AgentSessions() {
   }, [fetchSessions, fetchDetail, selectedId]);
 
   return (
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-200px)]">
-      {/* Session List - hidden on mobile when detail is selected */}
-      <Card className={`border-border/60 bg-muted/30 shadow-sm flex flex-col min-h-0 ${selectedId ? "hidden lg:flex" : "flex"}`}>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg font-semibold">Sessions</CardTitle>
-            <div className="flex items-center gap-2">
-              <Button
-                variant={autoRefresh ? "default" : "outline"}
-                size="sm"
-                className="text-xs h-7 px-2"
-                onClick={() => setAutoRefresh(!autoRefresh)}
-              >
-                <RefreshCw className={`h-3 w-3 mr-1 ${autoRefresh ? "animate-spin" : ""}`} />
-                Auto
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs h-7 px-2"
-                onClick={handleRefresh}
-              >
-                <RefreshCw className="h-3 w-3" />
-              </Button>
-            </div>
+    <div className="space-y-3">
+      {/* Summary Stats Bar */}
+      {!loading && sessions.length > 0 && (
+        <div className="flex items-center gap-3 flex-wrap text-xs" data-testid="agent-stats-bar">
+          <div className="flex items-center gap-1.5 text-muted-foreground">
+            <Bot className="size-3.5" />
+            <span className="font-medium">{stats.total}</span> sessions
           </div>
-
-          {/* Search/Filter */}
-          <div className="relative mt-3">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              type="text"
-              placeholder="Search sessions..."
-              value={searchText}
-              onChange={(e) => setSearchText(e.target.value)}
-              className="pl-8 pr-8 h-8 text-xs"
-            />
-            {searchText && (
-              <button
-                onClick={() => setSearchText("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                aria-label="Clear search"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
-            )}
-          </div>
-
-          {/* Stats */}
-          <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-            <span>{filteredSessions.length} sessions</span>
-            <span className="flex items-center gap-1">
-              {lastFetch > 0 && (
-                <>
-                  <Clock className="h-3 w-3" />
-                  Updated {formatRelativeTime(lastFetch)}
-                </>
-              )}
-            </span>
-          </div>
-        </CardHeader>
-
-        <CardContent className="flex-1 overflow-hidden">
-          <ScrollArea className="h-full pr-4">
-            {loading ? (
-              <div className="flex items-center justify-center h-32 text-muted-foreground">
-                Loading sessions...
-              </div>
-            ) : filteredSessions.length === 0 ? (
-              <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2">
-                {searchText ? (
-                  <>
-                    <Search className="size-8 opacity-20" />
-                    <p className="text-sm">No sessions matching &ldquo;{searchText}&rdquo;</p>
-                  </>
-                ) : (
-                  <>
-                    <Clock className="size-8 opacity-20" />
-                    <p className="text-sm">No active sessions</p>
-                    <p className="text-xs text-muted-foreground/50">Sessions appear when agents start working</p>
-                  </>
-                )}
-              </div>
-            ) : (
-              <div className="space-y-2">
-                {paginatedSessions.map((session) => (
-                  <SessionListItem
-                    key={session.id}
-                    session={session}
-                    isSelected={selectedId === session.id}
-                    onSelect={handleSelectSession}
-                  />
-                ))}
-
-                {/* Pagination Controls */}
-                {totalPages > 1 && (
-                  <div className="flex items-center justify-between pt-3 pb-1">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-xs h-7 px-3"
-                      disabled={page === 0}
-                      onClick={() => setPage(p => p - 1)}
-                    >
-                      Prev
-                    </Button>
-                    <span className="text-xs text-muted-foreground">
-                      {page + 1} / {totalPages}
-                    </span>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="text-xs h-7 px-3"
-                      disabled={page >= totalPages - 1}
-                      onClick={() => setPage(p => p + 1)}
-                    >
-                      Next
-                    </Button>
-                  </div>
-                )}
-              </div>
-            )}
-          </ScrollArea>
-        </CardContent>
-      </Card>
-
-      {/* Detail View - hidden on mobile when no selection */}
-      <Card className={`border-border/60 bg-muted/30 shadow-sm flex flex-col min-h-0 ${!selectedId ? "hidden lg:flex" : "flex"}`}>
-        <CardHeader className="pb-3">
-          <div className="flex items-center justify-between">
-            <CardTitle className="text-lg font-semibold">Detail</CardTitle>
-            {selectedId && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="text-xs h-7 px-2 lg:hidden"
-                onClick={() => setSelectedId(null)}
-              >
-                Back
-              </Button>
-            )}
-          </div>
-        </CardHeader>
-
-        <CardContent className="flex-1 overflow-hidden">
-          {!selectedId ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              Select a session to view details
-            </div>
-          ) : detailLoading ? (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              Loading...
-            </div>
-          ) : detail ? (
-            <SessionDetailView detail={detail} />
-          ) : (
-            <div className="flex items-center justify-center h-full text-muted-foreground">
-              Failed to load session
+          {stats.activeCount > 0 && (
+            <div className="flex items-center gap-1.5">
+              <span className="relative flex size-2">
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
+              </span>
+              <span className="text-emerald-400 font-medium">{stats.activeCount} active</span>
             </div>
           )}
-        </CardContent>
-      </Card>
+          {stats.totalCost > 0 && (
+            <div className="flex items-center gap-1 text-emerald-400">
+              <DollarSign className="size-3" />
+              <span className="font-medium">{formatCost(stats.totalCost)}</span>
+            </div>
+          )}
+          {stats.totalTokens > 0 && (
+            <div className="flex items-center gap-1 text-blue-400">
+              <Zap className="size-3" />
+              <span className="font-medium">{formatTokens(stats.totalTokens)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4 h-[calc(100vh-240px)]">
+        {/* Session List */}
+        <Card className={`border-border/60 bg-muted/30 shadow-sm flex flex-col min-h-0 ${selectedId ? "hidden lg:flex" : "flex"}`}>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg font-semibold">Sessions</CardTitle>
+              <div className="flex items-center gap-2">
+                <Button
+                  variant={autoRefresh ? "default" : "outline"}
+                  size="sm"
+                  className="text-xs h-7 px-2"
+                  onClick={() => setAutoRefresh(!autoRefresh)}
+                >
+                  <RefreshCw className={`h-3 w-3 mr-1 ${autoRefresh ? "animate-spin" : ""}`} />
+                  Auto
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs h-7 px-2"
+                  onClick={handleRefresh}
+                >
+                  <RefreshCw className="h-3 w-3" />
+                </Button>
+              </div>
+            </div>
+
+            {/* Search/Filter */}
+            <div className="relative mt-3">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                type="text"
+                placeholder="Search sessions..."
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                className="pl-8 pr-8 h-8 text-xs"
+              />
+              {searchText && (
+                <button
+                  onClick={() => setSearchText("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear search"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
+
+            {/* Model Filter Pills + Sort */}
+            <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
+              <div className="flex items-center gap-1 flex-wrap" data-testid="model-filter-pills">
+                <button
+                  onClick={() => setModelFilter(null)}
+                  className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors ${
+                    !modelFilter
+                      ? "bg-primary/15 text-primary border-primary/30"
+                      : "text-muted-foreground border-border/40 hover:border-border/60"
+                  }`}
+                >
+                  All
+                </button>
+                {uniqueModels.map((model) => {
+                  const colors = getModelColor(model);
+                  const isActive = modelFilter === model;
+                  const count = sessions.filter((s) => s.model === model).length;
+                  return (
+                    <button
+                      key={model}
+                      onClick={() => setModelFilter(isActive ? null : model)}
+                      className={`text-[10px] px-2 py-0.5 rounded-full border transition-colors flex items-center gap-1 ${
+                        isActive
+                          ? `${colors.bg} ${colors.text} ${colors.border}`
+                          : "text-muted-foreground border-border/40 hover:border-border/60"
+                      }`}
+                    >
+                      <span className={`inline-block size-1.5 rounded-full ${colors.dot}`} />
+                      {model.split("/").pop()?.replace("claude-", "").replace("-latest", "") || model}
+                      <span className="opacity-60">{count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+
+              {/* Sort dropdown */}
+              <div className="flex items-center gap-1">
+                <ArrowUpDown className="size-3 text-muted-foreground" />
+                <select
+                  value={sortMode}
+                  onChange={(e) => setSortMode(e.target.value as SortMode)}
+                  className="text-[10px] bg-transparent text-muted-foreground border-none outline-none cursor-pointer"
+                  data-testid="session-sort"
+                >
+                  {SORT_OPTIONS.map((opt) => (
+                    <option key={opt.value} value={opt.value}>{opt.label}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {/* Stats */}
+            <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
+              <span>{sortedSessions.length} sessions{modelFilter ? ` (${modelFilter.split("/").pop()})` : ""}</span>
+              <span className="flex items-center gap-1">
+                {lastFetch > 0 && (
+                  <>
+                    <Clock className="h-3 w-3" />
+                    Updated {formatRelativeTime(lastFetch)}
+                  </>
+                )}
+              </span>
+            </div>
+          </CardHeader>
+
+          <CardContent className="flex-1 overflow-hidden">
+            <ScrollArea className="h-full pr-4">
+              {loading ? (
+                <div className="flex items-center justify-center h-32 text-muted-foreground">
+                  Loading sessions...
+                </div>
+              ) : sortedSessions.length === 0 ? (
+                <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2">
+                  {searchText || modelFilter ? (
+                    <>
+                      <Search className="size-8 opacity-20" />
+                      <p className="text-sm">No sessions matching filters</p>
+                      <button
+                        onClick={() => { setSearchText(""); setModelFilter(null); }}
+                        className="text-xs text-primary hover:underline"
+                      >
+                        Clear filters
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <Bot className="size-8 opacity-20" />
+                      <p className="text-sm">No active sessions</p>
+                      <p className="text-xs text-muted-foreground/50">Sessions appear when agents start working</p>
+                    </>
+                  )}
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {paginatedSessions.map((session) => (
+                    <SessionListItem
+                      key={session.id}
+                      session={session}
+                      isSelected={selectedId === session.id}
+                      onSelect={handleSelectSession}
+                    />
+                  ))}
+
+                  {/* Pagination Controls */}
+                  {totalPages > 1 && (
+                    <div className="flex items-center justify-between pt-3 pb-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs h-7 px-3"
+                        disabled={page === 0}
+                        onClick={() => setPage(p => p - 1)}
+                      >
+                        Prev
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
+                        {page + 1} / {totalPages}
+                      </span>
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="text-xs h-7 px-3"
+                        disabled={page >= totalPages - 1}
+                        onClick={() => setPage(p => p + 1)}
+                      >
+                        Next
+                      </Button>
+                    </div>
+                  )}
+                </div>
+              )}
+            </ScrollArea>
+          </CardContent>
+        </Card>
+
+        {/* Detail View */}
+        <Card className={`border-border/60 bg-muted/30 shadow-sm flex flex-col min-h-0 ${!selectedId ? "hidden lg:flex" : "flex"}`}>
+          <CardHeader className="pb-3">
+            <div className="flex items-center justify-between">
+              <CardTitle className="text-lg font-semibold">Detail</CardTitle>
+              {selectedId && (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs h-7 px-2 lg:hidden"
+                  onClick={() => setSelectedId(null)}
+                >
+                  Back
+                </Button>
+              )}
+            </div>
+          </CardHeader>
+
+          <CardContent className="flex-1 overflow-hidden">
+            {!selectedId ? (
+              <div className="flex flex-col items-center justify-center h-full text-muted-foreground gap-2">
+                <Bot className="size-10 opacity-15" />
+                <p className="text-sm">Select a session to view details</p>
+              </div>
+            ) : detailLoading ? (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                Loading...
+              </div>
+            ) : detail ? (
+              <SessionDetailView detail={detail} />
+            ) : (
+              <div className="flex items-center justify-center h-full text-muted-foreground">
+                Failed to load session
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
     </div>
   );
 }
@@ -471,22 +639,24 @@ function SessionListItem({
   isSelected: boolean;
   onSelect: (id: string) => void;
 }) {
-  // Compute session duration from first to last activity
   const durationLabel = useMemo(() => {
-    if (!session.timestamp || !session.lastActivity) return null;
-    const diff = session.lastActivity - session.timestamp;
-    return diff > 0 ? formatDuration(diff) : null;
-  }, [session.timestamp, session.lastActivity]);
+    const dur = getMetaDuration(session);
+    return dur ? formatDuration(dur) : null;
+  }, [session]);
+
+  const active = isRecentlyActive(session);
+  const modelColors = getModelColor(session.model);
 
   return (
     <div
       role="button"
       tabIndex={0}
-      className={`p-3 rounded-lg border transition-colors cursor-pointer ${
+      className={`p-3 rounded-lg border-l-[3px] border transition-colors cursor-pointer ${
         isSelected
-          ? "border-primary bg-primary/10"
-          : "border-border/50 bg-card/50 hover:bg-card/80"
+          ? `${modelColors.border} border-l-current bg-primary/10`
+          : `border-l-transparent border-border/50 bg-card/50 hover:bg-card/80 hover:border-l-border/60`
       } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
+      style={isSelected ? { borderLeftColor: `var(--tw-border-opacity, 1)` } : undefined}
       onClick={() => onSelect(session.id)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -495,14 +665,22 @@ function SessionListItem({
         }
       }}
     >
-      <div className="text-sm text-foreground/90 font-medium line-clamp-2 mb-2">
-        {getPromptLabel(session.prompt)}
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div className="text-sm text-foreground/90 font-medium line-clamp-2 flex-1">
+          {getPromptLabel(session.prompt)}
+        </div>
+        {active && (
+          <span className="relative flex size-2 mt-1.5 shrink-0" title="Active in last 5 min">
+            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+            <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
+          </span>
+        )}
       </div>
 
       <div className="flex items-center gap-1.5 flex-wrap mb-2">
         <Badge
           variant="outline"
-          className="text-[10px] px-1.5 py-0 bg-purple-500/20 text-purple-400 border-purple-500/30"
+          className={`text-[10px] px-1.5 py-0 ${getModelBadgeClasses(session.model)}`}
         >
           {session.model}
         </Badge>
@@ -550,12 +728,32 @@ function SessionListItem({
 
 function SessionDetailView({ detail }: { detail: SessionDetail }) {
   const duration = useMemo(() => getSessionDuration(detail), [detail]);
+  const modelColors = getModelColor(detail.model);
+
+  // Cost per minute calculation
+  const costPerMinute = useMemo(() => {
+    if (!duration || duration < 60000 || detail.totalCost <= 0) return null;
+    return detail.totalCost / (duration / 60000);
+  }, [duration, detail.totalCost]);
+
+  // Tool usage summary
+  const toolSummary = useMemo(() => {
+    const toolCounts: Record<string, number> = {};
+    for (const item of detail.timeline) {
+      for (const tool of item.tools) {
+        toolCounts[tool.name] = (toolCounts[tool.name] || 0) + 1;
+      }
+    }
+    return Object.entries(toolCounts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 5);
+  }, [detail.timeline]);
 
   return (
     <ScrollArea className="h-full pr-1 sm:pr-4">
       <div className="space-y-4 min-w-0">
-        {/* Header Stats */}
-        <div className="rounded-lg bg-muted/50 p-3 space-y-1.5 overflow-hidden">
+        {/* Header Stats — model-colored accent */}
+        <div className={`rounded-lg p-3 space-y-1.5 overflow-hidden border ${modelColors.border} ${modelColors.bg}`}>
           <div className="flex items-start gap-2">
             <span className="text-xs text-muted-foreground w-20 shrink-0">Session ID</span>
             <span className="text-xs font-mono break-all min-w-0 flex-1">{detail.id}</span>
@@ -565,37 +763,70 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
             <span className="text-xs text-muted-foreground w-20 shrink-0">Model</span>
             <Badge
               variant="outline"
-              className="text-[10px] px-1.5 py-0 bg-purple-500/20 text-purple-400 border-purple-500/30"
+              className={`text-[10px] px-1.5 py-0 ${getModelBadgeClasses(detail.model)}`}
             >
               {detail.model}
             </Badge>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground w-20 shrink-0">Messages</span>
-            <span className="text-xs">{detail.messageCount}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground w-20 shrink-0">Tool Calls</span>
-            <span className="text-xs">{detail.toolCallCount}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground w-20 shrink-0">Total Cost</span>
-            <span className="text-xs text-emerald-400">{formatCost(detail.totalCost)}</span>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs text-muted-foreground w-20 shrink-0">Total Tokens</span>
-            <span className="text-xs text-blue-400">{formatTokens(detail.totalTokens)}</span>
-          </div>
-          {duration != null && (
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-muted-foreground w-20 shrink-0">Duration</span>
-              <span className="text-xs text-orange-400 flex items-center gap-1">
-                <Timer className="size-3" />
-                {formatDuration(duration)}
+            {isRecentlyActive(detail) && (
+              <span className="flex items-center gap-1 text-[10px] text-emerald-400">
+                <span className="relative flex size-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                  <span className="relative inline-flex rounded-full size-1.5 bg-emerald-500" />
+                </span>
+                Active
               </span>
+            )}
+          </div>
+          <div className="grid grid-cols-2 gap-x-4 gap-y-1">
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">Messages</span>
+              <span className="text-xs">{detail.messageCount}</span>
             </div>
-          )}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">Tool Calls</span>
+              <span className="text-xs">{detail.toolCallCount}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">Total Cost</span>
+              <span className="text-xs text-emerald-400">{formatCost(detail.totalCost)}</span>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground w-20 shrink-0">Total Tokens</span>
+              <span className="text-xs text-blue-400">{formatTokens(detail.totalTokens)}</span>
+            </div>
+            {duration != null && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground w-20 shrink-0">Duration</span>
+                <span className="text-xs text-orange-400 flex items-center gap-1">
+                  <Timer className="size-3" />
+                  {formatDuration(duration)}
+                </span>
+              </div>
+            )}
+            {costPerMinute != null && (
+              <div className="flex items-center gap-2">
+                <span className="text-xs text-muted-foreground w-20 shrink-0">Cost/min</span>
+                <span className="text-xs text-emerald-400/70">{formatCost(costPerMinute)}/min</span>
+              </div>
+            )}
+          </div>
         </div>
+
+        {/* Top Tools Used */}
+        {toolSummary.length > 0 && (
+          <div className="flex items-center gap-1.5 flex-wrap">
+            <span className="text-[10px] text-muted-foreground">Top tools:</span>
+            {toolSummary.map(([name, count]) => (
+              <Badge
+                key={name}
+                variant="outline"
+                className="text-[10px] px-1.5 py-0 bg-cyan-500/10 text-cyan-400 border-cyan-500/20"
+              >
+                {name} <span className="text-cyan-400/60 ml-0.5">{count}</span>
+              </Badge>
+            ))}
+          </div>
+        )}
 
         {/* Initial Prompt */}
         {detail.prompt && (
@@ -607,7 +838,7 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
           </div>
         )}
 
-        {/* Timeline — chronological order (oldest first) */}
+        {/* Timeline */}
         <div className="space-y-3">
           <div className="text-xs font-medium text-muted-foreground">
             Timeline ({detail.timeline.length} messages)
@@ -687,7 +918,7 @@ function TimelineMessage({ item, index }: { item: TimelineItem; index: number })
   );
 }
 
-/** Collapsible thinking block — collapses long thinking text by default */
+/** Collapsible thinking block */
 function CollapsibleThinking({ text }: { text: string }) {
   const isLong = text.length > THINKING_COLLAPSE_THRESHOLD;
   const [expanded, setExpanded] = useState(!isLong);
