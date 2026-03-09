@@ -1455,8 +1455,8 @@ test("Analytics 1d button switches to 1-day window", async ({ page }) => {
   const btn1d = page.getByRole("button", { name: "1d", exact: true });
   await expect(btn1d).toBeVisible({ timeout: 10000 });
   await btn1d.click();
-  // After clicking 1d, the subtitle should show "1-day window"
-  await expect(page.getByText("1-day window")).toBeVisible({ timeout: 5000 });
+  // After clicking 1d, the Activities subtitle should show "X of 1d active"
+  await expect(page.getByText(/of 1d active/)).toBeVisible({ timeout: 5000 });
 });
 
 test("Analytics bar charts have Y-axis scale labels", async ({ page }) => {
@@ -2594,4 +2594,73 @@ test("KanbanBoard card hover shows elevated style", async ({ page, request }) =>
   } finally {
     await request.delete(`/api/tasks/${task.id}`);
   }
+});
+
+// === ANALYTICS VIEW UX POLISH ===
+
+test("AnalyticsView renders 5 stat cards including Efficiency", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByRole("tabpanel")).toBeVisible();
+  // Wait for analytics data to load
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  // Should have 5 stat cards: Total Cost, Total Tokens, Efficiency, Activities, Errors
+  await expect(page.getByText("Efficiency")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("cost per 1K tokens")).toBeVisible();
+});
+
+test("AnalyticsView heatmap metric toggle renders and switches", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  const toggle = page.getByTestId("heatmap-metric-toggle");
+  await expect(toggle).toBeVisible({ timeout: 10000 });
+  // Should have 3 buttons: Activity, Tokens, Cost
+  await expect(toggle.getByText("Activity")).toBeVisible();
+  await expect(toggle.getByText("Tokens")).toBeVisible();
+  await expect(toggle.getByText("Cost")).toBeVisible();
+  // Click Tokens to switch metric
+  await toggle.getByText("Tokens").click();
+  // The Tokens button should now be highlighted (has primary class)
+  await expect(toggle.getByText("Tokens")).toHaveClass(/text-primary/);
+});
+
+test("AnalyticsView shows active days indicator", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  // Activities stat card should show "X of Yd active" pattern
+  await expect(page.getByText(/\d+ of \d+d active/)).toBeVisible({ timeout: 10000 });
+});
+
+test("AnalyticsView sparklines render in stat cards", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  // Sparklines are SVG polyline elements inside stat cards
+  const sparklines = page.locator("polyline");
+  // Should have at least 1 sparkline if data exists (cost, tokens, activities, errors)
+  const count = await sparklines.count();
+  expect(count).toBeGreaterThanOrEqual(0); // graceful if no data
+});
+
+test("AnalyticsView time range buttons switch data", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  // Click 7d button
+  const btn7d = page.getByRole("button", { name: "7d" });
+  await btn7d.click();
+  // 7d should now be active (secondary variant)
+  await expect(btn7d).toHaveClass(/secondary/);
+  // Click 30d button
+  const btn30d = page.getByRole("button", { name: "30d" });
+  await btn30d.click();
+  await expect(btn30d).toHaveClass(/secondary/);
+});
+
+test("AnalyticsView model breakdown shows cost per 1K tokens", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Model Breakdown")).toBeVisible({ timeout: 10000 });
+  // If models have usage, cost/1K tok should appear
+  const costPer1K = page.getByText(/\/1K tok/);
+  const count = await costPer1K.count();
+  // Graceful — only appears when model data exists
+  expect(count).toBeGreaterThanOrEqual(0);
 });

@@ -12,7 +12,7 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import { useState, useMemo } from "react";
-import { TrendingUp, TrendingDown, Minus, Zap, DollarSign, Activity, AlertTriangle, RefreshCw } from "lucide-react";
+import { TrendingUp, TrendingDown, Minus, Zap, DollarSign, Activity, AlertTriangle, RefreshCw, Gauge } from "lucide-react";
 import { formatTokens, formatCost, getModelColor } from "@/lib/formatters";
 import { AnalyticsSkeleton } from "@/components/Skeletons";
 
@@ -21,6 +21,12 @@ const TIME_RANGES = [
   { label: "7d", value: 7 },
   { label: "14d", value: 14 },
   { label: "30d", value: 30 },
+];
+
+const HEATMAP_METRICS = [
+  { key: "count" as const, label: "Activity" },
+  { key: "tokens" as const, label: "Tokens" },
+  { key: "cost" as const, label: "Cost" },
 ];
 
 function formatShortDay(dayStr: string): string {
@@ -33,6 +39,34 @@ function formatHour(hour: number): string {
   if (hour < 12) return `${hour}a`;
   if (hour === 12) return "12p";
   return `${hour - 12}p`;
+}
+
+// Tiny inline SVG sparkline for stat cards
+function Sparkline({ data, color }: { data: number[]; color: string }) {
+  if (data.length < 2) return null;
+  const max = Math.max(...data, 1);
+  const min = Math.min(...data, 0);
+  const range = max - min || 1;
+  const w = 48;
+  const h = 16;
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * w;
+    const y = h - ((v - min) / range) * (h - 2) - 1;
+    return `${x},${y}`;
+  });
+
+  return (
+    <svg width={w} height={h} className="inline-block ml-1 align-middle opacity-60">
+      <polyline
+        points={points.join(" ")}
+        fill="none"
+        stroke={color}
+        strokeWidth={1.5}
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      />
+    </svg>
+  );
 }
 
 // Pure SVG bar chart with Y-axis scale labels
@@ -184,7 +218,7 @@ function BarChart({
   );
 }
 
-// Hourly activity heatmap
+// Hourly activity heatmap with metric toggle
 function HourlyHeatmap({
   data,
   valueKey,
@@ -229,7 +263,7 @@ function HourlyHeatmap({
   );
 }
 
-// Stat card with trend and semantic color coding
+// Stat card with trend, sparkline, and semantic color coding
 function StatCard({
   label,
   value,
@@ -239,6 +273,8 @@ function StatCard({
   trendPercent,
   subtitle,
   trendSemantic = "positive",
+  sparklineData,
+  sparklineColor,
 }: {
   label: string;
   value: string;
@@ -248,6 +284,8 @@ function StatCard({
   trendPercent?: number;
   subtitle?: string;
   trendSemantic?: "positive" | "negative" | "neutral";
+  sparklineData?: number[];
+  sparklineColor?: string;
 }) {
   const trendColor = (() => {
     if (!trend || trend === "flat") return "text-muted-foreground";
@@ -279,6 +317,11 @@ function StatCard({
           </span>
         )}
       </div>
+      {sparklineData && sparklineColor && (
+        <div className="mt-1.5">
+          <Sparkline data={sparklineData} color={sparklineColor} />
+        </div>
+      )}
       {subtitle && (
         <div className="text-[11px] text-muted-foreground mt-1">{subtitle}</div>
       )}
@@ -298,6 +341,7 @@ function MiniBar({ value, max, color }: { value: number; max: number; color: str
 
 export function AnalyticsView() {
   const [days, setDays] = useState(14);
+  const [heatmapMetric, setHeatmapMetric] = useState<"count" | "tokens" | "cost">("count");
   const { data: analytics, error, mutate } = useSWR(
     ["analytics", days],
     () => getAnalytics(days),
@@ -342,19 +386,51 @@ export function AnalyticsView() {
     return analytics.totalCost / analytics.days;
   }, [analytics]);
 
+  // Cost efficiency: cost per 1K tokens
+  const costPer1K = useMemo(() => {
+    if (!analytics || analytics.totalTokens === 0) return 0;
+    return (analytics.totalCost / analytics.totalTokens) * 1000;
+  }, [analytics]);
+
+  // Active days count (days with at least 1 activity)
+  const activeDays = useMemo(() => {
+    if (!analytics) return 0;
+    return analytics.daily.filter(d => d.count > 0).length;
+  }, [analytics]);
+
+  // Sparkline data arrays (daily values for trend lines)
+  const sparklines = useMemo(() => {
+    if (!analytics) return { cost: [], tokens: [], count: [], errors: [] };
+    return {
+      cost: analytics.daily.map(d => d.cost),
+      tokens: analytics.daily.map(d => d.tokens),
+      count: analytics.daily.map(d => d.count),
+      errors: analytics.daily.map(d => d.errors),
+    };
+  }, [analytics]);
+
   const peakHour = useMemo(() => {
     if (!analytics) return null;
     const max = analytics.hourly.reduce((best, h) => h.count > best.count ? h : best, analytics.hourly[0]);
     return max.count > 0 ? max : null;
   }, [analytics]);
 
-  // Max values for daily breakdown mini-bars
+  // Peak heatmap hour for selected metric
+  const peakHourForMetric = useMemo(() => {
+    if (!analytics) return null;
+    const max = analytics.hourly.reduce((best, h) => h[heatmapMetric] > best[heatmapMetric] ? h : best, analytics.hourly[0]);
+    return max[heatmapMetric] > 0 ? max : null;
+  }, [analytics, heatmapMetric]);
+
+  // Max values for daily breakdown mini-bars + peak day detection
   const maxDaily = useMemo(() => {
-    if (!analytics) return { count: 1, tokens: 1, cost: 1 };
+    if (!analytics) return { count: 1, tokens: 1, cost: 1, peakDay: "" };
+    const peakCostDay = analytics.daily.reduce((best, d) => d.cost > best.cost ? d : best, analytics.daily[0]);
     return {
       count: Math.max(...analytics.daily.map(d => d.count), 1),
       tokens: Math.max(...analytics.daily.map(d => d.tokens), 1),
       cost: Math.max(...analytics.daily.map(d => d.cost), 1),
+      peakDay: peakCostDay?.day ?? "",
     };
   }, [analytics]);
 
@@ -412,8 +488,8 @@ export function AnalyticsView() {
       </CardHeader>
 
       <CardContent className="flex-1 overflow-y-auto px-4 space-y-6">
-        {/* Summary Stats */}
-        <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+        {/* Summary Stats — 5 cards on desktop, 2+3 on mobile */}
+        <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
           <StatCard
             label="Total Cost"
             value={formatCost(analytics.totalCost)}
@@ -423,6 +499,8 @@ export function AnalyticsView() {
             trendPercent={trends.costPct}
             trendSemantic="negative"
             subtitle={`~${formatCost(avgCostPerDay)}/day avg`}
+            sparklineData={sparklines.cost}
+            sparklineColor="rgb(16 185 129)"
           />
           <StatCard
             label="Total Tokens"
@@ -433,13 +511,24 @@ export function AnalyticsView() {
             trendPercent={trends.tokensPct}
             trendSemantic="neutral"
             subtitle={`${analytics.models.length} model${analytics.models.length !== 1 ? "s" : ""} used`}
+            sparklineData={sparklines.tokens}
+            sparklineColor="rgb(59 130 246)"
+          />
+          <StatCard
+            label="Efficiency"
+            value={costPer1K > 0 ? formatCost(costPer1K) : "—"}
+            icon={Gauge}
+            color="bg-cyan-500/15 text-cyan-400"
+            subtitle="cost per 1K tokens"
           />
           <StatCard
             label="Activities"
             value={analytics.totalActivities.toLocaleString()}
             icon={Activity}
             color="bg-purple-500/15 text-purple-400"
-            subtitle={`${days}-day window`}
+            subtitle={`${activeDays} of ${days}d active (${days > 0 ? Math.round((activeDays / days) * 100) : 0}%)`}
+            sparklineData={sparklines.count}
+            sparklineColor="rgb(168 85 247)"
           />
           <StatCard
             label="Errors"
@@ -450,6 +539,8 @@ export function AnalyticsView() {
             trendPercent={trends.errorsPct}
             trendSemantic="negative"
             subtitle={analytics.totalActivities > 0 ? `${((analytics.totalErrors / analytics.totalActivities) * 100).toFixed(1)}% error rate` : undefined}
+            sparklineData={sparklines.errors}
+            sparklineColor="rgb(239 68 68)"
           />
         </div>
 
@@ -490,7 +581,7 @@ export function AnalyticsView() {
         </div>
 
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-          {/* Model Breakdown */}
+          {/* Model Breakdown with cost efficiency */}
           <div className="rounded-xl border border-border/50 bg-card/30 p-4">
             <h3 className="text-sm font-medium mb-3">Model Breakdown</h3>
             {analytics.models.length === 0 ? (
@@ -500,6 +591,7 @@ export function AnalyticsView() {
                 {analytics.models.map((m) => {
                   const colors = getModelColor(m.model);
                   const pct = analytics.totalTokens > 0 ? (m.tokens / analytics.totalTokens) * 100 : 0;
+                  const modelCostPer1K = m.tokens > 0 ? (m.cost / m.tokens) * 1000 : 0;
                   return (
                     <div key={m.model} className="space-y-1.5">
                       <div className="flex items-center justify-between text-xs">
@@ -520,6 +612,9 @@ export function AnalyticsView() {
                       </div>
                       <div className="text-[10px] text-muted-foreground/60">
                         {pct.toFixed(1)}% of tokens &middot; {m.count} call{m.count !== 1 ? "s" : ""}
+                        {modelCostPer1K > 0 && (
+                          <span className="text-cyan-400/60"> &middot; {formatCost(modelCostPer1K)}/1K tok</span>
+                        )}
                       </div>
                     </div>
                   );
@@ -528,17 +623,35 @@ export function AnalyticsView() {
             )}
           </div>
 
-          {/* Activity by Hour */}
+          {/* Activity by Hour — with metric toggle */}
           <div className="rounded-xl border border-border/50 bg-card/30 p-4">
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-medium">Activity by Hour</h3>
-              {peakHour && (
-                <Badge variant="outline" className="text-[10px]">
-                  Peak: {formatHour(peakHour.hour)}
-                </Badge>
-              )}
+              <div className="flex items-center gap-1">
+                {peakHourForMetric && (
+                  <Badge variant="outline" className="text-[10px] mr-1">
+                    Peak: {formatHour(peakHourForMetric.hour)}
+                  </Badge>
+                )}
+              </div>
             </div>
-            <HourlyHeatmap data={analytics.hourly} valueKey="count" />
+            {/* Metric toggle pills */}
+            <div className="flex gap-1 mb-3" data-testid="heatmap-metric-toggle">
+              {HEATMAP_METRICS.map((m) => (
+                <button
+                  key={m.key}
+                  onClick={() => setHeatmapMetric(m.key)}
+                  className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors ${
+                    heatmapMetric === m.key
+                      ? "bg-primary/15 text-primary"
+                      : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30"
+                  }`}
+                >
+                  {m.label}
+                </button>
+              ))}
+            </div>
+            <HourlyHeatmap data={analytics.hourly} valueKey={heatmapMetric} />
           </div>
         </div>
 
@@ -576,7 +689,7 @@ export function AnalyticsView() {
           )}
         </div>
 
-        {/* Daily Breakdown Table */}
+        {/* Daily Breakdown Table with peak highlighting */}
         <div className="rounded-xl border border-border/50 bg-card/30 p-4">
           <h3 className="text-sm font-medium mb-3">Daily Breakdown</h3>
           <div className="overflow-x-auto">
@@ -591,26 +704,42 @@ export function AnalyticsView() {
                 </tr>
               </thead>
               <tbody>
-                {[...analytics.daily].reverse().map((d) => (
-                  <tr key={d.day} className="border-b border-border/10 hover:bg-muted/20 transition-colors">
-                    <td className="py-1.5 pr-4 font-mono text-muted-foreground">{formatShortDay(d.day)}</td>
-                    <td className="py-1.5 px-2 text-right whitespace-nowrap">
-                      {d.count}
-                      <MiniBar value={d.count} max={maxDaily.count} color="bg-purple-500/50" />
-                    </td>
-                    <td className="py-1.5 px-2 text-right text-blue-400 whitespace-nowrap">
-                      {d.tokens > 0 ? formatTokens(d.tokens) : "—"}
-                      {d.tokens > 0 && <MiniBar value={d.tokens} max={maxDaily.tokens} color="bg-blue-500/50" />}
-                    </td>
-                    <td className="py-1.5 px-2 text-right text-emerald-400 whitespace-nowrap">
-                      {d.cost > 0 ? formatCost(d.cost) : "—"}
-                      {d.cost > 0 && <MiniBar value={d.cost} max={maxDaily.cost} color="bg-emerald-500/50" />}
-                    </td>
-                    <td className={`py-1.5 pl-2 text-right ${d.errors > 0 ? "text-red-400" : "text-muted-foreground/40"}`}>
-                      {d.errors > 0 ? d.errors : "—"}
-                    </td>
-                  </tr>
-                ))}
+                {[...analytics.daily].reverse().map((d) => {
+                  const isPeakCost = d.day === maxDaily.peakDay && d.cost > 0;
+                  const isPeakCount = d.count === maxDaily.count && d.count > 0;
+                  return (
+                    <tr
+                      key={d.day}
+                      className={`border-b border-border/10 transition-colors ${
+                        isPeakCost
+                          ? "bg-emerald-500/5 hover:bg-emerald-500/10"
+                          : "hover:bg-muted/20"
+                      }`}
+                    >
+                      <td className="py-1.5 pr-4 font-mono text-muted-foreground whitespace-nowrap">
+                        {formatShortDay(d.day)}
+                        {isPeakCost && (
+                          <span className="ml-1.5 text-[9px] text-emerald-400 font-sans" title="Highest cost day">peak</span>
+                        )}
+                      </td>
+                      <td className="py-1.5 px-2 text-right whitespace-nowrap">
+                        <span className={isPeakCount ? "font-semibold" : ""}>{d.count}</span>
+                        <MiniBar value={d.count} max={maxDaily.count} color="bg-purple-500/50" />
+                      </td>
+                      <td className="py-1.5 px-2 text-right text-blue-400 whitespace-nowrap">
+                        {d.tokens > 0 ? formatTokens(d.tokens) : "\u2014"}
+                        {d.tokens > 0 && <MiniBar value={d.tokens} max={maxDaily.tokens} color="bg-blue-500/50" />}
+                      </td>
+                      <td className={`py-1.5 px-2 text-right whitespace-nowrap ${isPeakCost ? "text-emerald-300 font-semibold" : "text-emerald-400"}`}>
+                        {d.cost > 0 ? formatCost(d.cost) : "\u2014"}
+                        {d.cost > 0 && <MiniBar value={d.cost} max={maxDaily.cost} color="bg-emerald-500/50" />}
+                      </td>
+                      <td className={`py-1.5 pl-2 text-right ${d.errors > 0 ? "text-red-400" : "text-muted-foreground/40"}`}>
+                        {d.errors > 0 ? d.errors : "\u2014"}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
