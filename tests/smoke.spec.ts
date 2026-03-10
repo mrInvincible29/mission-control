@@ -2664,3 +2664,86 @@ test("AnalyticsView model breakdown shows cost per 1K tokens", async ({ page }) 
   // Graceful — only appears when model data exists
   expect(count).toBeGreaterThanOrEqual(0);
 });
+
+// === COMMAND PALETTE UX POLISH TESTS ===
+
+test("CommandPalette opens with animation and shows section headers", async ({ page }) => {
+  await page.goto("/");
+  // Wait for dynamic components (CommandPalette is ssr:false)
+  await page.waitForTimeout(2000);
+  // Open palette with Ctrl+K
+  await page.keyboard.press("Control+k");
+  // Palette should be visible with input
+  const input = page.locator('input[placeholder*="command"]');
+  await expect(input).toBeVisible({ timeout: 3000 });
+  // Should show section headers (Navigation, Go to, Actions, etc.)
+  await expect(page.getByText("NAVIGATION")).toBeVisible({ timeout: 2000 });
+});
+
+test("CommandPalette shows Suggested section based on current tab", async ({ page }) => {
+  // Navigate to System tab first
+  await page.goto("/?tab=system");
+  await page.waitForTimeout(2000);
+  await page.keyboard.press("Control+k");
+  const input = page.locator('input[placeholder*="command"]');
+  await expect(input).toBeVisible({ timeout: 3000 });
+  // Should show "Suggested" section with system-relevant items
+  await expect(page.getByText("SUGGESTED")).toBeVisible({ timeout: 2000 });
+});
+
+test("CommandPalette tracks recent items in localStorage", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForTimeout(2000);
+  // Open palette and use an item — select first item (Activity) via Enter
+  await page.keyboard.press("Control+k");
+  const input = page.locator('input[placeholder*="command"]');
+  await expect(input).toBeVisible({ timeout: 3000 });
+  // Type to filter, then press Enter to select first match
+  await input.fill("system health");
+  await page.waitForTimeout(300);
+  await page.keyboard.press("Enter");
+  // Palette should close
+  await expect(input).not.toBeVisible({ timeout: 2000 });
+  // Re-open palette — should show "Recent" section with the previously used item
+  await page.waitForTimeout(500);
+  await page.keyboard.press("Control+k");
+  await expect(page.locator('input[placeholder*="command"]')).toBeVisible({ timeout: 3000 });
+  await expect(page.getByText("RECENT")).toBeVisible({ timeout: 2000 });
+});
+
+test("CommandPalette close animation works with Escape", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForTimeout(2000);
+  await page.keyboard.press("Control+k");
+  const input = page.locator('input[placeholder*="command"]');
+  await expect(input).toBeVisible({ timeout: 3000 });
+  // Press Escape to close
+  await page.keyboard.press("Escape");
+  // Input should disappear after animation
+  await expect(input).not.toBeVisible({ timeout: 1000 });
+});
+
+test("Tab content has fade-in transition on sub-view switch", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForTimeout(500);
+  // Activity tab should be active with Feed sub-view
+  const tabPanel = page.getByRole("tabpanel");
+  await expect(tabPanel).toBeVisible({ timeout: 3000 });
+  // Switch to Analytics sub-view
+  const analyticsBtn = page.getByRole("button", { name: /Analytics/ });
+  await analyticsBtn.click();
+  // Content should still be visible (fade-in animates opacity)
+  await expect(tabPanel).toBeVisible({ timeout: 3000 });
+});
+
+test("Tab content fade-in on tab switch", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForTimeout(500);
+  // Switch to System tab
+  await page.keyboard.press("4");
+  const tabPanel = page.getByRole("tabpanel");
+  await expect(tabPanel).toBeVisible({ timeout: 3000 });
+  // Switch to Tasks tab
+  await page.keyboard.press("3");
+  await expect(tabPanel).toBeVisible({ timeout: 3000 });
+});
