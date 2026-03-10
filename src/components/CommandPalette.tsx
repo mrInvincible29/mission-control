@@ -167,6 +167,41 @@ function PaletteFileViewer({
 
 // --- Main Component ---
 
+// --- Recent items persistence (localStorage) ---
+
+const RECENT_KEY = "mc-palette-recent";
+const MAX_RECENT = 5;
+
+function getRecentIds(): string[] {
+  try {
+    const raw = localStorage.getItem(RECENT_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.slice(0, MAX_RECENT) : [];
+  } catch {
+    return [];
+  }
+}
+
+function addRecentId(id: string): void {
+  try {
+    const prev = getRecentIds().filter((r) => r !== id);
+    const next = [id, ...prev].slice(0, MAX_RECENT);
+    localStorage.setItem(RECENT_KEY, JSON.stringify(next));
+  } catch {
+    // localStorage unavailable — silently ignore
+  }
+}
+
+// --- Context mapping: which command IDs are relevant to each tab ---
+
+const TAB_CONTEXT: Record<string, string[]> = {
+  activity: ["nav-activity", "nav-analytics", "nav-agents", "filter-errors", "filter-model", "filter-today"],
+  schedule: ["nav-schedule", "nav-calendar", "nav-runs", "action-sync-cron", "action-create-cron"],
+  tasks: ["nav-tasks", "action-new-task"],
+  system: ["nav-system", "nav-health", "nav-logs", "nav-services"],
+};
+
 // Priority options for quick task creation
 const QUICK_TASK_PRIORITIES = [
   { value: "medium", label: "Medium priority", color: "text-blue-400", dotColor: "bg-blue-400" },
@@ -177,11 +212,13 @@ const QUICK_TASK_PRIORITIES = [
 
 export function CommandPalette() {
   const [open, setOpen] = useState(false);
+  const [visible, setVisible] = useState(false);
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [executing, setExecuting] = useState<string | null>(null);
   const [viewingFile, setViewingFile] = useState<{ id: string; name: string; path: string } | null>(null);
   const [debouncedQuery, setDebouncedQuery] = useState("");
+  const [recentIds, setRecentIds] = useState<string[]>([]);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const router = useRouter();
@@ -189,7 +226,13 @@ export function CommandPalette() {
   const { theme, setTheme } = useTheme();
   const { toast } = useToast();
 
-  const close = useCallback(() => setOpen(false), []);
+  // Detect current tab for context-aware ordering
+  const currentTab = searchParams.get("tab") || "activity";
+
+  const close = useCallback(() => {
+    setVisible(false);
+    setTimeout(() => setOpen(false), 150);
+  }, []);
 
   const navigateToTab = useCallback(
     (tab: string, view?: string) => {
@@ -529,7 +572,31 @@ export function CommandPalette() {
 
     let commandResults: PaletteItem[];
     if (!query.trim()) {
-      commandResults = items;
+      // No query — build context-aware default ordering
+      // 1. Recent items (if any)
+      const recentItems: PaletteItem[] = [];
+      if (recentIds.length > 0) {
+        for (const rid of recentIds) {
+          const found = items.find((i) => i.id === rid);
+          if (found) recentItems.push({ ...found, section: "Recent" });
+        }
+      }
+
+      // 2. Context items — relevant to current tab (exclude already-in-recent)
+      const contextItemIds = TAB_CONTEXT[currentTab] ?? [];
+      const recentIdSet = new Set(recentIds);
+      const contextItems: PaletteItem[] = [];
+      for (const cid of contextItemIds) {
+        if (recentIdSet.has(cid)) continue;
+        const found = items.find((i) => i.id === cid);
+        if (found) contextItems.push({ ...found, section: "Suggested" });
+      }
+
+      // 3. Remaining items (exclude recent + context)
+      const shownIds = new Set([...recentIds, ...contextItemIds]);
+      const otherItems = items.filter((i) => !shownIds.has(i.id));
+
+      commandResults = [...recentItems, ...contextItems, ...otherItems];
     } else {
       commandResults = items
         .map((item) => ({ item, score: bestMatch(item, query) }))
@@ -555,7 +622,7 @@ export function CommandPalette() {
     }
 
     return commandResults;
-  }, [items, query, fileResults, close, quickTaskItems]);
+  }, [items, query, fileResults, close, quickTaskItems, recentIds, currentTab]);
 
   // Group items by section
   const grouped = useMemo(() => {
@@ -594,22 +661,28 @@ export function CommandPalette() {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
         e.preventDefault();
         e.stopPropagation();
-        setOpen((prev) => !prev);
+        if (open) {
+          close();
+        } else {
+          setOpen(true);
+        }
       }
     };
     // Use capture phase so we intercept before GlobalSearch's listener
     window.addEventListener("keydown", handleKeyDown, true);
     return () => window.removeEventListener("keydown", handleKeyDown, true);
-  }, []);
+  }, [open, close]);
 
-  // Focus input when opening
+  // Focus input when opening, trigger enter animation, load recents
   useEffect(() => {
     if (open) {
       setQuery("");
       setDebouncedQuery("");
       setSelectedIndex(0);
-      // Small delay to ensure DOM is ready
+      setRecentIds(getRecentIds());
+      // Trigger enter animation on next frame
       requestAnimationFrame(() => {
+        setVisible(true);
         inputRef.current?.focus();
       });
     }
@@ -618,12 +691,12 @@ export function CommandPalette() {
   const executeItem = useCallback(
     (item: PaletteItem) => {
       if (executing) return;
-      const result = item.action();
-      if (result instanceof Promise) {
-        // Action handles its own close
-      } else {
-        // Sync action — close after execution
+      // Track as recent (skip file results and quick-task items)
+      if (!item.id.startsWith("file-") && !item.id.startsWith("create-task-")) {
+        addRecentId(item.id);
+        setRecentIds(getRecentIds());
       }
+      item.action();
     },
     [executing]
   );
@@ -643,7 +716,7 @@ export function CommandPalette() {
         }
       } else if (e.key === "Escape") {
         e.preventDefault();
-        setOpen(false);
+        close();
       }
     },
     [flatItems, selectedIndex, executeItem]
@@ -656,13 +729,21 @@ export function CommandPalette() {
   return (
     <>
       {open && (
-        <div className="fixed inset-0 z-50" onClick={() => setOpen(false)}>
+        <div className="fixed inset-0 z-50" onClick={close}>
           {/* Backdrop */}
-          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div
+            className={`absolute inset-0 bg-black/50 backdrop-blur-sm transition-opacity duration-150 ${
+              visible ? "opacity-100" : "opacity-0"
+            }`}
+          />
 
           {/* Palette */}
           <div
-            className="absolute left-1/2 top-[15%] w-full max-w-lg -translate-x-1/2 rounded-xl border border-border/80 bg-background shadow-2xl overflow-hidden"
+            className={`absolute left-1/2 top-[15%] w-full max-w-lg -translate-x-1/2 rounded-xl border border-border/80 bg-background shadow-2xl overflow-hidden transition-all duration-150 ${
+              visible
+                ? "opacity-100 scale-100 translate-y-0"
+                : "opacity-0 scale-95 -translate-y-2"
+            }`}
             onClick={(e) => e.stopPropagation()}
           >
             {/* Search input */}
@@ -694,7 +775,9 @@ export function CommandPalette() {
               ) : (
                 grouped.map((group) => (
                   <div key={group.section} className="mb-1">
-                    <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-wider">
+                    <div className="px-2 py-1.5 text-[10px] font-semibold text-muted-foreground/70 uppercase tracking-wider flex items-center gap-1.5">
+                      {group.section === "Recent" && <Clock className="h-2.5 w-2.5" />}
+                      {group.section === "Suggested" && <Zap className="h-2.5 w-2.5" />}
                       {group.section}
                     </div>
                     {group.items.map((item) => {

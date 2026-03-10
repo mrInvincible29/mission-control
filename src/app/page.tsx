@@ -56,6 +56,24 @@ const VALID_VIEWS: Record<TabValue, string[]> = {
   system: ["health", "logs", "services"],
 };
 
+/** Fade-in wrapper — triggers a quick opacity+translateY transition on mount */
+function FadeIn({ children, className = "" }: { children: ReactNode; className?: string }) {
+  const [show, setShow] = useState(false);
+  useEffect(() => {
+    const frame = requestAnimationFrame(() => setShow(true));
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return (
+    <div
+      className={`transition-all duration-200 ease-out ${
+        show ? "opacity-100 translate-y-0" : "opacity-0 translate-y-1"
+      } ${className}`}
+    >
+      {children}
+    </div>
+  );
+}
+
 class TabErrorBoundary extends Component<
   { children: ReactNode; fallbackLabel: string },
   { hasError: boolean; error?: Error }
@@ -284,9 +302,11 @@ function DashboardContent() {
           onChange={handleViewChange}
         />
         <TabErrorBoundary fallbackLabel="Activity">
-          {activeView === "feed" && <ActivityFeed />}
-          {activeView === "analytics" && <AnalyticsView />}
-          {activeView === "agents" && <AgentSessions />}
+          <FadeIn key={`activity-${activeView}`}>
+            {activeView === "feed" && <ActivityFeed />}
+            {activeView === "analytics" && <AnalyticsView />}
+            {activeView === "agents" && <AgentSessions />}
+          </FadeIn>
         </TabErrorBoundary>
       </TabsContent>
 
@@ -300,14 +320,18 @@ function DashboardContent() {
           onChange={handleViewChange}
         />
         <TabErrorBoundary fallbackLabel="Schedule">
-          {activeView === "calendar" && <CalendarView />}
-          {activeView === "runs" && <CronHistory />}
+          <FadeIn key={`schedule-${activeView}`}>
+            {activeView === "calendar" && <CalendarView />}
+            {activeView === "runs" && <CronHistory />}
+          </FadeIn>
         </TabErrorBoundary>
       </TabsContent>
 
       <TabsContent value="tasks" className="mt-6">
         <TabErrorBoundary fallbackLabel="Tasks">
-          <KanbanBoard />
+          <FadeIn key="tasks-board">
+            <KanbanBoard />
+          </FadeIn>
         </TabErrorBoundary>
       </TabsContent>
 
@@ -322,9 +346,11 @@ function DashboardContent() {
           onChange={handleViewChange}
         />
         <TabErrorBoundary fallbackLabel="System">
-          {activeView === "health" && <SystemHealth />}
-          {activeView === "logs" && <LogViewer />}
-          {activeView === "services" && <ServicesView />}
+          <FadeIn key={`system-${activeView}`}>
+            {activeView === "health" && <SystemHealth />}
+            {activeView === "logs" && <LogViewer />}
+            {activeView === "services" && <ServicesView />}
+          </FadeIn>
         </TabErrorBoundary>
       </TabsContent>
     </Tabs>
