@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Component, type ReactNode, useState, useEffect, useCallback, Suspense } from "react";
+import { Component, type ReactNode, useState, useEffect, useCallback, useRef, Suspense } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SetupGuide } from "@/components/SetupGuide";
@@ -55,6 +55,24 @@ const VALID_VIEWS: Record<TabValue, string[]> = {
   tasks: ["board"],
   system: ["health", "logs", "services"],
 };
+
+/** Track last visit timestamp in localStorage for "new since" markers */
+function useLastVisit() {
+  const STORAGE_KEY = "mc-last-visit";
+  const [lastVisit, setLastVisit] = useState<number | null>(null);
+  const [newCount, setNewCount] = useState(0);
+
+  // Read last visit on mount, then update it
+  useEffect(() => {
+    const stored = localStorage.getItem(STORAGE_KEY);
+    const ts = stored ? parseInt(stored, 10) : null;
+    setLastVisit(ts && !isNaN(ts) ? ts : null);
+    // Update last visit to now (will apply on next page load)
+    localStorage.setItem(STORAGE_KEY, String(Date.now()));
+  }, []);
+
+  return { lastVisit, newCount, setNewCount };
+}
 
 /** Fade-in wrapper — triggers a quick opacity+translateY transition on mount */
 function FadeIn({ children, className = "" }: { children: ReactNode; className?: string }) {
@@ -183,6 +201,18 @@ function DashboardContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
   const notifications = useTabNotifications();
+  const { lastVisit, newCount, setNewCount } = useLastVisit();
+  const [scrolled, setScrolled] = useState(false);
+
+  // Detect scroll for sticky header effect
+  useEffect(() => {
+    const handleScroll = () => {
+      setScrolled(window.scrollY > 12);
+    };
+    window.addEventListener("scroll", handleScroll, { passive: true });
+    handleScroll();
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
 
   // Read initial tab from URL, default to "activity"
   const tabParam = searchParams.get("tab");
@@ -252,10 +282,10 @@ function DashboardContent() {
 
   // Dynamic page title with notification count
   useEffect(() => {
-    const total = notifications.blockedTasks + notifications.cronRuns + notifications.logs;
+    const total = notifications.blockedTasks + notifications.cronRuns + notifications.logs + newCount;
     const suffix = total > 0 ? ` (${total})` : "";
     document.title = `Mission Control${suffix}`;
-  }, [notifications]);
+  }, [notifications, newCount]);
 
   if (!supabaseUrl) {
     return <SetupGuide />;
@@ -263,11 +293,25 @@ function DashboardContent() {
 
   return (
     <Tabs value={activeTab} onValueChange={handleTabChange} className="space-y-6">
+      {/* Sticky tab bar with scroll-aware styling */}
+      <div
+        className={`sticky top-0 z-30 -mx-4 px-4 pt-2 pb-2 transition-all duration-300 ${
+          scrolled
+            ? "bg-background/80 backdrop-blur-lg border-b border-border/40 shadow-sm"
+            : "bg-transparent"
+        }`}
+        data-testid="sticky-header"
+      >
       <TabsList className="flex w-full overflow-x-auto sm:grid sm:grid-cols-4 max-w-md">
         <TabsTrigger value="activity" className="shrink-0 gap-1.5">
           <Activity className="h-4 w-4 sm:hidden" />
           <span className="hidden sm:inline mr-1 text-xs text-muted-foreground/50 font-mono">1</span>
           Activity
+          {newCount > 0 && activeTab !== "activity" && (
+            <span className="ml-1 inline-flex items-center justify-center min-w-[14px] h-[14px] rounded-full text-[9px] font-bold bg-primary/80 text-primary-foreground leading-none px-0.5 animate-in fade-in">
+              {newCount > 99 ? "99+" : newCount}
+            </span>
+          )}
         </TabsTrigger>
         <TabsTrigger value="schedule" className="shrink-0 gap-1.5">
           <CalendarDays className="h-4 w-4 sm:hidden" />
@@ -290,6 +334,7 @@ function DashboardContent() {
           {notifications.logs > 0 && <TabCount count={notifications.logs} color="amber" />}
         </TabsTrigger>
       </TabsList>
+      </div>
 
       <TabsContent value="activity" className="mt-6 space-y-4">
         <SubViewToggle
@@ -303,7 +348,7 @@ function DashboardContent() {
         />
         <TabErrorBoundary fallbackLabel="Activity">
           <FadeIn key={`activity-${activeView}`}>
-            {activeView === "feed" && <ActivityFeed />}
+            {activeView === "feed" && <ActivityFeed lastVisit={lastVisit} onNewCount={setNewCount} />}
             {activeView === "analytics" && <AnalyticsView />}
             {activeView === "agents" && <AgentSessions />}
           </FadeIn>

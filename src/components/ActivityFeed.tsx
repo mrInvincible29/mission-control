@@ -212,7 +212,26 @@ const PAGE_SIZE = 50;
 /** Minimum session size to show a group header */
 const SESSION_GROUP_MIN = 3;
 
-export function ActivityFeed() {
+/** "New since last visit" separator */
+function NewSeparator() {
+  return (
+    <div className="flex items-center gap-3 py-2" role="separator" aria-label="New since last visit" data-testid="new-separator">
+      <div className="h-px flex-1 bg-primary/40" />
+      <span className="text-[10px] font-semibold text-primary/70 uppercase tracking-wider shrink-0 flex items-center gap-1">
+        <span className="inline-block w-1.5 h-1.5 rounded-full bg-primary/70 animate-pulse" />
+        New since last visit
+      </span>
+      <div className="h-px flex-1 bg-primary/40" />
+    </div>
+  );
+}
+
+interface ActivityFeedProps {
+  lastVisit?: number | null;
+  onNewCount?: (count: number) => void;
+}
+
+export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) {
   const [category, setCategory] = useState<string>("");
   const [dateRange, setDateRange] = useState<number>(1);
   const [cursors, setCursors] = useState<(number | undefined)[]>([undefined]);
@@ -354,6 +373,28 @@ export function ActivityFeed() {
   // Count of items on current page after search filter
   const displayCount = activities?.length ?? 0;
   const searchActive = searchText.trim().length > 0;
+
+  // Count new items since last visit and report to parent
+  const newSinceLastVisit = useMemo(() => {
+    if (!lastVisit || !activities) return { count: 0, insertAfterIndex: -1 };
+    let count = 0;
+    let insertAfterIndex = -1;
+    for (let i = 0; i < activities.length; i++) {
+      if (activities[i].timestamp > lastVisit) {
+        count++;
+      } else {
+        if (insertAfterIndex === -1) insertAfterIndex = i;
+      }
+    }
+    // If all items are new, no separator needed
+    if (insertAfterIndex === -1 && count > 0) insertAfterIndex = -2;
+    return { count, insertAfterIndex };
+  }, [lastVisit, activities]);
+
+  // Report new count to parent (for tab badge)
+  useEffect(() => {
+    if (onNewCount) onNewCount(newSinceLastVisit.count);
+  }, [newSinceLastVisit.count, onNewCount]);
 
   return (
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
@@ -545,6 +586,9 @@ export function ActivityFeed() {
                   const prevGroup = prevActivity ? getActivityDateGroup(prevActivity.timestamp) : null;
                   const showSeparator = currentGroup !== prevGroup;
 
+                  // Show "New since last visit" separator at the boundary
+                  const showNewSeparator = newSinceLastVisit.insertAfterIndex === index && newSinceLastVisit.count > 0 && cursors.length === 1;
+
                   // Check if this is the first activity in a session group
                   const session = activity.metadata?.session;
                   const group = session ? sessionGroups.get(session) : undefined;
@@ -554,6 +598,7 @@ export function ActivityFeed() {
 
                   return (
                     <Fragment key={activity.id}>
+                      {showNewSeparator && <NewSeparator />}
                       {showSeparator && <DateSeparator label={currentGroup} />}
                       {isSessionFirst && group && session && (
                         <SessionHeader
