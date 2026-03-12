@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { listActivitiesPaginated, getActivityStats } from "@/lib/supabase/queries";
+import { listActivitiesPaginated, getActivityStats, getAnalytics } from "@/lib/supabase/queries";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -186,6 +186,87 @@ function StatusDistribution({ byStatus, total }: { byStatus: Record<string, numb
   );
 }
 
+/** Compact 24-hour activity histogram — shows activity density per hour */
+function HourlyTimeline({
+  hourly,
+}: {
+  hourly: Array<{ hour: number; count: number; tokens: number; cost: number }>;
+}) {
+  const maxCount = Math.max(...hourly.map((h) => h.count), 1);
+  const currentHour = new Date().getHours();
+  const totalCount = hourly.reduce((s, h) => s + h.count, 0);
+
+  if (totalCount === 0) return null;
+
+  // Hour label markers
+  const HOUR_LABELS = [0, 6, 12, 18];
+
+  return (
+    <div data-testid="hourly-timeline" className="space-y-1">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] text-muted-foreground/60 font-medium">Hourly Activity</span>
+        <span className="text-[10px] text-muted-foreground/40">
+          Peak: {hourly.reduce((best, h) => (h.count > best.count ? h : best), hourly[0]).hour}:00
+        </span>
+      </div>
+      <div className="flex items-end gap-[2px] h-7">
+        {hourly.map(({ hour, count, tokens, cost }) => {
+          const pct = count > 0 ? Math.max((count / maxCount) * 100, 8) : 3;
+          const isCurrent = hour === currentHour;
+          const isPeak = count === maxCount && count > 0;
+          return (
+            <TooltipProvider key={hour}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className={`flex-1 rounded-t-[2px] transition-all duration-300 cursor-default ${
+                      isCurrent
+                        ? "bg-primary/60 ring-1 ring-primary/40 ring-offset-0"
+                        : isPeak
+                        ? "bg-primary/50"
+                        : count > 0
+                        ? "bg-primary/25 hover:bg-primary/40"
+                        : "bg-muted/20"
+                    }`}
+                    style={{ height: `${pct}%` }}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  <div className="font-medium">
+                    {String(hour).padStart(2, "0")}:00 – {String(hour + 1).padStart(2, "0")}:00
+                    {isCurrent && " (now)"}
+                  </div>
+                  <div>{count} activities</div>
+                  {tokens > 0 && <div>{formatTokens(tokens)} tokens</div>}
+                  {cost > 0 && <div>{formatCost(cost)}</div>}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          );
+        })}
+      </div>
+      {/* Hour labels */}
+      <div className="flex items-center relative h-3">
+        {HOUR_LABELS.map((h) => (
+          <span
+            key={h}
+            className="absolute text-[8px] text-muted-foreground/40 font-mono -translate-x-1/2"
+            style={{ left: `${(h / 24) * 100}%` }}
+          >
+            {h}
+          </span>
+        ))}
+        <span
+          className="absolute text-[8px] text-muted-foreground/40 font-mono"
+          style={{ right: 0 }}
+        >
+          24
+        </span>
+      </div>
+    </div>
+  );
+}
+
 const DATE_RANGES = [
   { label: "Today", value: 1 },
   { label: "7 days", value: 7 },
@@ -293,15 +374,23 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
     { refreshInterval: 30000 }
   );
 
+  // Hourly analytics for the timeline — uses same day range
+  const { data: analytics, mutate: mutateAnalytics } = useSWR(
+    mounted ? ["feed-analytics", dateRange] : null,
+    () => getAnalytics(dateRange),
+    { refreshInterval: 60000, dedupingInterval: 30000 }
+  );
+
   // Listen for global "r" key refresh event
   useEffect(() => {
     const handler = () => {
       mutateActivities();
       mutateStats();
+      mutateAnalytics();
     };
     window.addEventListener("refresh-view", handler);
     return () => window.removeEventListener("refresh-view", handler);
-  }, [mutateActivities, mutateStats]);
+  }, [mutateActivities, mutateStats, mutateAnalytics]);
 
   const rawActivities = result?.items;
   const hasMore = result?.hasMore ?? false;
@@ -408,7 +497,7 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
               </span>
             )}
             <button
-              onClick={() => { mutateActivities(); mutateStats(); }}
+              onClick={() => { mutateActivities(); mutateStats(); mutateAnalytics(); }}
               className="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
               aria-label="Refresh feed"
             >
@@ -458,6 +547,10 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
             {/* Status distribution bar */}
             {stats.byStatus && stats.total > 0 && (
               <StatusDistribution byStatus={stats.byStatus} total={stats.total} />
+            )}
+            {/* Hourly activity timeline */}
+            {analytics?.hourly && (
+              <HourlyTimeline hourly={analytics.hourly} />
             )}
           </div>
         )}
