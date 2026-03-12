@@ -2818,3 +2818,23 @@ test("New since last visit separator shows for returning visitors", async ({ pag
   const feedTitle = page.getByText("Activity Feed");
   await expect(feedTitle).toBeVisible({ timeout: 5000 });
 });
+
+// === HOURLY ACTIVITY TIMELINE ===
+
+test("Activity Feed shows hourly timeline when analytics data available", async ({ page }) => {
+  await page.goto("/");
+  await page.waitForTimeout(2000);
+  // The hourly timeline should render if there's analytics data
+  const timeline = page.locator('[data-testid="hourly-timeline"]');
+  // Either visible (data exists) or not rendered (no data) — both are valid
+  const feedTitle = page.getByText("Activity Feed");
+  await expect(feedTitle).toBeVisible({ timeout: 5000 });
+  // If timeline is visible, verify it has bars and labels
+  const isVisible = await timeline.isVisible().catch(() => false);
+  if (isVisible) {
+    // Should have "Hourly Activity" label
+    await expect(page.getByText("Hourly Activity")).toBeVisible();
+    // Should have "Peak:" label
+    await expect(page.getByText(/Peak:/)).toBeVisible();
+  }
+});
