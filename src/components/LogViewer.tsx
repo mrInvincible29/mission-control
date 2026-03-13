@@ -25,6 +25,9 @@ import {
   Check,
   WrapText,
   Clock,
+  Braces,
+  Layers,
+  XCircle,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
@@ -42,6 +45,12 @@ interface LogSourceInfo {
   available: boolean;
 }
 
+/** A display row — either a single log line, a deduped group, or a time gap separator */
+type DisplayRow =
+  | { kind: "line"; entry: LogEntry; index: number }
+  | { kind: "group"; entry: LogEntry; count: number; index: number }
+  | { kind: "gap"; seconds: number; timestamp: string };
+
 const LEVEL_STYLES: Record<string, { badge: string; text: string }> = {
   error: { badge: "bg-red-500/20 text-red-400 border-red-500/30", text: "text-red-300" },
   warn: { badge: "bg-amber-500/20 text-amber-400 border-amber-500/30", text: "text-amber-300" },
@@ -51,8 +60,53 @@ const LEVEL_STYLES: Record<string, { badge: string; text: string }> = {
 
 const LINE_COUNTS = [50, 100, 200, 500];
 
+const TIME_GAP_THRESHOLD_S = 60; // show separator for gaps > 60s
+
 function getLevelStyle(level: string) {
   return LEVEL_STYLES[level] || LEVEL_STYLES.info;
+}
+
+/** Try to detect and extract JSON from a log message */
+function extractJson(message: string): { before: string; json: string; after: string } | null {
+  // Find first { or [ that could start JSON
+  const startBrace = message.indexOf("{");
+  const startBracket = message.indexOf("[");
+  let start = -1;
+  if (startBrace >= 0 && startBracket >= 0) start = Math.min(startBrace, startBracket);
+  else if (startBrace >= 0) start = startBrace;
+  else if (startBracket >= 0) start = startBracket;
+  if (start < 0) return null;
+
+  // Try progressively shorter substrings from the end
+  const sub = message.slice(start);
+  // Quick check: must have matching close
+  const open = sub[0];
+  const close = open === "{" ? "}" : "]";
+  const lastClose = sub.lastIndexOf(close);
+  if (lastClose <= 0) return null;
+
+  const candidate = sub.slice(0, lastClose + 1);
+  // Minimum viable JSON object/array
+  if (candidate.length < 5) return null;
+
+  try {
+    JSON.parse(candidate);
+    return {
+      before: message.slice(0, start),
+      json: candidate,
+      after: message.slice(start + lastClose + 1),
+    };
+  } catch {
+    return null;
+  }
+}
+
+/** Format seconds into human-readable gap label */
+function formatGap(seconds: number): string {
+  if (seconds < 120) return `${seconds}s gap`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m gap`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m gap`;
+  return `${Math.floor(seconds / 86400)}d gap`;
 }
 
 /** Highlight matching search terms in log messages with a yellow background */
@@ -72,6 +126,66 @@ function HighlightMatch({ text, query }: { text: string; query: string }) {
         )
       )}
     </>
+  );
+}
+
+/** Expandable JSON block with pretty-printing and copy support */
+function JsonBlock({ json, defaultExpanded }: { json: string; defaultExpanded?: boolean }) {
+  const [expanded, setExpanded] = useState(defaultExpanded || false);
+  const [copied, setCopied] = useState(false);
+
+  const formatted = useMemo(() => {
+    try {
+      return JSON.stringify(JSON.parse(json), null, 2);
+    } catch {
+      return json;
+    }
+  }, [json]);
+
+  const handleCopy = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(formatted);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch { /* noop */ }
+  };
+
+  if (!expanded) {
+    return (
+      <button
+        onClick={(e) => { e.stopPropagation(); setExpanded(true); }}
+        className="inline-flex items-center gap-1 text-primary/60 hover:text-primary transition-colors"
+        title="Expand JSON"
+      >
+        <Braces className="h-3 w-3" />
+        <span className="text-muted-foreground/50 max-w-[200px] truncate">{json.slice(0, 60)}...</span>
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-1 mb-1 relative group/json" onClick={(e) => e.stopPropagation()}>
+      <div className="flex items-center gap-1.5 mb-1">
+        <button
+          onClick={() => setExpanded(false)}
+          className="text-primary/60 hover:text-primary transition-colors flex items-center gap-1"
+        >
+          <Braces className="h-3 w-3" />
+          <span className="text-[10px]">Collapse</span>
+        </button>
+        <button
+          onClick={handleCopy}
+          className="text-muted-foreground/40 hover:text-foreground transition-colors"
+          title="Copy JSON"
+        >
+          {copied ? <Check className="h-3 w-3 text-emerald-400" /> : <Copy className="h-3 w-3" />}
+        </button>
+      </div>
+      <pre className="text-[10px] leading-[1.5] bg-black/30 rounded border border-border/20 p-2 overflow-x-auto text-emerald-300/80 max-h-[300px] overflow-y-auto">
+        {formatted}
+      </pre>
+    </div>
   );
 }
 
@@ -153,11 +267,13 @@ export function LogViewer() {
   const [autoScroll, setAutoScroll] = useState(true);
   const [wordWrap, setWordWrap] = useState(true);
   const [relativeTime, setRelativeTime] = useState(false);
+  const [dedup, setDedup] = useState(true);
   const [copiedLine, setCopiedLine] = useState<number | null>(null);
   const [, setTick] = useState(0);
 
   const logContainerRef = useRef<HTMLDivElement>(null);
   const prevEntryCountRef = useRef(0);
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Fetch available log sources on mount
   useEffect(() => {
@@ -256,6 +372,48 @@ export function LogViewer() {
     return result;
   }, [entries, filterLevel, filterText]);
 
+  // Build display rows with deduplication and time gap separators
+  const displayRows = useMemo((): DisplayRow[] => {
+    const rows: DisplayRow[] = [];
+    let i = 0;
+    while (i < filteredEntries.length) {
+      const entry = filteredEntries[i];
+
+      // Check for time gap from previous entry
+      if (i > 0) {
+        const prevTs = new Date(filteredEntries[i - 1].timestamp).getTime();
+        const currTs = new Date(entry.timestamp).getTime();
+        if (!isNaN(prevTs) && !isNaN(currTs)) {
+          const gapS = Math.abs(currTs - prevTs) / 1000;
+          if (gapS >= TIME_GAP_THRESHOLD_S) {
+            rows.push({ kind: "gap", seconds: Math.round(gapS), timestamp: entry.timestamp });
+          }
+        }
+      }
+
+      // Deduplication: count consecutive identical messages
+      if (dedup) {
+        let count = 1;
+        while (
+          i + count < filteredEntries.length &&
+          filteredEntries[i + count].message === entry.message &&
+          filteredEntries[i + count].level === entry.level
+        ) {
+          count++;
+        }
+        if (count > 1) {
+          rows.push({ kind: "group", entry, count, index: i });
+          i += count;
+          continue;
+        }
+      }
+
+      rows.push({ kind: "line", entry, index: i });
+      i++;
+    }
+    return rows;
+  }, [filteredEntries, dedup]);
+
   // Stats
   const stats = useMemo(() => {
     const counts: Record<string, number> = { error: 0, warn: 0, info: 0, debug: 0 };
@@ -309,6 +467,31 @@ export function LogViewer() {
     setCurrentErrorIdx(-1);
   }, [filteredEntries]);
 
+  // Keyboard shortcuts: n/N for error nav, / to focus search
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      if (e.key === "n" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        if (e.shiftKey) {
+          e.preventDefault();
+          goToPrevError();
+        } else {
+          e.preventDefault();
+          goToNextError();
+        }
+      }
+
+      if (e.key === "/" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [goToNextError, goToPrevError]);
+
   // Copy a log line to clipboard
   const copyLine = useCallback(async (entry: LogEntry, index: number) => {
     const text = `${entry.timestamp} [${entry.level.toUpperCase()}] ${entry.message}`;
@@ -322,14 +505,26 @@ export function LogViewer() {
     }
   }, [toast]);
 
+  // Clear all filters
+  const clearAllFilters = useCallback(() => {
+    setFilterText("");
+    setFilterLevel("");
+  }, []);
+
+  const hasActiveFilters = filterText !== "" || filterLevel !== "";
+
   const currentSource = sources.find(s => s.id === selectedSource);
 
   // Count errors per source for highlighting
   const sourceErrorCounts = useMemo(() => {
-    // Only compute for selected source (we only have entries for current source)
     if (!selectedSource) return {};
     return { [selectedSource]: stats.error };
   }, [selectedSource, stats.error]);
+
+  // Deduplicated line count for footer
+  const dedupedCount = useMemo(() => {
+    return displayRows.filter(r => r.kind !== "gap").length;
+  }, [displayRows]);
 
   return (
     <TooltipProvider>
@@ -357,6 +552,24 @@ export function LogViewer() {
               <span className="text-[10px] text-muted-foreground/60 hidden sm:inline">
                 {lastRefresh > 0 && `Updated ${Math.round((Date.now() - lastRefresh) / 1000)}s ago`}
               </span>
+
+              {/* Dedup toggle */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={dedup ? "secondary" : "ghost"}
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    onClick={() => setDedup(!dedup)}
+                    data-testid="dedup-toggle"
+                  >
+                    <Layers className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  {dedup ? "Show all lines (dedup off)" : "Group repeated lines (dedup on)"}
+                </TooltipContent>
+              </Tooltip>
 
               {/* Word wrap toggle */}
               <Tooltip>
@@ -429,7 +642,6 @@ export function LogViewer() {
               >
                 <Terminal className="h-3 w-3" />
                 {source.name}
-                {/* Show error dot on sources with errors */}
                 {selectedSource === source.id && sourceErrorCounts[source.id] > 0 && (
                   <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
                 )}
@@ -475,6 +687,20 @@ export function LogViewer() {
                 </Button>
               )}
 
+              {/* Clear all filters */}
+              {hasActiveFilters && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="text-xs h-6 px-2 text-muted-foreground gap-1"
+                  onClick={clearAllFilters}
+                  data-testid="clear-filters"
+                >
+                  <XCircle className="h-3 w-3" />
+                  Clear filters
+                </Button>
+              )}
+
               {/* Error navigation */}
               {errorIndices.length > 0 && (
                 <div className="flex items-center gap-0.5 ml-1 border-l border-border/30 pl-2" data-testid="error-nav">
@@ -489,7 +715,7 @@ export function LogViewer() {
                         <ChevronUp className="h-3.5 w-3.5 text-red-400" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom" className="text-xs">Previous error/warning</TooltipContent>
+                    <TooltipContent side="bottom" className="text-xs">Previous error/warning (Shift+N)</TooltipContent>
                   </Tooltip>
                   <span className="text-[10px] text-muted-foreground/60 tabular-nums min-w-[3ch] text-center">
                     {currentErrorIdx >= 0 ? currentErrorIdx + 1 : "—"}/{errorIndices.length}
@@ -505,7 +731,7 @@ export function LogViewer() {
                         <ChevronDown className="h-3.5 w-3.5 text-red-400" />
                       </Button>
                     </TooltipTrigger>
-                    <TooltipContent side="bottom" className="text-xs">Next error/warning</TooltipContent>
+                    <TooltipContent side="bottom" className="text-xs">Next error/warning (N)</TooltipContent>
                   </Tooltip>
                 </div>
               )}
@@ -532,8 +758,9 @@ export function LogViewer() {
           <div className="relative mt-2">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
             <Input
+              ref={searchInputRef}
               type="text"
-              placeholder="Filter log messages..."
+              placeholder="Filter log messages... (press / to focus)"
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
               className="pl-8 pr-8 h-8 text-xs font-mono"
@@ -565,16 +792,57 @@ export function LogViewer() {
           ) : error && entries.length === 0 ? (
             <div className="flex-1 flex items-center justify-center">
               <div className="text-center">
+                <Terminal className="h-10 w-10 mx-auto mb-3 text-red-400/50" />
                 <p className="text-red-400 font-medium">Failed to load logs</p>
                 <p className="text-sm text-muted-foreground mt-1">{error}</p>
+                {currentSource && (
+                  <p className="text-xs text-muted-foreground/60 mt-2">
+                    Source: {currentSource.name} ({currentSource.type})
+                  </p>
+                )}
                 <Button variant="outline" size="sm" className="mt-3" onClick={fetchLogs}>
                   Retry
                 </Button>
               </div>
             </div>
           ) : filteredEntries.length === 0 ? (
-            <div className="flex-1 flex items-center justify-center text-muted-foreground text-sm">
-              {filterText || filterLevel ? "No matching log lines" : "No log entries"}
+            <div className="flex-1 flex items-center justify-center" data-testid="log-empty-state">
+              <div className="text-center">
+                {hasActiveFilters ? (
+                  <>
+                    <Search className="h-10 w-10 mx-auto mb-3 text-muted-foreground/30" />
+                    <p className="text-sm text-muted-foreground">No matching log lines</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1">
+                      {filterLevel && filterText
+                        ? `No ${filterLevel} entries matching "${filterText}"`
+                        : filterLevel
+                          ? `No ${filterLevel} entries in this source`
+                          : `No entries matching "${filterText}"`
+                      }
+                    </p>
+                    <Button variant="ghost" size="sm" className="mt-3 text-xs gap-1" onClick={clearAllFilters}>
+                      <XCircle className="h-3 w-3" />
+                      Clear filters
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <Terminal className="h-10 w-10 mx-auto mb-3 text-muted-foreground/30" />
+                    <p className="text-sm text-muted-foreground">No log entries</p>
+                    <p className="text-xs text-muted-foreground/60 mt-1">
+                      {currentSource
+                        ? `${currentSource.name} has no recent log output`
+                        : "Select a source to view logs"
+                      }
+                    </p>
+                    {currentSource?.type === "systemd" && (
+                      <p className="text-xs text-muted-foreground/40 mt-2">
+                        Check if the service is running with <code className="bg-muted/50 px-1 rounded">systemctl status {currentSource.id}</code>
+                      </p>
+                    )}
+                  </>
+                )}
+              </div>
             </div>
           ) : (
             /* Log output — terminal-style */
@@ -585,14 +853,36 @@ export function LogViewer() {
                 !wordWrap ? "overflow-x-auto" : ""
               }`}
             >
-              {filteredEntries.map((entry, i) => {
+              {displayRows.map((row, rowIdx) => {
+                // Time gap separator
+                if (row.kind === "gap") {
+                  return (
+                    <div
+                      key={`gap-${rowIdx}`}
+                      className="flex items-center gap-2 py-1.5 my-0.5 select-none"
+                      data-testid="time-gap"
+                    >
+                      <div className="flex-1 h-px bg-border/20" />
+                      <span className="text-[9px] text-muted-foreground/40 flex items-center gap-1 px-1">
+                        <Clock className="h-2.5 w-2.5" />
+                        {formatGap(row.seconds)}
+                      </span>
+                      <div className="flex-1 h-px bg-border/20" />
+                    </div>
+                  );
+                }
+
+                const entry = row.entry;
+                const i = row.index;
                 const style = getLevelStyle(entry.level);
                 const isHighlighted = currentErrorIdx >= 0 && errorIndices[currentErrorIdx] === i;
                 const isCopied = copiedLine === i;
+                const isGroup = row.kind === "group";
+                const jsonParts = extractJson(entry.message);
 
                 return (
                   <div
-                    key={i}
+                    key={`${row.kind}-${i}`}
                     data-log-line
                     className={`flex gap-2 py-px group transition-colors ${style.text} ${
                       entry.level === "error" ? "bg-red-500/5" : ""
@@ -628,9 +918,26 @@ export function LogViewer() {
                        "INF"}
                     </span>
 
-                    {/* Message */}
-                    <span className={`min-w-0 ${wordWrap ? "break-all" : "whitespace-nowrap"}`}>
-                      <HighlightMatch text={entry.message} query={filterText} />
+                    {/* Message — with JSON expansion and dedup badge */}
+                    <span className={`min-w-0 flex-1 ${wordWrap ? "break-all" : "whitespace-nowrap"}`}>
+                      {jsonParts ? (
+                        <>
+                          <HighlightMatch text={jsonParts.before} query={filterText} />
+                          <JsonBlock json={jsonParts.json} />
+                          {jsonParts.after && <HighlightMatch text={jsonParts.after} query={filterText} />}
+                        </>
+                      ) : (
+                        <HighlightMatch text={entry.message} query={filterText} />
+                      )}
+                      {isGroup && (
+                        <Badge
+                          variant="outline"
+                          className="ml-2 text-[9px] h-4 px-1.5 bg-primary/10 border-primary/20 text-primary/70 font-mono tabular-nums"
+                          data-testid="dedup-badge"
+                        >
+                          ×{(row as { count: number }).count}
+                        </Badge>
+                      )}
                     </span>
 
                     {/* Copy button — appears on hover */}
@@ -664,17 +971,26 @@ export function LogViewer() {
             </button>
           )}
 
-          {/* Footer: entry count and source description */}
+          {/* Footer: entry count, dedup info, and source description */}
           <div className="flex items-center justify-between pt-2 mt-1 border-t border-border/30 flex-shrink-0">
             <span className="text-[10px] text-muted-foreground/60">
-              {filteredEntries.length} of {entries.length} lines
-              {(filterText || filterLevel) && " (filtered)"}
+              {dedup && dedupedCount !== filteredEntries.length ? (
+                <>{dedupedCount} rows ({filteredEntries.length} lines, deduplicated)</>
+              ) : (
+                <>{filteredEntries.length} of {entries.length} lines</>
+              )}
+              {hasActiveFilters && " (filtered)"}
             </span>
-            {currentSource && (
-              <span className="text-[10px] text-muted-foreground/60 hidden sm:inline">
-                {currentSource.description} — {currentSource.type}
+            <div className="flex items-center gap-3">
+              <span className="text-[10px] text-muted-foreground/30 hidden sm:inline">
+                <kbd className="font-mono">/</kbd> search · <kbd className="font-mono">n</kbd>/<kbd className="font-mono">N</kbd> errors
               </span>
-            )}
+              {currentSource && (
+                <span className="text-[10px] text-muted-foreground/60 hidden sm:inline">
+                  {currentSource.description} — {currentSource.type}
+                </span>
+              )}
+            </div>
           </div>
         </CardContent>
       </Card>
