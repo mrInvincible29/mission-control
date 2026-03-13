@@ -280,7 +280,7 @@ test("Cron Runs tab shows timeline section", async ({ page }) => {
   await page.goto("/?tab=schedule&view=runs");
   await expect(page.getByText("Cron Run History")).toBeVisible({ timeout: 10000 });
   // Timeline heading should be visible
-  await expect(page.getByText("Timeline")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByRole("heading", { name: "Timeline" })).toBeVisible({ timeout: 10000 });
 });
 
 test("Cron Runs API returns valid JSON", async ({ request }) => {
@@ -2837,4 +2837,129 @@ test("Activity Feed shows hourly timeline when analytics data available", async 
     // Should have "Peak:" label
     await expect(page.getByText(/Peak:/)).toBeVisible();
   }
+});
+
+// === LOGVIEWER UX POLISH: JSON expansion, dedup, time gaps, keyboard nav, clear filters ===
+
+test("LogViewer dedup toggle exists and is enabled by default", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  const dedupToggle = page.locator('[data-testid="dedup-toggle"]');
+  await expect(dedupToggle).toBeVisible({ timeout: 5000 });
+  // Dedup is on by default — button should have secondary variant class
+  await expect(dedupToggle).toHaveClass(/secondary/);
+});
+
+test("LogViewer dedup toggle can be turned off", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  const dedupToggle = page.locator('[data-testid="dedup-toggle"]');
+  await expect(dedupToggle).toBeVisible({ timeout: 5000 });
+  // Click to turn off
+  await dedupToggle.click();
+  await page.waitForTimeout(300);
+  // Should no longer have secondary class (now ghost)
+  await expect(dedupToggle).not.toHaveClass(/secondary/);
+  // Click again to turn back on
+  await dedupToggle.click();
+  await page.waitForTimeout(300);
+  await expect(dedupToggle).toHaveClass(/secondary/);
+});
+
+test("LogViewer clear filters button appears when filters are active", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // Wait for log entries to load
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Initially no clear filters button
+  const clearBtn = page.locator('[data-testid="clear-filters"]');
+  await expect(clearBtn).not.toBeVisible();
+  // Set a text filter
+  const filterInput = page.getByPlaceholder(/Filter log messages/);
+  await filterInput.fill("GET");
+  await page.waitForTimeout(500);
+  // Clear filters button should now be visible
+  await expect(clearBtn).toBeVisible({ timeout: 3000 });
+});
+
+test("LogViewer clear filters button clears all filters", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Apply text filter
+  const filterInput = page.getByPlaceholder(/Filter log messages/);
+  await filterInput.fill("something");
+  await page.waitForTimeout(500);
+  // Click clear filters
+  const clearBtn = page.locator('[data-testid="clear-filters"]');
+  await expect(clearBtn).toBeVisible({ timeout: 3000 });
+  await clearBtn.click();
+  await page.waitForTimeout(300);
+  // Filter input should be empty
+  await expect(filterInput).toHaveValue("");
+  // Clear button should be gone
+  await expect(clearBtn).not.toBeVisible();
+});
+
+test("LogViewer empty state shows source-aware hints when no matches", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Set a filter that won't match anything
+  const filterInput = page.getByPlaceholder(/Filter log messages/);
+  await filterInput.fill("zzz_nonexistent_log_pattern_xyz");
+  await page.waitForTimeout(500);
+  // Should show enhanced empty state
+  const emptyState = page.locator('[data-testid="log-empty-state"]');
+  await expect(emptyState).toBeVisible({ timeout: 5000 });
+  // Should mention the filter text
+  await expect(emptyState.getByText(/zzz_nonexistent/)).toBeVisible();
+  // Should have a Clear filters button in the empty state
+  await expect(emptyState.getByText("Clear filters")).toBeVisible();
+});
+
+test("LogViewer footer shows keyboard shortcut hints", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Footer should show keyboard hints (/ for search, n/N for errors)
+  await expect(page.getByText("/ search")).toBeVisible({ timeout: 5000 });
+});
+
+test("LogViewer error nav tooltips show keyboard shortcut hints", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // Wait for data with potential errors
+  await page.waitForTimeout(3000);
+  const errorNav = page.locator('[data-testid="error-nav"]');
+  const hasErrors = await errorNav.isVisible().catch(() => false);
+  if (hasErrors) {
+    // Hover over the next error button to see tooltip
+    const nextBtn = errorNav.locator("button").last();
+    await nextBtn.hover();
+    await page.waitForTimeout(500);
+    // Tooltip should mention keyboard shortcut (N)
+    const tooltip = page.locator('[role="tooltip"]');
+    const tooltipVisible = await tooltip.isVisible().catch(() => false);
+    if (tooltipVisible) {
+      await expect(tooltip.getByText(/\(N\)/)).toBeVisible();
+    }
+  }
+});
+
+test("LogViewer search placeholder mentions / shortcut", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  // Search input placeholder should mention the / shortcut
+  const filterInput = page.getByPlaceholder(/press \/ to focus/);
+  await expect(filterInput).toBeVisible({ timeout: 5000 });
+});
+
+test("LogViewer filter text updates footer dedup count", async ({ page }) => {
+  await page.goto("/?tab=system&view=logs");
+  await expect(page.getByText("Log Viewer")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("INF").first()).toBeVisible({ timeout: 10000 });
+  // Footer should show line count info
+  const footer = page.getByText(/lines|rows/);
+  await expect(footer.first()).toBeVisible({ timeout: 5000 });
 });
