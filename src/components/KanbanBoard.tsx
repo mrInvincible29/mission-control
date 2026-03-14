@@ -31,6 +31,14 @@ import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
 import { Input } from "@/components/ui/input";
 import { Card } from "@/components/ui/card";
+import { Textarea } from "@/components/ui/textarea";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import {
   Plus,
   GripVertical,
@@ -283,7 +291,8 @@ function KanbanColumn({
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const [quickAddValue, setQuickAddValue] = useState("");
-  const inputRef = quickAddInputRef ?? useRef<HTMLInputElement>(null);
+  const fallbackRef = useRef<HTMLInputElement>(null);
+  const inputRef = quickAddInputRef ?? fallbackRef;
 
   const handleQuickAddSubmit = () => {
     const title = quickAddValue.trim();
@@ -415,18 +424,19 @@ function TaskDetailSheet({
   const [saving, setSaving] = useState(false);
 
   // Sync form when task changes
-  const lastTaskId = useRef<string | null>(null);
-  if (task && task.id !== lastTaskId.current) {
-    lastTaskId.current = task.id;
+  const taskId = task?.id ?? null;
+  useEffect(() => {
+    if (!task) return;
     setEditTitle(task.title);
     setEditDescription(task.description ?? "");
     setEditStatus(task.status);
-    setEditAssignee(task.assignee ?? "");
+    setEditAssignee(task.assignee ?? "__none__");
     setEditPriority(task.priority);
     setEditTags(task.tags.join(", "));
     setConfirmDelete(false);
     setSaving(false);
-  }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId]);
 
   const handleSave = async () => {
     if (!task) return;
@@ -439,7 +449,7 @@ function TaskDetailSheet({
       title: editTitle.trim() || task.title,
       description: editDescription.trim() || null,
       status: editStatus,
-      assignee: editAssignee || null,
+      assignee: editAssignee === "__none__" ? null : editAssignee || null,
       priority: editPriority,
       tags,
     });
@@ -506,11 +516,10 @@ function TaskDetailSheet({
               <label className="text-xs font-medium text-muted-foreground mb-1 block">
                 Description
               </label>
-              <textarea
+              <Textarea
                 value={editDescription}
                 onChange={(e) => setEditDescription(e.target.value)}
                 rows={3}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 placeholder="Optional description..."
               />
             </div>
@@ -520,18 +529,19 @@ function TaskDetailSheet({
               <label className="text-xs font-medium text-muted-foreground mb-1 block">
                 Assignee
               </label>
-              <select
-                value={editAssignee}
-                onChange={(e) => setEditAssignee(e.target.value)}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <option value="">Unassigned</option>
-                {assignees.map((a) => (
-                  <option key={a.name} value={a.name}>
-                    {a.displayName}
-                  </option>
-                ))}
-              </select>
+              <Select value={editAssignee} onValueChange={setEditAssignee}>
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue placeholder="Unassigned" />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__none__">Unassigned</SelectItem>
+                  {assignees.map((a) => (
+                    <SelectItem key={a.name} value={a.name}>
+                      {a.displayName}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Priority */}
@@ -539,16 +549,37 @@ function TaskDetailSheet({
               <label className="text-xs font-medium text-muted-foreground mb-1 block">
                 Priority
               </label>
-              <select
-                value={editPriority}
-                onChange={(e) => setEditPriority(e.target.value as TaskPriority)}
-                className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-              >
-                <option value="low">Low</option>
-                <option value="medium">Medium</option>
-                <option value="high">High</option>
-                <option value="urgent">Urgent</option>
-              </select>
+              <Select value={editPriority} onValueChange={(v) => setEditPriority(v as TaskPriority)}>
+                <SelectTrigger className="h-9 text-sm">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="low">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-gray-400" />
+                      Low
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="medium">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-blue-500" />
+                      Medium
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="high">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-orange-500" />
+                      High
+                    </span>
+                  </SelectItem>
+                  <SelectItem value="urgent">
+                    <span className="flex items-center gap-2">
+                      <span className="w-2 h-2 rounded-full bg-red-500" />
+                      Urgent
+                    </span>
+                  </SelectItem>
+                </SelectContent>
+              </Select>
             </div>
 
             {/* Tags */}
@@ -631,7 +662,7 @@ function TaskDetailSheet({
 
 export function KanbanBoard() {
   const { toast } = useToast();
-  const { data: tasksData, mutate: mutateTasks } = useSWR(
+  const { data: tasksData, mutate: mutateTasks, isLoading: tasksLoading } = useSWR(
     "/api/tasks?archived=false",
     fetcher,
     { refreshInterval: 30000 }
@@ -936,6 +967,42 @@ export function KanbanBoard() {
   // Stale task count
   const staleCount = useMemo(() => filteredTasks.filter(isStale).length, [filteredTasks]);
 
+  // Show inline loading shimmer while initial data is fetching
+  if (tasksLoading && tasks.length === 0) {
+    return (
+      <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
+        <div className="flex flex-wrap items-center gap-2 px-4 pt-4 pb-2">
+          <div className="h-7 w-12 rounded-md bg-muted/60 animate-pulse" />
+          <div className="h-7 w-16 rounded-md bg-muted/60 animate-pulse" />
+          <div className="h-7 w-16 rounded-md bg-muted/60 animate-pulse" />
+          <div className="w-px h-5 bg-border/40 hidden sm:block" />
+          <div className="h-7 w-[130px] rounded-md bg-muted/60 animate-pulse" />
+        </div>
+        <div className="flex-1 px-4 pb-4 pt-2">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {COLUMNS.map((col) => (
+              <div key={col.id} className="rounded-lg border border-border/40 bg-muted/20 p-3 min-h-[200px]">
+                <div className="flex items-center gap-1.5 mb-3">
+                  <div className="h-4 w-4 rounded bg-muted/60 animate-pulse" />
+                  <div className="h-4 w-20 rounded bg-muted/60 animate-pulse" />
+                </div>
+                {[1, 2].map((i) => (
+                  <div key={i} className="rounded-lg border border-border/30 bg-card p-3 mb-2 border-l-4 border-l-muted/40">
+                    <div className="h-4 w-3/4 rounded bg-muted/60 animate-pulse mb-2" />
+                    <div className="flex gap-2">
+                      <div className="h-3 w-12 rounded-full bg-muted/60 animate-pulse" />
+                      <div className="h-3 w-10 rounded-full bg-muted/60 animate-pulse" />
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ))}
+          </div>
+        </div>
+      </Card>
+    );
+  }
+
   return (
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
       {/* Filter bar */}
@@ -984,21 +1051,41 @@ export function KanbanBoard() {
         <div className="w-px h-5 bg-border/40 hidden sm:block" />
 
         {/* Priority filter */}
-        <select
-          value={filterPriority ?? ""}
-          onChange={(e) =>
-            setFilterPriority(
-              e.target.value ? (e.target.value as TaskPriority) : null
-            )
-          }
-          className="h-7 rounded-md border border-input bg-background px-2 text-xs ring-offset-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        <Select
+          value={filterPriority ?? "__all__"}
+          onValueChange={(v) => setFilterPriority(v === "__all__" ? null : (v as TaskPriority))}
         >
-          <option value="">All priorities</option>
-          <option value="urgent">Urgent</option>
-          <option value="high">High</option>
-          <option value="medium">Medium</option>
-          <option value="low">Low</option>
-        </select>
+          <SelectTrigger className="h-7 w-[130px] text-xs">
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            <SelectItem value="__all__">All priorities</SelectItem>
+            <SelectItem value="urgent">
+              <span className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-500" />
+                Urgent
+              </span>
+            </SelectItem>
+            <SelectItem value="high">
+              <span className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-orange-500" />
+                High
+              </span>
+            </SelectItem>
+            <SelectItem value="medium">
+              <span className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-blue-500" />
+                Medium
+              </span>
+            </SelectItem>
+            <SelectItem value="low">
+              <span className="flex items-center gap-2">
+                <span className="w-1.5 h-1.5 rounded-full bg-gray-400" />
+                Low
+              </span>
+            </SelectItem>
+          </SelectContent>
+        </Select>
 
         {/* Task summary counts — colored dots with numbers */}
         <div className="ml-auto flex items-center gap-2 text-[11px] text-muted-foreground/60 tabular-nums">

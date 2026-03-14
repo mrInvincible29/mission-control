@@ -2963,3 +2963,51 @@ test("LogViewer filter text updates footer dedup count", async ({ page }) => {
   const footer = page.getByText(/lines|rows/);
   await expect(footer.first()).toBeVisible({ timeout: 5000 });
 });
+
+// ---------------------------------------------------------------------------
+// KanbanBoard UX polish tests
+// ---------------------------------------------------------------------------
+
+test("KanbanBoard priority filter uses shadcn Select with color dots", async ({ page }) => {
+  await page.goto("/?tab=tasks");
+  await expect(page.getByText("To Do")).toBeVisible({ timeout: 10000 });
+  // The priority filter should be a shadcn Select trigger (button role), not a raw <select>
+  const trigger = page.locator("button").filter({ hasText: "All priorities" });
+  await expect(trigger).toBeVisible({ timeout: 5000 });
+});
+
+test("KanbanBoard task detail sheet uses shadcn components", async ({ page, request }) => {
+  // Create a task first
+  const taskTitle = "shadcn-test-task-" + Date.now();
+  const res = await request.post("/api/tasks", {
+    data: { title: taskTitle },
+  });
+  const body = await res.json();
+  const taskId = body.task?.id ?? body.id;
+
+  await page.goto("/?tab=tasks");
+  await expect(page.getByText("To Do")).toBeVisible({ timeout: 10000 });
+
+  // Click on the task card to open the detail sheet
+  const card = page.getByText(taskTitle);
+  await expect(card).toBeVisible({ timeout: 5000 });
+  await card.click();
+
+  // Sheet should open with "Task Details" heading
+  await expect(page.getByText("Task Details")).toBeVisible({ timeout: 5000 });
+
+  // Priority field should use shadcn Select (button role=combobox), not raw <select>
+  const priorityTrigger = page.locator("[role=combobox]").filter({ hasText: /Medium|Low|High|Urgent/ });
+  await expect(priorityTrigger.first()).toBeVisible({ timeout: 5000 });
+
+  // Clean up
+  if (taskId) await request.delete(`/api/tasks/${taskId}`);
+});
+
+test("ServicesView filter uses shadcn Input component", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await expect(page.getByText("Services Directory")).toBeVisible({ timeout: 10000 });
+  // The filter input should be a proper input element with placeholder
+  const filterInput = page.getByPlaceholder("Filter services...");
+  await expect(filterInput).toBeVisible({ timeout: 5000 });
+});

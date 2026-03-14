@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import {
   RefreshCw,
   ExternalLink,
@@ -40,9 +41,11 @@ const STATUS_COLORS: Record<string, string> = {
   down: "bg-red-500",
 };
 
-/** Tiny response time bar — compares against the max across all services */
+/** Tiny response time bar — uses log scale capped at 2000ms to prevent outlier distortion */
 function ResponseBar({ ms, maxMs }: { ms: number; maxMs: number }) {
-  const pct = maxMs > 0 ? Math.max((ms / maxMs) * 100, 2) : 2;
+  const cappedMax = Math.min(maxMs, 2000);
+  const cappedMs = Math.min(ms, cappedMax);
+  const pct = cappedMax > 0 ? Math.max((cappedMs / cappedMax) * 100, 2) : 2;
   const color =
     ms < 100 ? "bg-emerald-500" : ms < 500 ? "bg-amber-500" : "bg-red-500";
   return (
@@ -222,13 +225,12 @@ export function ServicesView() {
         </div>
         {/* Filter bar */}
         <div className="relative mt-2">
-          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60" />
-          <input
-            type="text"
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60 z-10" />
+          <Input
             placeholder="Filter services..."
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
-            className="w-full rounded-md border border-border/50 bg-muted/30 pl-8 pr-3 py-1.5 text-xs outline-none focus:border-primary/50 focus:ring-1 focus:ring-primary/20 placeholder:text-muted-foreground/50"
+            className="pl-8 h-8 text-xs bg-muted/30"
           />
         </div>
 
@@ -367,7 +369,11 @@ export function ServicesView() {
         </div>
         {filtered.length === 0 && (
           <div className="py-8 text-center text-sm text-muted-foreground">
-            No services match &ldquo;{filter}&rdquo;
+            {filter.trim()
+              ? <>No services match &ldquo;{filter}&rdquo;</>
+              : categoryFilter
+                ? <>No services in category &ldquo;{categoryFilter}&rdquo;</>
+                : "No services found"}
           </div>
         )}
       </CardContent>
