@@ -6,6 +6,12 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -27,6 +33,10 @@ import {
   Copy,
   Check,
   ArrowRight,
+  TrendingUp,
+  TrendingDown,
+  Minus,
+  AlertTriangle,
 } from "lucide-react";
 
 interface CronRun {
@@ -122,6 +132,58 @@ function getModelLabel(model?: string): string {
   return model.split("/").pop() || model;
 }
 
+/** Tiny circular countdown showing time until next auto-refresh */
+function RefreshCountdown({ lastRefresh, interval }: { lastRefresh: number; interval: number }) {
+  const [progress, setProgress] = useState(0);
+
+  useEffect(() => {
+    const tick = () => {
+      const elapsed = Date.now() - lastRefresh;
+      setProgress(Math.min(elapsed / interval, 1));
+    };
+    tick();
+    const id = setInterval(tick, 200);
+    return () => clearInterval(id);
+  }, [lastRefresh, interval]);
+
+  const size = 16;
+  const sw = 2;
+  const r = (size - sw) / 2;
+  const c = 2 * Math.PI * r;
+  const offset = c - progress * c;
+
+  return (
+    <svg width={size} height={size} className="-rotate-90 opacity-40" aria-hidden>
+      <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeOpacity={0.15} strokeWidth={sw} />
+      <circle
+        cx={size / 2} cy={size / 2} r={r} fill="none" stroke="currentColor" strokeWidth={sw}
+        strokeDasharray={c} strokeDashoffset={offset} strokeLinecap="round"
+        className="transition-[stroke-dashoffset] duration-200"
+      />
+    </svg>
+  );
+}
+
+/** Compute health trend: compare recent half of runs vs older half */
+function useHealthTrend(jobRuns: CronRun[]): { trend: "up" | "down" | "stable"; recentRate: number; olderRate: number } {
+  if (jobRuns.length < 4) return { trend: "stable", recentRate: 0, olderRate: 0 };
+  const mid = Math.floor(jobRuns.length / 2);
+  const recent = jobRuns.slice(0, mid);
+  const older = jobRuns.slice(mid);
+  const recentRate = recent.filter(r => r.status === "ok").length / recent.length;
+  const olderRate = older.filter(r => r.status === "ok").length / older.length;
+  const diff = recentRate - olderRate;
+  if (diff > 0.1) return { trend: "up", recentRate, olderRate };
+  if (diff < -0.1) return { trend: "down", recentRate, olderRate };
+  return { trend: "stable", recentRate, olderRate };
+}
+
+/** Detect overdue jobs — nextRunAtMs in the past by > 10 min */
+function isOverdue(nextRunMs: number | undefined): boolean {
+  if (!nextRunMs) return false;
+  return nextRunMs < Date.now() - 600000; // 10 min grace period
+}
+
 // Sparkline bar chart for run history — visible on all screen sizes
 function RunSparkline({ runs, compact }: { runs: CronRun[]; compact?: boolean }) {
   const recent = runs.slice(0, 14).reverse();
@@ -131,25 +193,36 @@ function RunSparkline({ runs, compact }: { runs: CronRun[]; compact?: boolean })
   const barHeight = compact ? 16 : 24;
 
   return (
-    <div className={`flex items-end gap-[2px]`} style={{ height: `${barHeight}px` }}>
-      {recent.map((run, i) => {
-        const height = run.durationMs
-          ? Math.max(3, (run.durationMs / maxDuration) * barHeight)
-          : 3;
-        return (
-          <div
-            key={i}
-            className={`${compact ? "w-1" : "w-1.5"} rounded-t-sm transition-all ${
-              run.status === "ok"
-                ? "bg-emerald-500/70"
-                : "bg-red-500/70"
-            }`}
-            style={{ height: `${height}px` }}
-            title={`${formatDateTime(run.ts)} — ${formatDuration(run.durationMs || 0)} — ${run.status}`}
-          />
-        );
-      })}
-    </div>
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <div className={`flex items-end gap-[2px] cursor-default`} style={{ height: `${barHeight}px` }}>
+            {recent.map((run, i) => {
+              const height = run.durationMs
+                ? Math.max(3, (run.durationMs / maxDuration) * barHeight)
+                : 3;
+              return (
+                <div
+                  key={i}
+                  className={`${compact ? "w-1" : "w-1.5"} rounded-t-sm transition-all ${
+                    run.status === "ok"
+                      ? "bg-emerald-500/70"
+                      : "bg-red-500/70"
+                  }`}
+                  style={{ height: `${height}px` }}
+                />
+              );
+            })}
+          </div>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          <div className="space-y-0.5">
+            <div className="font-medium">Last {recent.length} runs</div>
+            <div>{recent.filter(r => r.status === "ok").length} passed, {recent.filter(r => r.status !== "ok").length} failed</div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -211,6 +284,7 @@ function SuccessRing({ ok, total }: { ok: number; total: number }) {
         strokeDashoffset={offset}
         strokeLinecap="round"
         transform="rotate(-90 18 18)"
+        style={{ transition: "stroke-dashoffset 700ms ease-out" }}
       />
       <text
         x="18"
@@ -224,6 +298,42 @@ function SuccessRing({ ok, total }: { ok: number; total: number }) {
         {Math.round(pct)}%
       </text>
     </svg>
+  );
+}
+
+/** Health trend indicator — shows arrow + label for job success rate trend */
+function HealthTrend({ jobRuns }: { jobRuns: CronRun[] }) {
+  const { trend, recentRate, olderRate } = useHealthTrend(jobRuns);
+  if (jobRuns.length < 4) return null;
+
+  const diff = Math.abs(Math.round((recentRate - olderRate) * 100));
+
+  return (
+    <TooltipProvider>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className={`inline-flex items-center gap-0.5 text-[10px] ${
+            trend === "up" ? "text-emerald-400" :
+            trend === "down" ? "text-red-400" :
+            "text-muted-foreground/50"
+          }`} data-testid="health-trend">
+            {trend === "up" && <TrendingUp className="size-3" />}
+            {trend === "down" && <TrendingDown className="size-3" />}
+            {trend === "stable" && <Minus className="size-3" />}
+          </span>
+        </TooltipTrigger>
+        <TooltipContent side="top" className="text-xs">
+          <div className="space-y-0.5">
+            <div className="font-medium">
+              {trend === "up" ? "Improving" : trend === "down" ? "Declining" : "Stable"}
+              {diff > 0 && ` (${diff}%)`}
+            </div>
+            <div>Recent: {Math.round(recentRate * 100)}% success</div>
+            <div>Earlier: {Math.round(olderRate * 100)}% success</div>
+          </div>
+        </TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
   );
 }
 
@@ -256,6 +366,86 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
   );
 }
 
+/** Daily density histogram — shows run count per day as a compact bar chart */
+function DailyDensity({ runs }: { runs: CronRun[] }) {
+  // Group by day for last 7 days
+  const days = useMemo(() => {
+    const now = new Date();
+    const result: { label: string; ok: number; error: number; total: number }[] = [];
+    for (let i = 6; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dayStr = d.toLocaleDateString("en-US", { weekday: "short" });
+      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const dayEnd = dayStart + 86400000;
+      const dayRuns = runs.filter(r => r.ts >= dayStart && r.ts < dayEnd);
+      result.push({
+        label: dayStr,
+        ok: dayRuns.filter(r => r.status === "ok").length,
+        error: dayRuns.filter(r => r.status !== "ok").length,
+        total: dayRuns.length,
+      });
+    }
+    return result;
+  }, [runs]);
+
+  const maxTotal = Math.max(...days.map(d => d.total), 1);
+
+  return (
+    <div className="flex items-end gap-1" data-testid="daily-density">
+      {days.map((day, i) => (
+        <TooltipProvider key={i}>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <div className="flex flex-col items-center gap-0.5 cursor-default">
+                <div className="flex flex-col-reverse w-4" style={{ height: "32px" }}>
+                  {day.total > 0 ? (
+                    <>
+                      <div
+                        className="w-full rounded-t-sm bg-emerald-500/60 transition-all duration-500"
+                        style={{ height: `${Math.max(2, (day.ok / maxTotal) * 32)}px` }}
+                      />
+                      {day.error > 0 && (
+                        <div
+                          className="w-full bg-red-500/60"
+                          style={{ height: `${Math.max(2, (day.error / maxTotal) * 32)}px` }}
+                        />
+                      )}
+                    </>
+                  ) : (
+                    <div className="w-full h-[2px] rounded-full bg-muted/30 mt-auto" />
+                  )}
+                </div>
+                <span className="text-[8px] text-muted-foreground/50 font-mono leading-none">{day.label.charAt(0)}</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="top" className="text-xs">
+              <div className="font-medium">{day.label}</div>
+              <div>{day.total} run{day.total !== 1 ? "s" : ""}: {day.ok} ok{day.error > 0 ? `, ${day.error} failed` : ""}</div>
+            </TooltipContent>
+          </Tooltip>
+        </TooltipProvider>
+      ))}
+    </div>
+  );
+}
+
+/** Success rate progress bar for stats banner */
+function SuccessRateBar({ ok, total }: { ok: number; total: number }) {
+  if (total === 0) return null;
+  const pct = (ok / total) * 100;
+  return (
+    <div className="w-full h-1.5 rounded-full bg-muted/50 overflow-hidden mt-1.5">
+      <div
+        className={`h-full rounded-full transition-all duration-700 ease-out ${
+          pct >= 90 ? "bg-emerald-500" : pct >= 70 ? "bg-amber-500" : "bg-red-500"
+        }`}
+        style={{ width: `${pct}%` }}
+      />
+    </div>
+  );
+}
+
 type SortMode = "recent" | "name" | "runs" | "success";
 
 export function CronHistory() {
@@ -272,7 +462,9 @@ export function CronHistory() {
   const [searchQuery, setSearchQuery] = useState("");
   const [lastRefresh, setLastRefresh] = useState(0);
   const [, setTick] = useState(0);
+  const [focusedJobIdx, setFocusedJobIdx] = useState(-1);
   const searchInputRef = useRef<HTMLInputElement>(null);
+  const jobListRef = useRef<HTMLDivElement>(null);
 
   const fetchRuns = useCallback(async () => {
     try {
@@ -350,7 +542,7 @@ export function CronHistory() {
   const nextRunByJob = useMemo(() => {
     const map: Record<string, number> = {};
     for (const run of runs) {
-      if (run.nextRunAtMs && run.nextRunAtMs > Date.now()) {
+      if (run.nextRunAtMs) {
         if (!map[run.jobId] || run.ts > (runs.find(r => r.jobId === run.jobId && r.nextRunAtMs === map[run.jobId])?.ts || 0)) {
           map[run.jobId] = run.nextRunAtMs;
         }
@@ -412,11 +604,12 @@ export function CronHistory() {
   const totalStats = useMemo(() => {
     const total = runs.length;
     const ok = runs.filter((r) => r.status === "ok").length;
-    const error = total - ok;
+    const err = total - ok;
     const totalDuration = runs.reduce((sum, r) => sum + (r.durationMs || 0), 0);
     const avgDuration = total > 0 ? Math.round(totalDuration / total) : 0;
     const activeJobs = jobs.filter((j) => j.stats.total > 0).length;
-    return { total, ok, error, avgDuration, activeJobs };
+    const successRate = total > 0 ? ok / total : 0;
+    return { total, ok, error: err, avgDuration, activeJobs, successRate };
   }, [runs, jobs]);
 
   // Group runs by date for timeline
@@ -434,6 +627,11 @@ export function CronHistory() {
     return groups;
   }, [filteredRuns]);
 
+  // Overdue jobs count
+  const overdueCount = useMemo(() => {
+    return Object.values(nextRunByJob).filter(ts => isOverdue(ts)).length;
+  }, [nextRunByJob]);
+
   const toggleJobExpand = (jobId: string) => {
     setExpandedJobs((prev) => {
       const next = new Set(prev);
@@ -449,6 +647,39 @@ export function CronHistory() {
     if (!jobRuns || jobRuns.length === 0) return null;
     return jobRuns[0].durationMs || null;
   };
+
+  // Keyboard navigation: j/k to navigate jobs, Enter to expand/collapse
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      if (e.key === "j" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setFocusedJobIdx(prev => Math.min(prev + 1, sortedJobs.length - 1));
+      } else if (e.key === "k" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setFocusedJobIdx(prev => Math.max(prev - 1, 0));
+      } else if (e.key === "Enter" && focusedJobIdx >= 0 && focusedJobIdx < sortedJobs.length) {
+        e.preventDefault();
+        toggleJobExpand(sortedJobs[focusedJobIdx].id);
+      } else if (e.key === "/" && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [sortedJobs, focusedJobIdx]);
+
+  // Scroll focused job into view
+  useEffect(() => {
+    if (focusedJobIdx < 0 || !jobListRef.current) return;
+    const children = jobListRef.current.children;
+    if (children[focusedJobIdx]) {
+      (children[focusedJobIdx] as HTMLElement).scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }, [focusedJobIdx]);
 
   if (loading) {
     return (
@@ -489,6 +720,17 @@ export function CronHistory() {
           <span className="text-muted-foreground/60 ml-auto">{error}</span>
         </div>
       )}
+
+      {/* Overdue alert banner */}
+      {overdueCount > 0 && (
+        <div data-testid="overdue-banner" className="mx-4 mt-3 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-2 flex items-center gap-2 text-xs">
+          <AlertTriangle className="h-3.5 w-3.5 text-amber-400 flex-shrink-0" />
+          <span className="text-amber-300">
+            {overdueCount} job{overdueCount !== 1 ? "s" : ""} overdue — expected to run but haven&apos;t
+          </span>
+        </div>
+      )}
+
       {/* Header */}
       <CardHeader className="pb-3 flex-shrink-0 px-4 pt-4">
         <div className="flex items-center gap-3 flex-wrap">
@@ -501,44 +743,72 @@ export function CronHistory() {
           </div>
           <div className="flex-1" />
           <div className="flex items-center gap-2">
+            {/* Refresh countdown ring */}
+            {autoRefresh && lastRefresh > 0 && (
+              <RefreshCountdown lastRefresh={lastRefresh} interval={30000} />
+            )}
             <span className="text-[10px] text-muted-foreground/60">
               {lastRefresh > 0 && `Updated ${Math.round((Date.now() - lastRefresh) / 1000)}s ago`}
             </span>
             <Button
+              variant={autoRefresh ? "secondary" : "ghost"}
+              size="sm"
+              className="text-xs h-7 px-2"
+              onClick={() => setAutoRefresh(!autoRefresh)}
+            >
+              {autoRefresh ? "Auto" : "Paused"}
+            </Button>
+            <Button
               variant="ghost"
               size="sm"
               onClick={fetchRuns}
-              className="text-xs gap-1"
+              className="h-7 w-7 p-0"
             >
               <RefreshCw className={`size-3.5 ${loading ? "animate-spin" : ""}`} />
-              Refresh
             </Button>
           </div>
         </div>
 
-        {/* Stats banner */}
+        {/* Stats banner with success rate bar + daily density chart */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3 mt-3">
           <div className="rounded-lg bg-muted/50 p-3 text-center">
-            <div className="text-2xl font-bold">{totalStats.total}</div>
+            <div className="text-2xl font-bold tabular-nums">{totalStats.total}</div>
             <div className="text-[11px] text-muted-foreground">Total Runs</div>
           </div>
           <div className="rounded-lg bg-emerald-500/10 p-3 text-center">
-            <div className="text-2xl font-bold text-emerald-500">{totalStats.ok}</div>
+            <div className="text-2xl font-bold text-emerald-500 tabular-nums">{totalStats.ok}</div>
             <div className="text-[11px] text-muted-foreground">Succeeded</div>
           </div>
           <div className="rounded-lg bg-red-500/10 p-3 text-center">
-            <div className="text-2xl font-bold text-red-500">{totalStats.error}</div>
+            <div className="text-2xl font-bold text-red-500 tabular-nums">{totalStats.error}</div>
             <div className="text-[11px] text-muted-foreground">Failed</div>
           </div>
           <div className="rounded-lg bg-muted/50 p-3 text-center">
-            <div className="text-2xl font-bold">{formatDuration(totalStats.avgDuration)}</div>
+            <div className="text-2xl font-bold tabular-nums">{formatDuration(totalStats.avgDuration)}</div>
             <div className="text-[11px] text-muted-foreground">Avg Duration</div>
           </div>
-          <div className="rounded-lg bg-muted/50 p-3 text-center">
-            <div className="text-2xl font-bold">{totalStats.activeJobs}</div>
-            <div className="text-[11px] text-muted-foreground">Active Jobs</div>
+          <div className="rounded-lg bg-muted/50 p-3 flex flex-col items-center justify-center">
+            <DailyDensity runs={runs} />
+            <div className="text-[11px] text-muted-foreground mt-1">7-Day Activity</div>
           </div>
         </div>
+
+        {/* Overall success rate bar */}
+        {totalStats.total > 0 && (
+          <div className="mt-2">
+            <div className="flex items-center justify-between text-[10px] text-muted-foreground mb-0.5">
+              <span>Success Rate</span>
+              <span className={`font-mono font-medium ${
+                totalStats.successRate >= 0.9 ? "text-emerald-400" :
+                totalStats.successRate >= 0.7 ? "text-amber-400" :
+                "text-red-400"
+              }`}>
+                {(totalStats.successRate * 100).toFixed(1)}%
+              </span>
+            </div>
+            <SuccessRateBar ok={totalStats.ok} total={totalStats.total} />
+          </div>
+        )}
 
         {/* Search input */}
         <div className="relative mt-3">
@@ -546,7 +816,7 @@ export function CronHistory() {
           <Input
             ref={searchInputRef}
             type="text"
-            placeholder="Search jobs by name..."
+            placeholder="Search jobs by name... (press / to focus)"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             className="pl-8 pr-8 h-8 text-xs"
@@ -573,7 +843,7 @@ export function CronHistory() {
             >
               <Filter className="size-3" />
               {jobs.find((j) => j.id === selectedJobId)?.name || "Job"}
-              <span className="text-muted-foreground">×</span>
+              <span className="text-muted-foreground">&times;</span>
             </Button>
           )}
 
@@ -617,18 +887,29 @@ export function CronHistory() {
 
       <CardContent className="flex-1 overflow-y-auto px-4 pb-4">
         {/* Jobs overview with expandable run lists */}
-        <div className="space-y-2">
-          {sortedJobs.map((job) => {
+        <div className="space-y-2" ref={jobListRef}>
+          {sortedJobs.map((job, jobIdx) => {
             const jobRuns = runsByJob[job.id] || [];
             const isExpanded = expandedJobs.has(job.id);
+            const isFocused = jobIdx === focusedJobIdx;
             const filteredJobRuns = statusFilter === "all"
               ? jobRuns
               : jobRuns.filter((r) => r.status === statusFilter);
             const nextRun = nextRunByJob[job.id];
             const latestDuration = getLatestRunDuration(job.id);
+            const jobOverdue = isOverdue(nextRun);
 
             return (
-              <div key={job.id} className="rounded-lg border border-border/50 overflow-hidden">
+              <div
+                key={job.id}
+                className={`rounded-lg border overflow-hidden transition-colors ${
+                  isFocused
+                    ? "border-primary/50 ring-1 ring-primary/20"
+                    : jobOverdue
+                      ? "border-amber-500/30"
+                      : "border-border/50"
+                }`}
+              >
                 {/* Job header */}
                 <button
                   onClick={() => toggleJobExpand(job.id)}
@@ -651,10 +932,17 @@ export function CronHistory() {
                           <span className="text-[10px] text-muted-foreground">{getModelLabel(job.model)}</span>
                         </div>
                       )}
+                      <HealthTrend jobRuns={jobRuns} />
                       {job.enabled === false && (
                         <Badge variant="secondary" className="text-[10px] h-4">Disabled</Badge>
                       )}
-                      {nextRun && (
+                      {jobOverdue && (
+                        <Badge variant="outline" className="text-[10px] h-4 border-amber-500/30 text-amber-400 bg-amber-500/10" data-testid="overdue-badge">
+                          <AlertTriangle className="size-2.5 mr-0.5" />
+                          Overdue
+                        </Badge>
+                      )}
+                      {nextRun && !jobOverdue && (
                         <span className="text-[10px] text-primary/70 flex items-center gap-0.5" title={`Next run: ${formatDateTime(nextRun)}`}>
                           <Clock className="size-2.5" />
                           in {formatCountdown(nextRun)}
@@ -766,7 +1054,7 @@ export function CronHistory() {
           )}
         </div>
 
-        {/* Timeline view — grouped by date */}
+        {/* Timeline view — grouped by date with density bars */}
         {!selectedJobId && filteredRuns.length > 0 && (
           <div className="mt-6">
             <h3 className="text-sm font-semibold text-muted-foreground mb-3 flex items-center gap-2">
@@ -774,53 +1062,76 @@ export function CronHistory() {
               Timeline
             </h3>
             <div className="space-y-4">
-              {Object.entries(runsByDate).map(([date, dateRuns]) => (
-                <div key={date}>
-                  <div className="text-xs font-medium text-muted-foreground mb-1.5 sticky top-0 bg-background/95 py-1">
-                    {date} · {dateRuns.length} run{dateRuns.length !== 1 ? "s" : ""}
-                  </div>
-                  <div className="relative pl-6 border-l-2 border-border/30 space-y-1">
-                    {dateRuns.map((run, i) => (
-                      <button
-                        key={`${run.ts}-${i}`}
-                        onClick={() => setSelectedRun(run)}
-                        className="block w-full text-left relative group"
-                      >
-                        {/* Timeline dot */}
+              {Object.entries(runsByDate).map(([date, dateRuns]) => {
+                const dateOk = dateRuns.filter(r => r.status === "ok").length;
+                const dateErr = dateRuns.length - dateOk;
+                return (
+                  <div key={date}>
+                    <div className="text-xs font-medium text-muted-foreground mb-1.5 sticky top-0 bg-background/95 py-1 flex items-center gap-2">
+                      <span>{date}</span>
+                      <span className="text-muted-foreground/40">&middot;</span>
+                      <span>{dateRuns.length} run{dateRuns.length !== 1 ? "s" : ""}</span>
+                      {dateErr > 0 && (
+                        <span className="text-red-400/70">{dateErr} failed</span>
+                      )}
+                      {/* Mini success bar for the day */}
+                      <div className="w-12 h-1 rounded-full bg-muted/50 overflow-hidden ml-auto">
                         <div
-                          className={`absolute -left-[25px] top-2 w-2.5 h-2.5 rounded-full border-2 border-background ${
-                            run.status === "ok" ? "bg-emerald-500" : "bg-red-500"
+                          className={`h-full rounded-full ${
+                            dateErr === 0 ? "bg-emerald-500/60" :
+                            dateOk > dateErr ? "bg-amber-500/60" :
+                            "bg-red-500/60"
                           }`}
+                          style={{ width: `${(dateOk / dateRuns.length) * 100}%` }}
                         />
-                        <div className="rounded-md px-3 py-2 hover:bg-muted/30 transition-colors">
-                          <div className="flex items-center gap-2">
-                            <span className="text-xs font-medium">
-                              {new Date(run.ts).toLocaleTimeString("en-US", {
-                                hour: "2-digit",
-                                minute: "2-digit",
-                                hour12: true,
-                              })}
-                            </span>
-                            <span className="text-xs text-primary font-medium truncate">
-                              {run.jobName || run.jobId.slice(0, 8)}
-                            </span>
-                            {run.durationMs != null && (
-                              <span className="text-[11px] text-muted-foreground">
-                                {formatDuration(run.durationMs)}
+                      </div>
+                    </div>
+                    <div className="relative pl-6 border-l-2 border-border/30 space-y-1">
+                      {dateRuns.map((run, i) => (
+                        <button
+                          key={`${run.ts}-${i}`}
+                          onClick={() => setSelectedRun(run)}
+                          className="block w-full text-left relative group"
+                        >
+                          {/* Timeline dot */}
+                          <div
+                            className={`absolute -left-[25px] top-2 w-2.5 h-2.5 rounded-full border-2 border-background ${
+                              run.status === "ok" ? "bg-emerald-500" : "bg-red-500"
+                            }`}
+                          />
+                          <div className="rounded-md px-3 py-2 hover:bg-muted/30 transition-colors">
+                            <div className="flex items-center gap-2">
+                              <span className="text-xs font-medium tabular-nums">
+                                {new Date(run.ts).toLocaleTimeString("en-US", {
+                                  hour: "2-digit",
+                                  minute: "2-digit",
+                                  hour12: true,
+                                })}
                               </span>
+                              <span className="text-xs text-primary font-medium truncate">
+                                {run.jobName || run.jobId.slice(0, 8)}
+                              </span>
+                              {run.durationMs != null && (
+                                <span className="text-[11px] text-muted-foreground tabular-nums">
+                                  {formatDuration(run.durationMs)}
+                                </span>
+                              )}
+                              {run.status !== "ok" && (
+                                <XCircle className="size-3 text-red-400/70 flex-shrink-0" />
+                              )}
+                            </div>
+                            {run.summary && (
+                              <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1 group-hover:line-clamp-3 transition-all">
+                                {run.summary}
+                              </p>
                             )}
                           </div>
-                          {run.summary && (
-                            <p className="text-[11px] text-muted-foreground mt-0.5 line-clamp-1 group-hover:line-clamp-3 transition-all">
-                              {run.summary}
-                            </p>
-                          )}
-                        </div>
-                      </button>
-                    ))}
+                        </button>
+                      ))}
+                    </div>
                   </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         )}
