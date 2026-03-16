@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
-import { Cpu, MemoryStick, Container, HardDrive, Clock, WifiOff } from "lucide-react";
-import { useHealthData } from "@/hooks/useHealthData";
+import { Cpu, MemoryStick, Container, HardDrive, Clock, WifiOff, ArrowDown, ArrowUp } from "lucide-react";
+import { useHealthData, formatRate } from "@/hooks/useHealthData";
 
 function getColor(pct: number): string {
   if (pct >= 90) return "text-red-400";
@@ -106,7 +106,7 @@ function AnimatedPercent({ value, className }: { value: number; className?: stri
 }
 
 export function StatusStrip({ compact = false }: { compact?: boolean }) {
-  const { data, connected, isValidating } = useHealthData();
+  const { data, connected, isValidating, networkRate } = useHealthData();
   const router = useRouter();
   const istTime = useISTClock();
 
@@ -167,6 +167,21 @@ export function StatusStrip({ compact = false }: { compact?: boolean }) {
             <Container className="h-3 w-3" />
             <span className="font-mono tabular-nums">{data.containers}</span>
           </span>
+          {networkRate && (networkRate.rxBytesPerSec > 0 || networkRate.txBytesPerSec > 0) && (
+            <>
+              <span className="text-border">|</span>
+              <span
+                className="flex items-center gap-1 font-mono tabular-nums"
+                title={`Network: ↓${formatRate(networkRate.rxBytesPerSec)} ↑${formatRate(networkRate.txBytesPerSec)}`}
+                data-testid="network-throughput"
+              >
+                <ArrowDown className="h-2.5 w-2.5 text-sky-400" />
+                <span className="text-sky-400">{formatRate(networkRate.rxBytesPerSec)}</span>
+                <ArrowUp className="h-2.5 w-2.5 text-amber-400" />
+                <span className="text-amber-400">{formatRate(networkRate.txBytesPerSec)}</span>
+              </span>
+            </>
+          )}
           <span className="text-border">|</span>
           <span className="flex items-center gap-1" title={`Uptime: ${formatUptime(data.uptime)}`}>
             <Clock className="h-3 w-3" />

@@ -41,6 +41,16 @@ const StatusStrip = dynamic(
   { ssr: false }
 );
 
+const DynamicFavicon = dynamic(
+  () => import("@/components/DynamicFavicon").then((mod) => ({ default: mod.DynamicFavicon })),
+  { ssr: false }
+);
+
+const TabReturnNotifier = dynamic(
+  () => import("@/components/TabReturnNotifier").then((mod) => ({ default: mod.TabReturnNotifier })),
+  { ssr: false }
+);
+
 const QuickStats = dynamic(
   () => import("@/components/QuickStats").then((mod) => ({ default: mod.QuickStats })),
   { ssr: false }
@@ -407,6 +417,8 @@ export default function Home() {
     <ToastProvider>
       <CommandPalette />
       <KeyboardShortcuts />
+      <DynamicFavicon />
+      <TabReturnNotifier />
       <main className="min-h-screen bg-gradient-to-b from-background to-background/95">
         <div className="container mx-auto px-4 py-6">
           <header className="mb-8">

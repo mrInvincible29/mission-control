@@ -962,7 +962,7 @@ export function SystemHealth() {
           </CollapsibleSection>
         )}
 
-        {/* Top Processes — collapsible, default closed */}
+        {/* Top Processes — collapsible, default closed, grouped by command */}
         {data.topProcesses.length > 0 && (
           <CollapsibleSection
             id="processes"
@@ -981,51 +981,146 @@ export function SystemHealth() {
               </>
             }
           >
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-muted-foreground border-b border-border/30">
-                    <th className="text-left py-1.5 pr-3 font-medium">PID</th>
-                    <th className="text-left py-1.5 px-2 font-medium">User</th>
-                    <th className="text-right py-1.5 px-2 font-medium">CPU%</th>
-                    <th className="text-right py-1.5 px-2 font-medium">MEM%</th>
-                    <th className="text-left py-1.5 pl-2 font-medium">Command</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.topProcesses.map((p) => (
-                    <tr key={p.pid} className="border-b border-border/10 hover:bg-muted/20">
-                      <td className="py-1.5 pr-3 font-mono text-muted-foreground/60">{p.pid}</td>
-                      <td className="py-1.5 px-2 text-muted-foreground">{p.user}</td>
-                      <td className={`py-1.5 px-2 text-right font-mono ${p.cpu > 50 ? "text-red-400" : p.cpu > 10 ? "text-amber-400" : ""}`}>
-                        {p.cpu.toFixed(1)}
-                      </td>
-                      <td className={`py-1.5 px-2 text-right font-mono ${p.mem > 50 ? "text-red-400" : p.mem > 10 ? "text-amber-400" : ""}`}>
-                        {p.mem.toFixed(1)}
-                      </td>
-                      <td className="py-1.5 pl-2 max-w-[200px] sm:max-w-[350px]">
-                        <TooltipProvider>
-                          <Tooltip>
-                            <TooltipTrigger asChild>
-                              <span className="block font-mono text-[10px] text-muted-foreground truncate">
-                                {p.command}
-                              </span>
-                            </TooltipTrigger>
-                            <TooltipContent side="top" className="max-w-[500px]">
-                              <pre className="whitespace-pre-wrap break-all font-mono text-[10px]">{p.command}</pre>
-                            </TooltipContent>
-                          </Tooltip>
-                        </TooltipProvider>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+            <ProcessGroupView processes={data.topProcesses} />
           </CollapsibleSection>
         )}
       </CardContent>
     </Card>
+  );
+}
+
+/** Extract a short base name from a command string */
+function getProcessBaseName(command: string): string {
+  // Strip path prefixes and get the executable name
+  const parts = command.split(/\s+/);
+  const exe = parts[0] || command;
+  const base = exe.split("/").pop() || exe;
+  // Group common variants: node, python, docker, etc.
+  if (base.startsWith("node") || base === "npm" || base === "npx" || base === "tsx") return "node";
+  if (base.startsWith("python") || base === "pip") return "python";
+  if (base.startsWith("docker")) return "docker";
+  if (base === "claude" || base.startsWith("claude-")) return "claude";
+  if (base === "bash" || base === "sh" || base === "zsh") return "shell";
+  return base;
+}
+
+const PROCESS_GROUP_COLORS: Record<string, string> = {
+  node: "bg-green-500",
+  python: "bg-yellow-500",
+  docker: "bg-cyan-500",
+  claude: "bg-purple-500",
+  shell: "bg-gray-500",
+};
+
+function getProcessColor(name: string): string {
+  return PROCESS_GROUP_COLORS[name] || "bg-orange-500";
+}
+
+interface ProcessGroup {
+  name: string;
+  totalCpu: number;
+  totalMem: number;
+  count: number;
+  processes: Array<{ pid: number; user: string; cpu: number; mem: number; command: string }>;
+}
+
+/** Grouped process view — aggregates by base command name with visual CPU/MEM bars */
+function ProcessGroupView({ processes }: { processes: Array<{ pid: number; user: string; cpu: number; mem: number; command: string }> }) {
+  const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
+
+  const groups: ProcessGroup[] = (() => {
+    const map = new Map<string, ProcessGroup>();
+    for (const p of processes) {
+      const name = getProcessBaseName(p.command);
+      const existing = map.get(name);
+      if (existing) {
+        existing.totalCpu += p.cpu;
+        existing.totalMem += p.mem;
+        existing.count++;
+        existing.processes.push(p);
+      } else {
+        map.set(name, {
+          name,
+          totalCpu: p.cpu,
+          totalMem: p.mem,
+          count: 1,
+          processes: [p],
+        });
+      }
+    }
+    return Array.from(map.values()).sort((a, b) => b.totalCpu - a.totalCpu);
+  })();
+
+  const maxCpu = Math.max(...groups.map(g => g.totalCpu), 1);
+
+  return (
+    <div className="space-y-1.5" data-testid="process-groups">
+      {groups.map((group) => (
+        <div key={group.name}>
+          <button
+            onClick={() => setExpandedGroup(expandedGroup === group.name ? null : group.name)}
+            className="w-full flex items-center gap-2 py-1.5 px-2 rounded-md hover:bg-muted/20 transition-colors text-left group"
+          >
+            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${getProcessColor(group.name)}`} />
+            <span className="text-xs font-medium w-16 truncate">{group.name}</span>
+            {group.count > 1 && (
+              <span className="text-[10px] text-muted-foreground/50">×{group.count}</span>
+            )}
+            <div className="flex-1 flex items-center gap-2">
+              <div className="flex-1 h-1.5 rounded-full bg-muted/30 overflow-hidden">
+                <div
+                  className={`h-full rounded-full ${getProcessColor(group.name)} transition-all duration-500`}
+                  style={{ width: `${Math.max((group.totalCpu / maxCpu) * 100, 2)}%`, opacity: 0.7 }}
+                />
+              </div>
+            </div>
+            <span className={`text-xs font-mono w-14 text-right ${group.totalCpu > 50 ? "text-red-400" : group.totalCpu > 10 ? "text-amber-400" : "text-muted-foreground"}`}>
+              {group.totalCpu.toFixed(1)}%
+            </span>
+            <span className={`text-xs font-mono w-14 text-right ${group.totalMem > 50 ? "text-red-400" : group.totalMem > 10 ? "text-amber-400" : "text-muted-foreground/60"}`}>
+              {group.totalMem.toFixed(1)}%
+            </span>
+            <ChevronDown className={`h-3 w-3 text-muted-foreground/40 transition-transform ${expandedGroup === group.name ? "" : "-rotate-90"}`} />
+          </button>
+          {expandedGroup === group.name && (
+            <div className="ml-6 mt-0.5 space-y-0.5 border-l border-border/30 pl-2">
+              {group.processes.map((p) => (
+                <div key={p.pid} className="flex items-center gap-2 text-[10px] text-muted-foreground/70 py-0.5">
+                  <span className="font-mono w-12">{p.pid}</span>
+                  <span className="w-12 truncate">{p.user}</span>
+                  <span className={`font-mono w-10 text-right ${p.cpu > 50 ? "text-red-400" : p.cpu > 10 ? "text-amber-400" : ""}`}>
+                    {p.cpu.toFixed(1)}%
+                  </span>
+                  <span className={`font-mono w-10 text-right ${p.mem > 50 ? "text-red-400" : p.mem > 10 ? "text-amber-400" : ""}`}>
+                    {p.mem.toFixed(1)}%
+                  </span>
+                  <TooltipProvider>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <span className="font-mono truncate flex-1">{p.command}</span>
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="max-w-[500px]">
+                        <pre className="whitespace-pre-wrap break-all font-mono text-[10px]">{p.command}</pre>
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      ))}
+      {/* Column headers — subtle */}
+      <div className="flex items-center gap-2 px-2 pt-1 text-[9px] text-muted-foreground/30 uppercase tracking-wider">
+        <span className="w-2" />
+        <span className="w-16">Process</span>
+        <span className="w-6" />
+        <span className="flex-1 text-center">CPU bar</span>
+        <span className="w-14 text-right">CPU%</span>
+        <span className="w-14 text-right">MEM%</span>
+        <span className="w-3" />
+      </div>
+    </div>
   );
 }
 
