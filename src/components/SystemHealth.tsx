@@ -144,19 +144,65 @@ function getUsageBgColor(percent: number): string {
   return "bg-emerald-500/15";
 }
 
-// Circular gauge component
+// Inline sparkline for gauge cards — renders a tiny area chart below the gauge
+function GaugeSparkline({ data, color }: { data: number[]; color: string }) {
+  if (data.length < 2) return null;
+  const max = Math.max(...data, 1);
+  const min = Math.min(...data, 0);
+  const range = max - min || 1;
+  const w = 60;
+  const h = 16;
+  const points = data.map((v, i) => {
+    const x = (i / (data.length - 1)) * w;
+    const y = h - ((v - min) / range) * (h - 2) - 1;
+    return `${x},${y}`;
+  });
+  const areaPoints = [...points, `${w},${h}`, `0,${h}`];
+  return (
+    <svg viewBox={`0 0 ${w} ${h}`} className="w-[60px] h-[16px]" preserveAspectRatio="none">
+      <polygon points={areaPoints.join(" ")} fill={color} fillOpacity={0.12} />
+      <polyline points={points.join(" ")} fill="none" stroke={color} strokeWidth={1} strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+// Delta indicator — shows trend direction with arrow
+function DeltaIndicator({ current, history }: { current: number; history: number[] }) {
+  if (history.length < 2) return null;
+  // Compare current to average of previous 3 readings
+  const prevSlice = history.slice(-4, -1);
+  if (prevSlice.length === 0) return null;
+  const prevAvg = prevSlice.reduce((s, v) => s + v, 0) / prevSlice.length;
+  const delta = current - prevAvg;
+  if (Math.abs(delta) < 0.5) return null;
+  const isUp = delta > 0;
+  return (
+    <span
+      className={`text-[9px] font-mono font-medium ${isUp ? "text-red-400/70" : "text-emerald-400/70"}`}
+      data-testid="delta-indicator"
+    >
+      {isUp ? "\u2191" : "\u2193"}{Math.abs(delta).toFixed(1)}
+    </span>
+  );
+}
+
+// Circular gauge component — now with optional sparkline and delta
 function CircularGauge({
   percent,
   size = 80,
   strokeWidth = 6,
   label,
   sublabel,
+  history,
+  sparkColor,
 }: {
   percent: number;
   size?: number;
   strokeWidth?: number;
   label: string;
   sublabel?: string;
+  history?: number[];
+  sparkColor?: string;
 }) {
   const radius = (size - strokeWidth) / 2;
   const circumference = 2 * Math.PI * radius;
@@ -192,9 +238,15 @@ function CircularGauge({
         <span className={`text-lg font-bold ${getUsageColor(percent)}`}>
           {percent.toFixed(0)}%
         </span>
+        {history && history.length >= 2 && (
+          <DeltaIndicator current={percent} history={history} />
+        )}
       </div>
       <span className="text-xs font-medium mt-1">{label}</span>
       {sublabel && <span className="text-[10px] text-muted-foreground">{sublabel}</span>}
+      {history && history.length >= 2 && (
+        <GaugeSparkline data={history} color={sparkColor || color} />
+      )}
     </div>
   );
 }
@@ -289,8 +341,20 @@ function CollapsibleSection({
     localStorage.setItem(storageKey, String(next));
   };
 
+  // Listen for expand-all / collapse-all events from keyboard shortcuts
+  useEffect(() => {
+    const handleExpand = () => { setOpen(true); localStorage.setItem(storageKey, "true"); };
+    const handleCollapse = () => { setOpen(false); localStorage.setItem(storageKey, "false"); };
+    window.addEventListener("health-expand-all", handleExpand);
+    window.addEventListener("health-collapse-all", handleCollapse);
+    return () => {
+      window.removeEventListener("health-expand-all", handleExpand);
+      window.removeEventListener("health-collapse-all", handleCollapse);
+    };
+  }, [storageKey]);
+
   return (
-    <div className="rounded-xl border border-border/50 bg-card/30 overflow-hidden">
+    <div className="rounded-xl border border-border/50 bg-card/30 overflow-hidden" data-section-id={id}>
       <div
         role="button"
         tabIndex={0}
@@ -445,6 +509,48 @@ function RefreshCountdown({ lastRefresh, interval }: { lastRefresh: number; inte
   );
 }
 
+/** Compact summary strip — single-line glanceable status */
+function SummaryStrip({ data, cpuUsed }: { data: HealthData; cpuUsed: number }) {
+  const activeServices = data.services.filter(s => s.active).length;
+  const totalServices = data.services.length;
+  const runningContainers = data.docker.filter(c => c.state === "running").length;
+  const allHealthy = activeServices === totalServices && cpuUsed < 80 && data.memory.usedPercent < 80;
+
+  return (
+    <div
+      className={`flex items-center gap-2 flex-wrap text-[11px] px-3 py-1.5 rounded-lg border ${
+        allHealthy
+          ? "bg-emerald-500/5 border-emerald-500/20 text-emerald-400"
+          : "bg-amber-500/5 border-amber-500/20 text-amber-400"
+      }`}
+      data-testid="health-summary-strip"
+    >
+      <span className="font-medium">
+        {allHealthy ? "All systems nominal" : "Attention needed"}
+      </span>
+      <span className="text-muted-foreground/40">·</span>
+      <span className="text-muted-foreground">
+        {activeServices}/{totalServices} services
+      </span>
+      <span className="text-muted-foreground/40">·</span>
+      <span className="text-muted-foreground">
+        {runningContainers} container{runningContainers !== 1 ? "s" : ""}
+      </span>
+      <span className="text-muted-foreground/40">·</span>
+      <span className="text-muted-foreground">
+        load {data.cpu.loadAvg[0].toFixed(2)}
+      </span>
+      <span className="text-muted-foreground/40">·</span>
+      <span className="text-muted-foreground">
+        up {formatUptime(data.uptime)}
+      </span>
+    </div>
+  );
+}
+
+/** Section IDs for keyboard navigation */
+const SECTION_IDS = ["cpu", "memory", "disks", "docker", "services", "network", "processes"] as const;
+
 export function SystemHealth() {
   const [data, setData] = useState<HealthData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -453,6 +559,7 @@ export function SystemHealth() {
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [cpuHistory, setCpuHistory] = useState<number[]>([]);
   const [memHistory, setMemHistory] = useState<number[]>([]);
+  const [diskHistory, setDiskHistory] = useState<number[]>([]);
   const [, setTick] = useState(0);
   const [networkRates, setNetworkRates] = useState<NetworkRate[]>([]);
   const prevNetworkRef = useRef<NetworkSnapshot | null>(null);
@@ -470,6 +577,7 @@ export function SystemHealth() {
       const cpuUsed = 100 - (json.cpu?.idle || 100);
       setCpuHistory((prev) => [...prev.slice(-29), cpuUsed]);
       setMemHistory((prev) => [...prev.slice(-29), json.memory?.usedPercent || 0]);
+      setDiskHistory((prev) => [...prev.slice(-29), json.disks?.[0]?.usedPercent || 0]);
 
       // Calculate network throughput rates
       const now = Date.now();
@@ -533,6 +641,51 @@ export function SystemHealth() {
     window.addEventListener("refresh-view", handler);
     return () => window.removeEventListener("refresh-view", handler);
   }, [fetchHealth]);
+
+  // Keyboard shortcuts: J/K to navigate sections, number keys to toggle
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      // J/K to toggle sections sequentially
+      if (e.key === "j" || e.key === "k") {
+        e.preventDefault();
+        const sections = SECTION_IDS;
+        const direction = e.key === "j" ? 1 : -1;
+        // Find first visible section and toggle the next one
+        for (let i = 0; i < sections.length; i++) {
+          const storageKey = `health-section-${sections[i]}`;
+          const isOpen = localStorage.getItem(storageKey);
+          if (isOpen === "false") {
+            // Toggle this one open and scroll to it
+            localStorage.setItem(storageKey, "true");
+            const el = document.querySelector(`[data-section-id="${sections[i]}"]`);
+            if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+            // Force re-render by triggering a state update
+            setTick(t => t + 1);
+            return;
+          }
+        }
+        return;
+      }
+
+      // E to expand all, C to collapse all
+      if (e.key === "e") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("health-expand-all"));
+        return;
+      }
+      if (e.key === "c") {
+        e.preventDefault();
+        window.dispatchEvent(new CustomEvent("health-collapse-all"));
+        return;
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   // Tick every second so "Updated Xs ago" counts up in real time
   useEffect(() => {
@@ -600,14 +753,27 @@ export function SystemHealth() {
             <span className="text-[10px] text-muted-foreground/60">
               {lastRefresh > 0 && `Updated ${Math.round((Date.now() - lastRefresh) / 1000)}s ago`}
             </span>
-            <Button
-              variant={autoRefresh ? "secondary" : "ghost"}
-              size="sm"
-              className="text-xs h-7 px-2"
-              onClick={() => setAutoRefresh(!autoRefresh)}
-            >
-              {autoRefresh ? "Auto" : "Paused"}
-            </Button>
+            <TooltipProvider>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant={autoRefresh ? "secondary" : "ghost"}
+                    size="sm"
+                    className="text-xs h-7 px-2"
+                    onClick={() => setAutoRefresh(!autoRefresh)}
+                  >
+                    {autoRefresh ? "Auto" : "Paused"}
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  <div className="space-y-0.5">
+                    <div><kbd className="font-mono bg-muted px-1 rounded">E</kbd> Expand all</div>
+                    <div><kbd className="font-mono bg-muted px-1 rounded">C</kbd> Collapse all</div>
+                    <div><kbd className="font-mono bg-muted px-1 rounded">R</kbd> Refresh</div>
+                  </div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
             <Button
               variant="ghost"
               size="sm"
@@ -621,25 +787,46 @@ export function SystemHealth() {
       </CardHeader>
 
       <CardContent className="flex-1 overflow-y-auto px-4 space-y-4">
+        {/* Summary strip — one-line glanceable status */}
+        <SummaryStrip data={data} cpuUsed={cpuUsed} />
+
         {/* Alert Summary Banner */}
         <AlertBanner alerts={detectAlerts(data)} />
 
-        {/* Overview Gauges — always visible */}
+        {/* Overview Gauges — with inline sparklines and delta indicators */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
           <div className="rounded-xl border border-border/50 bg-card/30 p-4 flex flex-col items-center">
             <div className="relative">
-              <CircularGauge percent={cpuUsed} label="CPU" sublabel={`${data.cpu.cores} cores`} />
+              <CircularGauge
+                percent={cpuUsed}
+                label="CPU"
+                sublabel={`${data.cpu.cores} cores`}
+                history={cpuHistory}
+                sparkColor="rgb(59 130 246)"
+              />
             </div>
           </div>
           <div className="rounded-xl border border-border/50 bg-card/30 p-4 flex flex-col items-center">
             <div className="relative">
-              <CircularGauge percent={data.memory.usedPercent} label="Memory" sublabel={formatMB(data.memory.totalMB)} />
+              <CircularGauge
+                percent={data.memory.usedPercent}
+                label="Memory"
+                sublabel={formatMB(data.memory.totalMB)}
+                history={memHistory}
+                sparkColor="rgb(16 185 129)"
+              />
             </div>
           </div>
           <div className="rounded-xl border border-border/50 bg-card/30 p-4 flex flex-col items-center">
             {data.disks[0] ? (
               <div className="relative">
-                <CircularGauge percent={data.disks[0].usedPercent} label="Disk" sublabel={formatMB(data.disks[0].sizeMB)} />
+                <CircularGauge
+                  percent={data.disks[0].usedPercent}
+                  label="Disk"
+                  sublabel={formatMB(data.disks[0].sizeMB)}
+                  history={diskHistory}
+                  sparkColor="rgb(245 158 11)"
+                />
               </div>
             ) : (
               <div className="text-muted-foreground text-sm">No disk data</div>

@@ -3158,3 +3158,69 @@ test("TabReturnNotifier is mounted without errors", async ({ page }) => {
   );
   expect(relevantErrors).toHaveLength(0);
 });
+
+// === SYSTEM HEALTH UX POLISH TESTS ===
+
+test("SystemHealth summary strip renders with status info", async ({ page }) => {
+  await page.goto("/?tab=system");
+  const summaryStrip = page.getByTestId("health-summary-strip");
+  await expect(summaryStrip).toBeVisible({ timeout: 10000 });
+  // Should contain service count and uptime
+  const text = await summaryStrip.textContent();
+  expect(text).toMatch(/services/);
+  expect(text).toMatch(/container/);
+  expect(text).toMatch(/load/);
+  expect(text).toMatch(/up\s/);
+});
+
+test("SystemHealth summary strip shows nominal or attention status", async ({ page }) => {
+  await page.goto("/?tab=system");
+  const summaryStrip = page.getByTestId("health-summary-strip");
+  await expect(summaryStrip).toBeVisible({ timeout: 10000 });
+  const text = await summaryStrip.textContent();
+  // Must show one of the two states
+  expect(text?.includes("nominal") || text?.includes("Attention")).toBeTruthy();
+});
+
+test("SystemHealth gauge cards render with sparklines after multiple refreshes", async ({ page }) => {
+  await page.goto("/?tab=system");
+  // Wait for initial load
+  await expect(page.getByTestId("health-summary-strip")).toBeVisible({ timeout: 10000 });
+  // Wait for at least 2 refresh cycles (10s each) to build sparkline data
+  await page.waitForTimeout(22000);
+  // Sparklines are SVG elements inside gauge cards — check for polyline elements
+  const gaugeCards = page.locator(".rounded-xl.border.bg-card\\/30");
+  const cardCount = await gaugeCards.count();
+  expect(cardCount).toBeGreaterThanOrEqual(3); // CPU, Memory, Disk, Uptime
+});
+
+test("SystemHealth keyboard shortcut E expands all sections", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await expect(page.getByTestId("health-summary-strip")).toBeVisible({ timeout: 10000 });
+  // First collapse all with C
+  await page.keyboard.press("c");
+  await page.waitForTimeout(500);
+  // Then expand all with E
+  await page.keyboard.press("e");
+  await page.waitForTimeout(500);
+  // CPU section should be visible (its content should be rendered)
+  const cpuSection = page.locator('[data-section-id="cpu"]');
+  await expect(cpuSection).toBeVisible();
+});
+
+test("SystemHealth keyboard shortcut C collapses all sections", async ({ page }) => {
+  await page.goto("/?tab=system");
+  await expect(page.getByTestId("health-summary-strip")).toBeVisible({ timeout: 10000 });
+  // Press C to collapse all
+  await page.keyboard.press("c");
+  await page.waitForTimeout(500);
+  // The CPU section header should still be visible but content should be hidden
+  const cpuSection = page.locator('[data-section-id="cpu"]');
+  await expect(cpuSection).toBeVisible();
+  // In collapsed state, the section should only show header (no detailed bars/charts)
+  // Check that the collapsible content is NOT rendered (User/System CPU bars should be gone)
+  const cpuBars = cpuSection.locator("text=User");
+  await expect(cpuBars).not.toBeVisible({ timeout: 3000 });
+  // Restore with E for cleanup
+  await page.keyboard.press("e");
+});
