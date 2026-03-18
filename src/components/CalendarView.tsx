@@ -17,7 +17,7 @@ import {
   HoverCardContent,
 } from "@/components/ui/hover-card";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Plus, RefreshCw, Clock, Copy, Check, Filter, Timer } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, RefreshCw, Clock, Copy, Check, Filter, Timer, Crosshair, Calendar, Keyboard } from "lucide-react";
 import type { CronJob } from "@/types";
 import { CreateCronDialog } from "@/components/CreateCronDialog";
 import { useToast } from "@/components/Toast";
@@ -390,6 +390,75 @@ function ModelFilterBar({
   );
 }
 
+/** Hour density minimap — shows a compact 24-hour heatmap of scheduled task density */
+function HourDensityMap({ tasks, currentHour }: {
+  tasks: { hour: number }[];
+  currentHour: number;
+}) {
+  const density = useMemo(() => {
+    const counts = new Array(24).fill(0);
+    for (const t of tasks) {
+      counts[t.hour]++;
+    }
+    const max = Math.max(...counts, 1);
+    return counts.map(c => c / max);
+  }, [tasks]);
+
+  return (
+    <div className="flex items-end gap-px h-5" data-testid="hour-density-map" title="24-hour task density">
+      {density.map((d, i) => (
+        <div
+          key={i}
+          className={`w-1.5 rounded-t-sm transition-all duration-300 ${
+            i === currentHour
+              ? "bg-red-500"
+              : d > 0
+                ? "bg-primary/60"
+                : "bg-muted/40"
+          }`}
+          style={{ height: `${Math.max(d * 100, d > 0 ? 20 : 8)}%` }}
+          title={`${i}:00 — ${tasks.filter(t => t.hour === i).length} task${tasks.filter(t => t.hour === i).length !== 1 ? "s" : ""}`}
+        />
+      ))}
+    </div>
+  );
+}
+
+/** Schedule summary strip — shows today's task count breakdown by model */
+function ScheduleSummary({ tasks, bannerCount }: {
+  tasks: { job: CronJob; hour: number }[];
+  bannerCount: number;
+}) {
+  const summary = useMemo(() => {
+    const byModel: Record<string, number> = {};
+    for (const t of tasks) {
+      const label = getModelLabel(t.job.model);
+      byModel[label] = (byModel[label] || 0) + 1;
+    }
+    const total = tasks.length + bannerCount;
+    return { byModel, total };
+  }, [tasks, bannerCount]);
+
+  if (summary.total === 0) return null;
+
+  return (
+    <div className="flex items-center gap-2 text-[10px] text-muted-foreground" data-testid="schedule-summary">
+      <Calendar className="h-3 w-3" />
+      <span className="font-medium">{summary.total} task{summary.total !== 1 ? "s" : ""}</span>
+      <span className="text-border">·</span>
+      {Object.entries(summary.byModel).map(([model, count]) => (
+        <span key={model} className="flex items-center gap-1">
+          <span className={`w-1.5 h-1.5 rounded-full ${getModelColor(model.toLowerCase().includes("haiku") ? "haiku" : model.toLowerCase().includes("sonnet") ? "sonnet" : model.toLowerCase().includes("opus") ? "opus" : undefined)}`} />
+          {count} {model}
+        </span>
+      ))}
+      {bannerCount > 0 && (
+        <span className="opacity-60">+{bannerCount} recurring</span>
+      )}
+    </div>
+  );
+}
+
 function TaskCardPopover({ job }: { job: CronJob }) {
   return (
     <div className="space-y-2">
@@ -541,18 +610,72 @@ export function CalendarView() {
     return () => window.removeEventListener("open-create-cron", handler);
   }, []);
 
+  // Smooth scroll to current IST hour
+  const scrollToNow = useCallback(() => {
+    if (!scrollContainerRef.current) return;
+    const now = new Date();
+    const istOffset = 5.5 * 60;
+    const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
+    const istHour = Math.floor(((utcMinutes + istOffset) % 1440) / 60);
+    const scrollTarget = Math.max(0, istHour - 2) * HOUR_HEIGHT;
+    scrollContainerRef.current.scrollTo({ top: scrollTarget, behavior: "smooth" });
+  }, []);
+
   // Scroll to current IST hour on mount or when navigating to current week
   useEffect(() => {
     if (scrollContainerRef.current && !hasScrolledRef.current) {
-      const now = new Date();
-      const istOffset = 5.5 * 60;
-      const utcMinutes = now.getUTCHours() * 60 + now.getUTCMinutes();
-      const istHour = Math.floor(((utcMinutes + istOffset) % 1440) / 60);
-      const scrollTarget = Math.max(0, istHour - 2) * HOUR_HEIGHT;
-      scrollContainerRef.current.scrollTop = scrollTarget;
+      scrollToNow();
       hasScrolledRef.current = true;
     }
-  }, [cronJobs, isCurrentWeek]);
+  }, [cronJobs, isCurrentWeek, scrollToNow]);
+
+  // Keyboard navigation: j/k prev/next, t today, d/w view mode, n scroll to now
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+      // Only handle when Schedule > Calendar is active
+      const tabPanel = document.querySelector('[role="tabpanel"][data-state="active"]');
+      if (!tabPanel?.querySelector('[data-testid="calendar-grid"]')) return;
+
+      switch (e.key) {
+        case "j":
+        case "ArrowLeft":
+          e.preventDefault();
+          goToPrev();
+          break;
+        case "k":
+        case "ArrowRight":
+          e.preventDefault();
+          goToNext();
+          break;
+        case "t":
+          e.preventDefault();
+          goToToday();
+          break;
+        case "d":
+          e.preventDefault();
+          setViewMode("day");
+          break;
+        case "w":
+          e.preventDefault();
+          setViewMode("week");
+          break;
+        case "n":
+          e.preventDefault();
+          scrollToNow();
+          break;
+        case "c":
+          e.preventDefault();
+          setCreatePrefill(null);
+          setShowCreateDialog(true);
+          break;
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [goToPrev, goToNext, goToToday, scrollToNow]);
 
   const { scheduledTasks, bannerTasks } = useMemo((): {
     scheduledTasks: ScheduledTask[];
@@ -705,7 +828,7 @@ export function CalendarView() {
   }, [visibleTasks, visibleBannerTasks, visibleDates]);
 
   const currentTimePosition = useMemo(() => {
-    if (!currentTime) return { dayIndex: 0, topPosition: 0, visibleColIndex: -1, istTimeLabel: "" };
+    if (!currentTime) return { dayIndex: 0, topPosition: 0, visibleColIndex: -1, istTimeLabel: "", istHour: 0 };
     const now = currentTime;
     // Convert current time to IST for positioning on the grid
     const istOffset = 5.5 * 60; // IST = UTC+5:30 in minutes
@@ -723,8 +846,15 @@ export function CalendarView() {
     // Format IST time for the label
     const istTimeLabel = formatTime12h(istHour, istMinute);
 
-    return { dayIndex, topPosition, visibleColIndex, istTimeLabel };
+    return { dayIndex, topPosition, visibleColIndex, istTimeLabel, istHour };
   }, [currentTime, visibleDates]);
+
+  // Today's tasks for summary strip
+  const todayTasks = useMemo(() => {
+    if (!currentTime) return [];
+    const todayIndex = currentTime.getDay();
+    return scheduledTasks.filter(t => t.dayIndex === todayIndex && matchesModelFilter(t.job.model, modelFilter));
+  }, [scheduledTasks, currentTime, modelFilter]);
 
   const colCount = visibleDates.length;
   const gutterWidth = isMobile ? 44 : 60;
@@ -829,10 +959,38 @@ export function CalendarView() {
         <div className="flex sm:hidden mt-2">
           <ModelFilterBar filter={modelFilter} onChange={setModelFilter} counts={modelCounts} />
         </div>
+        {/* Summary strip + density map + keyboard hints */}
+        <div className="flex items-center gap-3 mt-2 flex-wrap" data-testid="calendar-summary-bar">
+          <ScheduleSummary tasks={todayTasks} bannerCount={visibleBannerTasks.length} />
+          <div className="flex-1" />
+          <div className="hidden sm:flex">
+            <HourDensityMap tasks={todayTasks} currentHour={currentTimePosition.istHour ?? 0} />
+          </div>
+          {isCurrentWeek && (
+            <Button
+              variant="ghost"
+              size="xs"
+              onClick={scrollToNow}
+              className="text-[10px] gap-1 text-muted-foreground"
+              title="Scroll to current time (n)"
+              data-testid="scroll-to-now"
+            >
+              <Crosshair className="h-3 w-3" />
+              <span className="hidden sm:inline">Now</span>
+            </Button>
+          )}
+          <div
+            className="hidden sm:flex items-center gap-1 text-[9px] text-muted-foreground/40"
+            title="j/k: prev/next, t: today, d/w: day/week, n: scroll to now, c: create"
+          >
+            <Keyboard className="h-3 w-3" />
+            <span className="font-mono">j k t d w n c</span>
+          </div>
+        </div>
       </CardHeader>
 
       <CardContent className="flex-1 overflow-hidden p-0">
-        <div className="h-full flex flex-col">
+        <div className="h-full flex flex-col" data-testid="calendar-grid">
           {/* Next Up countdown bar */}
           {cronJobs && cronJobs.length > 0 && currentTime && (
             <NextUpBar jobs={cronJobs} currentTime={currentTime} onJobClick={setSelectedJob} />
@@ -918,6 +1076,38 @@ export function CalendarView() {
                     </HoverCardContent>
                   </HoverCard>
                 ))}
+              </div>
+            </div>
+          )}
+
+          {/* Empty state overlay when no jobs are scheduled */}
+          {cronJobs && cronJobs.length === 0 && (
+            <div className="flex flex-col items-center justify-center py-12 text-center" data-testid="calendar-empty-state">
+              <Calendar className="h-10 w-10 text-muted-foreground/30 mb-3" />
+              <p className="text-sm font-medium text-muted-foreground">No cron jobs scheduled</p>
+              <p className="text-xs text-muted-foreground/60 mt-1 max-w-[260px]">
+                Sync your OpenClaw cron config or create a new job to see it on the calendar.
+              </p>
+              <div className="flex items-center gap-2 mt-4">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleSync}
+                  disabled={syncing}
+                  className="text-xs gap-1"
+                >
+                  <RefreshCw className={`size-3.5 ${syncing ? "animate-spin" : ""}`} />
+                  Sync
+                </Button>
+                <Button
+                  variant="default"
+                  size="sm"
+                  onClick={() => { setCreatePrefill(null); setShowCreateDialog(true); }}
+                  className="text-xs gap-1"
+                >
+                  <Plus className="size-3.5" />
+                  New Job
+                </Button>
               </div>
             </div>
           )}
