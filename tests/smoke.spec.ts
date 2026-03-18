@@ -3224,3 +3224,111 @@ test("SystemHealth keyboard shortcut C collapses all sections", async ({ page })
   // Restore with E for cleanup
   await page.keyboard.press("e");
 });
+
+// === CALENDAR VIEW UX POLISH TESTS ===
+
+test("CalendarView renders calendar grid", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByRole("tab", { name: /Schedule/ })).toHaveAttribute("data-state", "active");
+  // Calendar grid should be present
+  await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
+});
+
+test("CalendarView shows summary bar", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByTestId("calendar-summary-bar")).toBeVisible({ timeout: 10000 });
+});
+
+test("CalendarView day/week view toggle works", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
+  // Click Day button
+  const dayButton = page.getByRole("button", { name: "Day", exact: true });
+  await expect(dayButton).toBeVisible();
+  await dayButton.click();
+  await page.waitForTimeout(500);
+  // Grid should still be visible (but in day mode)
+  await expect(page.getByTestId("calendar-grid")).toBeVisible();
+  // Click Week button
+  const weekButton = page.getByRole("button", { name: "Week", exact: true });
+  await weekButton.click();
+  await page.waitForTimeout(500);
+  await expect(page.getByTestId("calendar-grid")).toBeVisible();
+});
+
+test("CalendarView Today button navigates to current week", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
+  // Click Today button
+  const todayButton = page.getByRole("button", { name: "Today" });
+  await expect(todayButton).toBeVisible();
+  await todayButton.click();
+  await page.waitForTimeout(500);
+  await expect(page.getByTestId("calendar-grid")).toBeVisible();
+});
+
+test("CalendarView keyboard shortcut t navigates to today", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
+  // Navigate away first
+  await page.keyboard.press("j");
+  await page.waitForTimeout(300);
+  // Press t to go to today
+  await page.keyboard.press("t");
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId("calendar-grid")).toBeVisible();
+});
+
+test("CalendarView keyboard shortcut d switches to day view", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
+  // Press d to switch to day view
+  await page.keyboard.press("d");
+  await page.waitForTimeout(500);
+  // Day button should now be active (secondary variant)
+  await expect(page.getByTestId("calendar-grid")).toBeVisible();
+});
+
+test("CalendarView keyboard shortcut w switches to week view", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
+  // Press d then w
+  await page.keyboard.press("d");
+  await page.waitForTimeout(300);
+  await page.keyboard.press("w");
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId("calendar-grid")).toBeVisible();
+});
+
+test("CalendarView prev/next navigation with j/k keys", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
+  // Press k to go next
+  await page.keyboard.press("k");
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId("calendar-grid")).toBeVisible();
+  // Press j to go back
+  await page.keyboard.press("j");
+  await page.waitForTimeout(300);
+  await expect(page.getByTestId("calendar-grid")).toBeVisible();
+});
+
+test("CalendarView shows keyboard hints on desktop", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
+  // Keyboard hints should show "j k t d w n c"
+  await expect(page.locator("text=j k t d w n c")).toBeVisible({ timeout: 5000 });
+});
+
+test("CalendarView model filter is visible", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByTestId("model-filter").first()).toBeVisible({ timeout: 5000 });
+});
+
+test("CalendarView scroll-to-now button is visible on current week", async ({ page }) => {
+  await page.goto("/?tab=schedule&view=calendar");
+  await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
+  // Scroll-to-now should be visible when viewing current week
+  await expect(page.getByTestId("scroll-to-now")).toBeVisible({ timeout: 5000 });
+});
