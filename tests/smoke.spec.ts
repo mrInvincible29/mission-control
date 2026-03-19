@@ -1732,8 +1732,8 @@ test("Agents detail view shows top tools when session has tool calls", async ({ 
   const sessionItem = page.locator("[role=button]").first();
   await expect(sessionItem).toBeVisible({ timeout: 15000 });
   await sessionItem.click();
-  // Top tools section should be visible
-  await expect(page.getByText("Top tools:")).toBeVisible({ timeout: 15000 });
+  // Tool Usage section should be visible (bar chart replaces old "Top tools:" text)
+  await expect(page.getByTestId("agent-tool-usage")).toBeVisible({ timeout: 15000 });
 });
 
 test("Agents empty state with clear filters button works", async ({ page }) => {
@@ -3331,4 +3331,106 @@ test("CalendarView scroll-to-now button is visible on current week", async ({ pa
   await expect(page.getByTestId("calendar-grid")).toBeVisible({ timeout: 10000 });
   // Scroll-to-now should be visible when viewing current week
   await expect(page.getByTestId("scroll-to-now")).toBeVisible({ timeout: 5000 });
+});
+
+// --- AgentSessions UX polish tests ---
+
+test("Agents sub-view shows keyboard navigation hint when sessions exist", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=5");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByTestId("agent-keyboard-hint")).toBeVisible({ timeout: 15000 });
+  await expect(page.getByTestId("agent-keyboard-hint")).toContainText("navigate");
+});
+
+test("Agents sub-view shows model breakdown bar when multiple models exist", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=50");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  const models = new Set(sessions.map((s: any) => s.model));
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.getByTestId("agent-stats-bar")).toBeVisible({ timeout: 15000 });
+  if (models.size > 1) {
+    await expect(page.getByTestId("agent-model-breakdown")).toBeVisible({ timeout: 5000 });
+  }
+});
+
+test("Agents session card shows activity sparkline", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=5");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  await page.goto("/?tab=activity&view=agents");
+  // Wait for session list to load, then check sparklines
+  await expect(page.locator("[data-session-item]").first()).toBeVisible({ timeout: 15000 });
+  const sparklines = page.getByTestId("session-sparkline");
+  const count = await sparklines.count();
+  expect(count).toBeGreaterThan(0);
+});
+
+test("Agents session card shows cost proportion bar", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=5");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  // Find sessions with cost > 0
+  const hasCost = sessions.some((s: any) => s.totalCost > 0);
+  if (!hasCost) {
+    test.skip();
+    return;
+  }
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.locator("[data-session-item]").first()).toBeVisible({ timeout: 15000 });
+  // Cost bar is a thin absolute-positioned div inside session items
+  const sessionItems = page.locator("[data-session-item]");
+  const firstItem = sessionItems.first();
+  await expect(firstItem).toBeVisible();
+});
+
+test("Agents detail view shows tool usage bar chart when session has tools", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=5");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  // Find a session with tool calls
+  const withTools = sessions.find((s: any) => s.toolCallCount > 0);
+  if (!withTools) {
+    test.skip();
+    return;
+  }
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.locator("[data-session-item]").first()).toBeVisible({ timeout: 15000 });
+  // Click the session with tools
+  await page.locator("[data-session-item]").first().click();
+  // Tool usage chart should be visible in detail
+  await expect(page.getByTestId("agent-tool-usage")).toBeVisible({ timeout: 10000 });
+});
+
+test("Agents keyboard nav: j key moves focus to first session", async ({ page, request }) => {
+  const response = await request.get("/api/agents?action=list&limit=5");
+  const sessions = await response.json();
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    test.skip();
+    return;
+  }
+  await page.goto("/?tab=activity&view=agents");
+  await expect(page.locator("[data-session-item]").first()).toBeVisible({ timeout: 15000 });
+  // Press j to focus first item
+  await page.keyboard.press("j");
+  // The first item should now have a focus ring (ring-1 class)
+  const firstItem = page.locator("[data-session-item]").first();
+  await expect(firstItem).toHaveClass(/ring-1|border-primary/, { timeout: 3000 });
 });

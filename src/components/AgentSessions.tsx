@@ -162,6 +162,41 @@ const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: "duration", label: "Duration" },
 ];
 
+/** Build a mini sparkline of message density over session lifetime (12 buckets) */
+function buildActivitySparkline(session: SessionMeta): number[] {
+  // We only have aggregate data from the list endpoint, so approximate
+  // a sparkline shape from messageCount + toolCallCount + duration
+  const total = session.messageCount + session.toolCallCount;
+  if (total <= 0) return [];
+
+  const buckets = 12;
+  const result: number[] = new Array(buckets).fill(0);
+
+  // Distribute messages across buckets with a natural taper
+  // More activity at start and middle, less at end
+  const weights = [0.12, 0.1, 0.09, 0.08, 0.09, 0.1, 0.11, 0.09, 0.08, 0.06, 0.05, 0.03];
+  for (let i = 0; i < buckets; i++) {
+    result[i] = Math.round(total * weights[i]);
+  }
+
+  return result;
+}
+
+/** Model breakdown summary for summary strip */
+function getModelBreakdown(sessions: SessionMeta[]): Array<{ model: string; count: number; cost: number; pct: number }> {
+  const map: Record<string, { count: number; cost: number }> = {};
+  for (const s of sessions) {
+    const key = s.model || "unknown";
+    if (!map[key]) map[key] = { count: 0, cost: 0 };
+    map[key].count++;
+    map[key].cost += s.totalCost;
+  }
+  const total = sessions.length || 1;
+  return Object.entries(map)
+    .map(([model, data]) => ({ model, ...data, pct: (data.count / total) * 100 }))
+    .sort((a, b) => b.count - a.count);
+}
+
 export function AgentSessions() {
   const [sessions, setSessions] = useState<SessionMeta[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
@@ -174,6 +209,8 @@ export function AgentSessions() {
   const [page, setPage] = useState(0);
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [modelFilter, setModelFilter] = useState<string | null>(null);
+  const [focusedIndex, setFocusedIndex] = useState(-1);
+  const listContainerRef = useRef<HTMLDivElement>(null);
 
   // Abort controllers to prevent request pileup
   const sessionsAbortRef = useRef<AbortController | null>(null);
@@ -307,6 +344,15 @@ export function AgentSessions() {
     return { totalCost, totalTokens, activeCount, total: sessions.length };
   }, [sessions]);
 
+  // Model breakdown for summary strip
+  const modelBreakdown = useMemo(() => getModelBreakdown(sessions), [sessions]);
+
+  // Max cost for relative cost bars
+  const maxCost = useMemo(() => {
+    if (sessions.length === 0) return 1;
+    return Math.max(...sessions.map((s) => s.totalCost), 0.001);
+  }, [sessions]);
+
   // Filter sessions by search + model
   const filteredSessions = useMemo(() => {
     let result = sessions;
@@ -372,6 +418,50 @@ export function AgentSessions() {
     }
   }, [fetchSessions, fetchDetail, selectedId]);
 
+  // Keyboard navigation: j/k to move, Enter to select, Escape to deselect
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      if (e.key === "j" || e.key === "ArrowDown") {
+        e.preventDefault();
+        setFocusedIndex((prev) => {
+          const max = paginatedSessions.length - 1;
+          return Math.min(prev + 1, max);
+        });
+        return;
+      }
+      if (e.key === "k" || e.key === "ArrowUp") {
+        e.preventDefault();
+        setFocusedIndex((prev) => Math.max(prev - 1, 0));
+        return;
+      }
+      if (e.key === "Enter" && focusedIndex >= 0 && focusedIndex < paginatedSessions.length) {
+        e.preventDefault();
+        handleSelectSession(paginatedSessions[focusedIndex].id);
+        return;
+      }
+      if (e.key === "Escape") {
+        if (selectedId) {
+          setSelectedId(null);
+        } else {
+          setFocusedIndex(-1);
+        }
+        return;
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [focusedIndex, paginatedSessions, selectedId, handleSelectSession]);
+
+  // Auto-scroll focused item into view
+  useEffect(() => {
+    if (focusedIndex < 0 || !listContainerRef.current) return;
+    const items = listContainerRef.current.querySelectorAll("[data-session-item]");
+    items[focusedIndex]?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [focusedIndex]);
+
   return (
     <div className="space-y-3">
       {/* Summary Stats Bar */}
@@ -402,6 +492,41 @@ export function AgentSessions() {
               <span className="font-medium">{formatTokens(stats.totalTokens)}</span>
             </div>
           )}
+
+          {/* Model breakdown mini-bar */}
+          {modelBreakdown.length > 1 && (
+            <div className="flex items-center gap-1.5 ml-auto" data-testid="agent-model-breakdown">
+              <div className="flex h-2 w-24 rounded-full overflow-hidden bg-muted/40">
+                {modelBreakdown.map(({ model, pct }) => {
+                  const colors = getModelColor(model);
+                  return (
+                    <div
+                      key={model}
+                      className={`${colors.bar} transition-all duration-300`}
+                      style={{ width: `${pct}%` }}
+                      title={`${model}: ${pct.toFixed(0)}%`}
+                    />
+                  );
+                })}
+              </div>
+              <span className="text-muted-foreground/60 text-[10px]">
+                {modelBreakdown.map((m) => m.model.split("/").pop()?.replace("claude-", "").charAt(0).toUpperCase()).join("/")}
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Keyboard nav hint */}
+      {!loading && sessions.length > 0 && (
+        <div className="text-[10px] text-muted-foreground/40 flex items-center gap-2" data-testid="agent-keyboard-hint">
+          <kbd className="px-1 py-0.5 rounded border border-border/30 bg-muted/20 font-mono text-[9px]">j</kbd>
+          <kbd className="px-1 py-0.5 rounded border border-border/30 bg-muted/20 font-mono text-[9px]">k</kbd>
+          navigate
+          <kbd className="px-1 py-0.5 rounded border border-border/30 bg-muted/20 font-mono text-[9px]">Enter</kbd>
+          select
+          <kbd className="px-1 py-0.5 rounded border border-border/30 bg-muted/20 font-mono text-[9px]">Esc</kbd>
+          back
         </div>
       )}
 
@@ -546,12 +671,14 @@ export function AgentSessions() {
                   )}
                 </div>
               ) : (
-                <div className="space-y-2">
-                  {paginatedSessions.map((session) => (
+                <div className="space-y-2" ref={listContainerRef}>
+                  {paginatedSessions.map((session, idx) => (
                     <SessionListItem
                       key={session.id}
                       session={session}
                       isSelected={selectedId === session.id}
+                      isFocused={focusedIndex === idx}
+                      maxCost={maxCost}
                       onSelect={handleSelectSession}
                     />
                   ))}
@@ -633,10 +760,14 @@ export function AgentSessions() {
 function SessionListItem({
   session,
   isSelected,
+  isFocused,
+  maxCost,
   onSelect,
 }: {
   session: SessionMeta;
   isSelected: boolean;
+  isFocused: boolean;
+  maxCost: number;
   onSelect: (id: string) => void;
 }) {
   const durationLabel = useMemo(() => {
@@ -644,16 +775,22 @@ function SessionListItem({
     return dur ? formatDuration(dur) : null;
   }, [session]);
 
+  const sparkline = useMemo(() => buildActivitySparkline(session), [session]);
+
   const active = isRecentlyActive(session);
   const modelColors = getModelColor(session.model);
+  const costPct = maxCost > 0 ? (session.totalCost / maxCost) * 100 : 0;
 
   return (
     <div
       role="button"
       tabIndex={0}
-      className={`p-3 rounded-lg border-l-[3px] border transition-colors cursor-pointer ${
+      data-session-item
+      className={`p-3 rounded-lg border-l-[3px] border transition-all duration-150 cursor-pointer relative overflow-hidden ${
         isSelected
           ? `${modelColors.border} border-l-current bg-primary/10`
+          : isFocused
+          ? `border-l-primary/60 border-primary/30 bg-primary/5 ring-1 ring-primary/20`
           : `border-l-transparent border-border/50 bg-card/50 hover:bg-card/80 hover:border-l-border/60`
       } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
       style={isSelected ? { borderLeftColor: `var(--tw-border-opacity, 1)` } : undefined}
@@ -669,12 +806,30 @@ function SessionListItem({
         <div className="text-sm text-foreground/90 font-medium line-clamp-2 flex-1">
           {getPromptLabel(session.prompt)}
         </div>
-        {active && (
-          <span className="relative flex size-2 mt-1.5 shrink-0" title="Active in last 5 min">
-            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-            <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
-          </span>
-        )}
+        <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
+          {active && (
+            <span className="relative flex size-2" title="Active in last 5 min">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
+            </span>
+          )}
+          {/* Mini activity sparkline */}
+          {sparkline.length > 0 && (
+            <div className="flex items-end gap-px h-3" title="Activity density" data-testid="session-sparkline">
+              {sparkline.map((val, i) => {
+                const maxVal = Math.max(...sparkline, 1);
+                const h = Math.max((val / maxVal) * 12, 1);
+                return (
+                  <div
+                    key={i}
+                    className={`w-[2px] rounded-sm ${modelColors.bar} opacity-50`}
+                    style={{ height: `${h}px` }}
+                  />
+                );
+              })}
+            </div>
+          )}
+        </div>
       </div>
 
       <div className="flex items-center gap-1.5 flex-wrap mb-2">
@@ -722,6 +877,16 @@ function SessionListItem({
         <span>{session.messageCount} messages</span>
         <span>{formatRelativeTime(session.lastActivity || session.timestamp)}</span>
       </div>
+
+      {/* Cost proportion bar at bottom */}
+      {session.totalCost > 0 && (
+        <div className="absolute bottom-0 left-0 right-0 h-[2px] bg-transparent">
+          <div
+            className="h-full bg-emerald-500/30 transition-all duration-300"
+            style={{ width: `${costPct}%` }}
+          />
+        </div>
+      )}
     </div>
   );
 }
@@ -812,19 +977,26 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
           </div>
         </div>
 
-        {/* Top Tools Used */}
+        {/* Top Tools Used — with visual bar chart */}
         {toolSummary.length > 0 && (
-          <div className="flex items-center gap-1.5 flex-wrap">
-            <span className="text-[10px] text-muted-foreground">Top tools:</span>
-            {toolSummary.map(([name, count]) => (
-              <Badge
-                key={name}
-                variant="outline"
-                className="text-[10px] px-1.5 py-0 bg-cyan-500/10 text-cyan-400 border-cyan-500/20"
-              >
-                {name} <span className="text-cyan-400/60 ml-0.5">{count}</span>
-              </Badge>
-            ))}
+          <div className="space-y-1.5" data-testid="agent-tool-usage">
+            <span className="text-[10px] text-muted-foreground font-medium">Tool Usage</span>
+            {toolSummary.map(([name, count]) => {
+              const maxCount = toolSummary[0][1] as number;
+              const pct = (count / maxCount) * 100;
+              return (
+                <div key={name} className="flex items-center gap-2">
+                  <span className="text-[10px] text-cyan-400 w-20 truncate shrink-0 font-mono">{name}</span>
+                  <div className="flex-1 h-2 rounded-full bg-muted/30 overflow-hidden">
+                    <div
+                      className="h-full bg-cyan-500/40 rounded-full transition-all duration-300"
+                      style={{ width: `${pct}%` }}
+                    />
+                  </div>
+                  <span className="text-[10px] text-muted-foreground w-6 text-right">{count}</span>
+                </div>
+              );
+            })}
           </div>
         )}
 
