@@ -11,8 +11,8 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useState, useMemo } from "react";
-import { TrendingUp, TrendingDown, Minus, Zap, DollarSign, Activity, AlertTriangle, RefreshCw, Gauge } from "lucide-react";
+import { useState, useMemo, useEffect, useCallback } from "react";
+import { TrendingUp, TrendingDown, Minus, Zap, DollarSign, Activity, AlertTriangle, RefreshCw, Gauge, ChevronDown, ChevronUp, Lightbulb } from "lucide-react";
 import { formatTokens, formatCost, getModelColor } from "@/lib/formatters";
 import { AnalyticsSkeleton } from "@/components/Skeletons";
 
@@ -339,14 +339,267 @@ function MiniBar({ value, max, color }: { value: number; max: number; color: str
   );
 }
 
+// Stacked horizontal bar showing model cost proportions
+function ModelCostBar({
+  models,
+  totalCost,
+}: {
+  models: Array<{ model: string; cost: number; tokens: number; count: number }>;
+  totalCost: number;
+}) {
+  if (models.length === 0 || totalCost <= 0) return null;
+
+  const sorted = [...models].sort((a, b) => b.cost - a.cost);
+
+  return (
+    <TooltipProvider>
+      <div data-testid="model-cost-bar" className="mb-4">
+        <div className="flex items-center justify-between mb-1.5">
+          <span className="text-[10px] text-muted-foreground font-medium">Cost by Model</span>
+          <span className="text-[10px] text-emerald-400 font-mono">{formatCost(totalCost)}</span>
+        </div>
+        <div className="flex h-3 rounded-full overflow-hidden bg-muted/30 gap-px">
+          {sorted.map((m) => {
+            const pct = (m.cost / totalCost) * 100;
+            if (pct < 0.5) return null;
+            const colors = getModelColor(m.model);
+            return (
+              <Tooltip key={m.model}>
+                <TooltipTrigger asChild>
+                  <div
+                    className={`h-full ${colors.bar} transition-all duration-500 cursor-pointer hover:brightness-125`}
+                    style={{ width: `${Math.max(pct, 1)}%` }}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  <div className="font-medium">{m.model}</div>
+                  <div>{formatCost(m.cost)} ({pct.toFixed(1)}%)</div>
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </div>
+        <div className="flex gap-3 mt-1.5">
+          {sorted.filter(m => (m.cost / totalCost) >= 0.01).map((m) => {
+            const colors = getModelColor(m.model);
+            const pct = (m.cost / totalCost) * 100;
+            return (
+              <div key={m.model} className="flex items-center gap-1">
+                <div className={`w-2 h-2 rounded-full ${colors.dot}`} />
+                <span className="text-[10px] text-muted-foreground">
+                  {m.model.split("-").pop() || m.model} {pct.toFixed(0)}%
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+// Category proportion stacked bar
+function CategoryBar({
+  categories,
+  total,
+}: {
+  categories: Array<{ category: string; count: number; tokens: number; cost: number }>;
+  total: number;
+}) {
+  if (categories.length === 0 || total <= 0) return null;
+
+  const CATEGORY_COLORS: Record<string, { bar: string; dot: string }> = {
+    important: { bar: "bg-red-500/70", dot: "bg-red-400" },
+    model: { bar: "bg-purple-500/70", dot: "bg-purple-400" },
+    message: { bar: "bg-blue-500/70", dot: "bg-blue-400" },
+    system: { bar: "bg-gray-500/70", dot: "bg-gray-400" },
+    noise: { bar: "bg-zinc-500/70", dot: "bg-zinc-400" },
+  };
+
+  const sorted = [...categories].sort((a, b) => b.count - a.count);
+
+  return (
+    <TooltipProvider>
+      <div data-testid="category-bar">
+        <div className="flex h-2.5 rounded-full overflow-hidden bg-muted/30 gap-px mb-2">
+          {sorted.map((c) => {
+            const pct = (c.count / total) * 100;
+            if (pct < 0.5) return null;
+            const colors = CATEGORY_COLORS[c.category] || { bar: "bg-slate-500/70", dot: "bg-slate-400" };
+            return (
+              <Tooltip key={c.category}>
+                <TooltipTrigger asChild>
+                  <div
+                    className={`h-full ${colors.bar} transition-all duration-500 cursor-pointer hover:brightness-125`}
+                    style={{ width: `${Math.max(pct, 1)}%` }}
+                  />
+                </TooltipTrigger>
+                <TooltipContent className="text-xs">
+                  <div className="font-medium">{c.category}</div>
+                  <div>{c.count} activities ({pct.toFixed(1)}%)</div>
+                  {c.tokens > 0 && <div>{formatTokens(c.tokens)} tokens</div>}
+                  {c.cost > 0 && <div>{formatCost(c.cost)} cost</div>}
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
+        </div>
+        <div className="flex flex-wrap gap-x-3 gap-y-1">
+          {sorted.map((c) => {
+            const pct = (c.count / total) * 100;
+            const colors = CATEGORY_COLORS[c.category] || { bar: "bg-slate-500/70", dot: "bg-slate-400" };
+            return (
+              <div key={c.category} className="flex items-center gap-1.5">
+                <div className={`w-2 h-2 rounded-full ${colors.dot}`} />
+                <span className="text-[10px] text-muted-foreground">
+                  {c.category} <span className="font-mono">{c.count}</span>
+                  <span className="text-muted-foreground/50 ml-0.5">({pct.toFixed(0)}%)</span>
+                </span>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </TooltipProvider>
+  );
+}
+
+// Auto-generated insights strip
+function InsightsStrip({
+  analytics,
+  days,
+}: {
+  analytics: {
+    daily: Array<{ day: string; tokens: number; cost: number; count: number; errors: number }>;
+    hourly: Array<{ hour: number; tokens: number; cost: number; count: number }>;
+    models: Array<{ model: string; tokens: number; cost: number; count: number }>;
+    totalActivities: number;
+    totalTokens: number;
+    totalCost: number;
+    totalErrors: number;
+    days: number;
+  };
+  days: number;
+}) {
+  const insights = useMemo(() => {
+    const result: Array<{ text: string; type: "info" | "good" | "warn" }> = [];
+
+    // Peak hour
+    if (analytics.hourly.length > 0) {
+      const peak = analytics.hourly.reduce((best, h) => h.count > best.count ? h : best, analytics.hourly[0]);
+      if (peak.count > 0) {
+        result.push({ text: `Peak hour: ${formatHour(peak.hour)} (${peak.count} activities)`, type: "info" });
+      }
+    }
+
+    // Top model by cost
+    if (analytics.models.length > 0) {
+      const topModel = [...analytics.models].sort((a, b) => b.cost - a.cost)[0];
+      if (topModel.cost > 0) {
+        const pct = analytics.totalCost > 0 ? (topModel.cost / analytics.totalCost) * 100 : 0;
+        const shortName = topModel.model.split("-").pop() || topModel.model;
+        result.push({ text: `${shortName} is ${pct.toFixed(0)}% of cost (${formatCost(topModel.cost)})`, type: "info" });
+      }
+    }
+
+    // Busiest day
+    if (analytics.daily.length > 1) {
+      const busiestDay = analytics.daily.reduce((best, d) => d.count > best.count ? d : best, analytics.daily[0]);
+      if (busiestDay.count > 0) {
+        result.push({ text: `Busiest: ${formatShortDay(busiestDay.day)} (${busiestDay.count} activities)`, type: "info" });
+      }
+    }
+
+    // Error rate warning
+    if (analytics.totalActivities > 0 && analytics.totalErrors > 0) {
+      const errorRate = (analytics.totalErrors / analytics.totalActivities) * 100;
+      if (errorRate >= 5) {
+        result.push({ text: `${errorRate.toFixed(1)}% error rate over ${days}d`, type: "warn" });
+      }
+    }
+
+    // Zero-activity days
+    const zeroDays = analytics.daily.filter(d => d.count === 0).length;
+    if (zeroDays > 0 && days > 1) {
+      result.push({ text: `${zeroDays} day${zeroDays > 1 ? "s" : ""} with no activity`, type: zeroDays > days / 2 ? "warn" : "info" });
+    }
+
+    // Cost spike detection: any day > 3x average
+    if (analytics.daily.length > 2) {
+      const avgCost = analytics.totalCost / analytics.daily.filter(d => d.cost > 0).length;
+      const spike = analytics.daily.find(d => d.cost > avgCost * 3 && avgCost > 0);
+      if (spike) {
+        result.push({ text: `Cost spike: ${formatShortDay(spike.day)} (${formatCost(spike.cost)}, ${(spike.cost / avgCost).toFixed(1)}x avg)`, type: "warn" });
+      }
+    }
+
+    return result.slice(0, 4); // max 4 insights
+  }, [analytics, days]);
+
+  if (insights.length === 0) return null;
+
+  const typeStyles = {
+    info: "text-blue-400/80",
+    good: "text-emerald-400/80",
+    warn: "text-amber-400/80",
+  };
+
+  return (
+    <div data-testid="insights-strip" className="flex flex-wrap items-center gap-x-3 gap-y-1 px-1 py-2 text-[11px]">
+      <Lightbulb className="h-3 w-3 text-amber-400/60 flex-shrink-0" />
+      {insights.map((insight, i) => (
+        <span key={i} className={typeStyles[insight.type]}>
+          {insight.text}
+          {i < insights.length - 1 && <span className="text-border ml-3">|</span>}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+const DAILY_BREAKDOWN_COLLAPSE_THRESHOLD = 7;
+
 export function AnalyticsView() {
   const [days, setDays] = useState(14);
   const [heatmapMetric, setHeatmapMetric] = useState<"count" | "tokens" | "cost">("count");
+  const [breakdownExpanded, setBreakdownExpanded] = useState(false);
   const { data: analytics, error, mutate } = useSWR(
     ["analytics", days],
     () => getAnalytics(days),
     { refreshInterval: 60000 }
   );
+
+  // Keyboard shortcuts: [ and ] to cycle time ranges
+  const cycleTimeRange = useCallback((direction: "prev" | "next") => {
+    setDays((current) => {
+      const currentIdx = TIME_RANGES.findIndex(r => r.value === current);
+      if (currentIdx === -1) return current;
+      const nextIdx = direction === "next"
+        ? Math.min(currentIdx + 1, TIME_RANGES.length - 1)
+        : Math.max(currentIdx - 1, 0);
+      return TIME_RANGES[nextIdx].value;
+    });
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+      if (e.key === "[") {
+        e.preventDefault();
+        cycleTimeRange("prev");
+      } else if (e.key === "]") {
+        e.preventDefault();
+        cycleTimeRange("next");
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [cycleTimeRange]);
+
+  // Reset breakdown expansion when switching time ranges
+  useEffect(() => {
+    setBreakdownExpanded(false);
+  }, [days]);
 
   // Compute trends: compare first half vs second half with percentage change
   const trends = useMemo(() => {
@@ -434,6 +687,18 @@ export function AnalyticsView() {
     };
   }, [analytics]);
 
+  // Daily breakdown rows (reversed = most recent first)
+  const dailyRows = useMemo(() => {
+    if (!analytics) return [];
+    return [...analytics.daily].reverse();
+  }, [analytics]);
+
+  const showCollapse = dailyRows.length > DAILY_BREAKDOWN_COLLAPSE_THRESHOLD;
+  const visibleRows = showCollapse && !breakdownExpanded
+    ? dailyRows.slice(0, DAILY_BREAKDOWN_COLLAPSE_THRESHOLD)
+    : dailyRows;
+  const hiddenCount = dailyRows.length - DAILY_BREAKDOWN_COLLAPSE_THRESHOLD;
+
   // Shimmer skeleton while loading (consistent with other views)
   if (!analytics && !error) {
     return <AnalyticsSkeleton />;
@@ -468,26 +733,36 @@ export function AnalyticsView() {
           <span className="text-amber-300">Connection lost — retrying...</span>
         </div>
       )}
-      <CardHeader className="pb-2 flex-shrink-0 px-4 pt-4">
+      <CardHeader className="pb-0 flex-shrink-0 px-4 pt-4">
         <div className="flex items-center justify-between">
           <CardTitle className="text-lg font-semibold">Usage Analytics</CardTitle>
           <div className="flex items-center gap-1">
-            {TIME_RANGES.map((range) => (
-              <Button
-                key={range.value}
-                variant={days === range.value ? "secondary" : "ghost"}
-                size="sm"
-                className="text-xs h-7 px-2"
-                onClick={() => setDays(range.value)}
-              >
-                {range.label}
-              </Button>
+            {TIME_RANGES.map((range, idx) => (
+              <TooltipProvider key={range.value}>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <Button
+                      variant={days === range.value ? "secondary" : "ghost"}
+                      size="sm"
+                      className="text-xs h-7 px-2"
+                      onClick={() => setDays(range.value)}
+                    >
+                      {range.label}
+                    </Button>
+                  </TooltipTrigger>
+                  <TooltipContent side="bottom" className="text-[10px]">
+                    {idx === 0 ? "[" : idx === TIME_RANGES.length - 1 ? "]" : `[ / ]`} to cycle
+                  </TooltipContent>
+                </Tooltip>
+              </TooltipProvider>
             ))}
           </div>
         </div>
+        {/* Insights strip — auto-generated takeaways */}
+        <InsightsStrip analytics={analytics} days={days} />
       </CardHeader>
 
-      <CardContent className="flex-1 overflow-y-auto px-4 space-y-6">
+      <CardContent className="flex-1 overflow-y-auto px-4 space-y-6 pt-2">
         {/* Summary Stats — 5 cards on desktop, 2+3 on mobile */}
         <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
           <StatCard
@@ -516,7 +791,7 @@ export function AnalyticsView() {
           />
           <StatCard
             label="Efficiency"
-            value={costPer1K > 0 ? formatCost(costPer1K) : "—"}
+            value={costPer1K > 0 ? formatCost(costPer1K) : "\u2014"}
             icon={Gauge}
             color="bg-cyan-500/15 text-cyan-400"
             subtitle="cost per 1K tokens"
@@ -543,6 +818,9 @@ export function AnalyticsView() {
             sparklineColor="rgb(239 68 68)"
           />
         </div>
+
+        {/* Model Cost Bar — stacked horizontal bar showing cost proportions */}
+        <ModelCostBar models={analytics.models} totalCost={analytics.totalCost} />
 
         {/* Daily Cost Chart */}
         <div className="rounded-xl border border-border/50 bg-card/30 p-4">
@@ -655,43 +933,34 @@ export function AnalyticsView() {
           </div>
         </div>
 
-        {/* Activity by Category */}
+        {/* Activity by Category — stacked bar + legend */}
         <div className="rounded-xl border border-border/50 bg-card/30 p-4">
           <h3 className="text-sm font-medium mb-3">Activity by Category</h3>
           {analytics.categories.length === 0 ? (
             <p className="text-xs text-muted-foreground">No activity data</p>
           ) : (
-            <div className="flex flex-wrap gap-2">
-              {analytics.categories.map((c) => {
-                const pct = analytics.totalActivities > 0 ? (c.count / analytics.totalActivities) * 100 : 0;
-                return (
-                  <TooltipProvider key={c.category}>
-                    <Tooltip>
-                      <TooltipTrigger asChild>
-                        <div className="flex items-center gap-2 rounded-lg border border-border/40 bg-muted/20 px-3 py-2 cursor-default">
-                          <span className="text-xs font-medium">{c.category}</span>
-                          <Badge variant="secondary" className="text-[10px] px-1.5 py-0">
-                            {c.count}
-                          </Badge>
-                          <span className="text-[10px] text-muted-foreground">{pct.toFixed(0)}%</span>
-                        </div>
-                      </TooltipTrigger>
-                      <TooltipContent className="text-xs">
-                        <div>{c.count} activities</div>
-                        {c.tokens > 0 && <div>{formatTokens(c.tokens)} tokens</div>}
-                        {c.cost > 0 && <div>{formatCost(c.cost)} cost</div>}
-                      </TooltipContent>
-                    </Tooltip>
-                  </TooltipProvider>
-                );
-              })}
-            </div>
+            <CategoryBar categories={analytics.categories} total={analytics.totalActivities} />
           )}
         </div>
 
-        {/* Daily Breakdown Table with peak highlighting */}
+        {/* Daily Breakdown Table with peak highlighting + collapsible */}
         <div className="rounded-xl border border-border/50 bg-card/30 p-4">
-          <h3 className="text-sm font-medium mb-3">Daily Breakdown</h3>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-medium">Daily Breakdown</h3>
+            {showCollapse && (
+              <button
+                onClick={() => setBreakdownExpanded(!breakdownExpanded)}
+                className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground transition-colors"
+                data-testid="breakdown-toggle"
+              >
+                {breakdownExpanded ? (
+                  <>Show less <ChevronUp className="h-3 w-3" /></>
+                ) : (
+                  <>{hiddenCount} more <ChevronDown className="h-3 w-3" /></>
+                )}
+              </button>
+            )}
+          </div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
               <thead>
@@ -704,7 +973,7 @@ export function AnalyticsView() {
                 </tr>
               </thead>
               <tbody>
-                {[...analytics.daily].reverse().map((d) => {
+                {visibleRows.map((d) => {
                   const isPeakCost = d.day === maxDaily.peakDay && d.cost > 0;
                   const isPeakCount = d.count === maxDaily.count && d.count > 0;
                   return (
@@ -743,6 +1012,15 @@ export function AnalyticsView() {
               </tbody>
             </table>
           </div>
+          {/* Collapsed summary row */}
+          {showCollapse && !breakdownExpanded && (
+            <button
+              onClick={() => setBreakdownExpanded(true)}
+              className="w-full mt-2 py-1.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/10 rounded-md transition-colors text-center"
+            >
+              Show {hiddenCount} older day{hiddenCount !== 1 ? "s" : ""}...
+            </button>
+          )}
         </div>
       </CardContent>
     </Card>
