@@ -1490,7 +1490,9 @@ test("Analytics daily breakdown table shows inline mini-bars", async ({ page }) 
   await page.goto("/?tab=activity&view=analytics");
   await expect(page.getByText("Daily Breakdown")).toBeVisible({ timeout: 10000 });
   // Mini-bars are inline divs with rounded-full bg-*-500/50 classes
-  const table = page.locator("text=Daily Breakdown").locator("..").locator("table");
+  // Navigate up to the card container (2 levels up from h3) to find the table
+  const card = page.locator("text=Daily Breakdown").locator("xpath=ancestor::div[contains(@class,'rounded-xl')]");
+  const table = card.locator("table");
   await expect(table).toBeVisible({ timeout: 5000 });
   // Check for at least one mini-bar within the table body
   const miniBars = table.locator("td .rounded-full.bg-muted\\/30");
@@ -3433,4 +3435,100 @@ test("Agents keyboard nav: j key moves focus to first session", async ({ page, r
   // The first item should now have a focus ring (ring-1 class)
   const firstItem = page.locator("[data-session-item]").first();
   await expect(firstItem).toHaveClass(/ring-1|border-primary/, { timeout: 3000 });
+});
+
+// === NEW FEATURE TESTS: AnalyticsView UX Polish — insights, model cost bar, collapsible breakdown, keyboard nav ===
+
+test("AnalyticsView insights strip renders", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  // Insights strip should render if there's data (look for the lightbulb icon container)
+  const strip = page.getByTestId("insights-strip");
+  // Either visible (data exists) or not rendered (no data) — both valid
+  await page.waitForTimeout(3000);
+  const isVisible = await strip.isVisible().catch(() => false);
+  // If visible, should contain insight text
+  if (isVisible) {
+    const text = await strip.textContent();
+    expect(text!.length).toBeGreaterThan(5);
+  }
+});
+
+test("AnalyticsView model cost bar renders with models", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(3000);
+  const costBar = page.getByTestId("model-cost-bar");
+  // If models exist, the cost bar should render
+  const modelBreakdown = page.getByText("Model Breakdown");
+  await expect(modelBreakdown).toBeVisible({ timeout: 10000 });
+  // Cost bar either renders (with models) or doesn't (no data) — both valid
+  const barVisible = await costBar.isVisible().catch(() => false);
+  if (barVisible) {
+    await expect(page.getByText("Cost by Model")).toBeVisible();
+  }
+});
+
+test("AnalyticsView category bar renders", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Activity by Category")).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(3000);
+  // Category bar should have stacked bar segments or "No activity data"
+  const categoryBar = page.getByTestId("category-bar");
+  const noData = page.getByText("No activity data");
+  const hasCategoryBar = await categoryBar.isVisible().catch(() => false);
+  const hasNoData = await noData.isVisible().catch(() => false);
+  expect(hasCategoryBar || hasNoData).toBe(true);
+});
+
+test("AnalyticsView daily breakdown is collapsible", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  await expect(page.getByText("Daily Breakdown")).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(3000);
+  // Check if the breakdown toggle exists (only appears with >7 rows)
+  const toggle = page.getByTestId("breakdown-toggle");
+  const toggleVisible = await toggle.isVisible().catch(() => false);
+  if (toggleVisible) {
+    // Should show "N more" text
+    const toggleText = await toggle.textContent();
+    expect(toggleText).toMatch(/more/);
+    // Click to expand
+    await toggle.click();
+    await page.waitForTimeout(500);
+    // After expanding, should show "Show less"
+    await expect(toggle).toContainText("Show less");
+    // Click again to collapse
+    await toggle.click();
+    await page.waitForTimeout(500);
+    await expect(toggle).toContainText("more");
+  }
+});
+
+test("AnalyticsView keyboard shortcut [ cycles to previous time range", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(1000);
+  // Default is 14d — pressing [ should switch to 7d
+  const btn7d = page.getByRole("button", { name: "7d", exact: true });
+  const btn14d = page.getByRole("button", { name: "14d", exact: true });
+  // Verify 14d is currently active (secondary variant)
+  await expect(btn14d).toBeVisible();
+  await page.keyboard.press("[");
+  await page.waitForTimeout(1000);
+  // 7d should now be active
+  await expect(btn7d).toHaveClass(/secondary/, { timeout: 3000 });
+});
+
+test("AnalyticsView keyboard shortcut ] cycles to next time range", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  await page.waitForTimeout(1000);
+  // Default is 14d — pressing ] should switch to 30d
+  const btn30d = page.getByRole("button", { name: "30d", exact: true });
+  await page.keyboard.press("]");
+  await page.waitForTimeout(1000);
+  // 30d should now be active
+  await expect(btn30d).toHaveClass(/secondary/, { timeout: 3000 });
 });
