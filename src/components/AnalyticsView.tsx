@@ -21,6 +21,7 @@ const TIME_RANGES = [
   { label: "7d", value: 7 },
   { label: "14d", value: 14 },
   { label: "30d", value: 30 },
+  { label: "90d", value: 90 },
 ];
 
 const HEATMAP_METRICS = [
@@ -464,6 +465,240 @@ function CategoryBar({
   );
 }
 
+// GitHub-style contribution calendar showing daily activity density
+function ContributionCalendar({
+  daily,
+  metric,
+}: {
+  daily: Array<{ day: string; tokens: number; cost: number; count: number; errors: number }>;
+  metric: "count" | "tokens" | "cost";
+}) {
+  const calendarData = useMemo(() => {
+    // Build a map of day -> value
+    type DayData = { day: string; count: number; tokens: number; cost: number; errors: number };
+    const dayMap = new Map<string, DayData>();
+    for (const d of daily) {
+      dayMap.set(d.day, d);
+    }
+
+    // Build grid: columns = weeks, rows = days of week (Mon-Sun)
+    // Start from the earliest day in the data, align to Monday
+    if (daily.length === 0) return { weeks: [], maxVal: 1, totalDays: 0, activeDays: 0, currentStreak: 0, longestStreak: 0 };
+
+    const sortedDays = [...daily].sort((a, b) => a.day.localeCompare(b.day));
+    const startDate = new Date(sortedDays[0].day + "T00:00:00");
+    const endDate = new Date(sortedDays[sortedDays.length - 1].day + "T00:00:00");
+
+    // Align start to Monday
+    const startDow = startDate.getDay(); // 0=Sun
+    const mondayOffset = startDow === 0 ? 6 : startDow - 1;
+    const alignedStart = new Date(startDate);
+    alignedStart.setDate(alignedStart.getDate() - mondayOffset);
+
+    // Build weeks
+    const weeks: Array<Array<{ day: string; value: number; data: typeof sortedDays[0] | null; isToday: boolean; isFuture: boolean }>> = [];
+    const today = new Date().toISOString().split("T")[0];
+    const cursor = new Date(alignedStart);
+
+    while (cursor <= endDate || cursor.getDay() !== 1) {
+      if (cursor.getDay() === 1 || cursor.getDay() === 0 && weeks.length === 0) {
+        // Start new week on Monday
+        if (cursor.getDay() === 1) weeks.push([]);
+        if (weeks.length === 0) weeks.push([]);
+      }
+      const dayStr = cursor.toISOString().split("T")[0];
+      const data = dayMap.get(dayStr) || null;
+      const value = data ? data[metric] : 0;
+      const currentWeek = weeks[weeks.length - 1];
+      if (currentWeek) {
+        currentWeek.push({
+          day: dayStr,
+          value,
+          data,
+          isToday: dayStr === today,
+          isFuture: dayStr > today,
+        });
+      }
+      cursor.setDate(cursor.getDate() + 1);
+      // Break at Sunday to start new week
+      if (cursor.getDay() === 1 && cursor <= endDate) {
+        weeks.push([]);
+      }
+      // Safety: stop if we've gone way past end
+      if (cursor > new Date(endDate.getTime() + 7 * 86400000)) break;
+    }
+
+    // Compute max value for color scaling
+    const allValues = daily.map(d => d[metric]);
+    const maxVal = Math.max(...allValues, 1);
+
+    // Compute streaks (consecutive days with activity)
+    const activeDays = daily.filter(d => d[metric] > 0).length;
+    let currentStreak = 0;
+    let longestStreak = 0;
+    let streak = 0;
+    // Walk from earliest to latest
+    for (const d of sortedDays) {
+      if (d[metric] > 0) {
+        streak++;
+        longestStreak = Math.max(longestStreak, streak);
+      } else {
+        streak = 0;
+      }
+    }
+    // Current streak: walk backwards from today
+    for (let i = sortedDays.length - 1; i >= 0; i--) {
+      if (sortedDays[i].day > today) continue;
+      if (sortedDays[i][metric] > 0) {
+        currentStreak++;
+      } else {
+        break;
+      }
+    }
+
+    return { weeks, maxVal, totalDays: daily.length, activeDays, currentStreak, longestStreak };
+  }, [daily, metric]);
+
+  if (calendarData.weeks.length === 0) {
+    return (
+      <div className="w-full flex items-center justify-center text-xs text-muted-foreground py-6">
+        No activity data for contribution calendar
+      </div>
+    );
+  }
+
+  const DAY_LABELS = ["Mon", "", "Wed", "", "Fri", "", "Sun"];
+
+  // Color intensity: 5 levels (0 = empty, 1-4 = quartiles)
+  function getCellColor(value: number, maxVal: number, isFuture: boolean): string {
+    if (isFuture) return "bg-muted/10";
+    if (value === 0) return "bg-muted/20 dark:bg-muted/15";
+    const ratio = value / maxVal;
+    if (ratio <= 0.25) return "bg-emerald-500/25 dark:bg-emerald-400/20";
+    if (ratio <= 0.5) return "bg-emerald-500/45 dark:bg-emerald-400/40";
+    if (ratio <= 0.75) return "bg-emerald-500/70 dark:bg-emerald-400/65";
+    return "bg-emerald-500 dark:bg-emerald-400/90";
+  }
+
+  // Month labels: show at the first week that starts in a new month
+  const monthLabels: Array<{ weekIdx: number; label: string }> = [];
+  let lastMonth = "";
+  for (let w = 0; w < calendarData.weeks.length; w++) {
+    const week = calendarData.weeks[w];
+    // Use the Monday (first day) of the week
+    const firstDay = week[0];
+    if (firstDay) {
+      const month = firstDay.day.slice(0, 7); // YYYY-MM
+      if (month !== lastMonth) {
+        const monthName = new Date(firstDay.day + "T00:00:00").toLocaleDateString("en-US", { month: "short" });
+        monthLabels.push({ weekIdx: w, label: monthName });
+        lastMonth = month;
+      }
+    }
+  }
+
+  const formatVal = metric === "cost" ? formatCost : metric === "tokens" ? formatTokens : (v: number) => v.toLocaleString();
+
+  return (
+    <div data-testid="contribution-calendar">
+      {/* Streak stats */}
+      <div className="flex items-center gap-4 mb-3 text-[11px] text-muted-foreground">
+        <span>
+          <span className="font-mono font-medium text-foreground">{calendarData.activeDays}</span>
+          <span className="ml-1">of {calendarData.totalDays}d active</span>
+        </span>
+        {calendarData.currentStreak > 0 && (
+          <span>
+            <span className="font-mono font-medium text-emerald-400">{calendarData.currentStreak}d</span>
+            <span className="ml-1">streak</span>
+          </span>
+        )}
+        {calendarData.longestStreak > calendarData.currentStreak && (
+          <span>
+            <span className="font-mono font-medium text-foreground/70">{calendarData.longestStreak}d</span>
+            <span className="ml-1">best</span>
+          </span>
+        )}
+      </div>
+
+      {/* Calendar grid */}
+      <div className="overflow-x-auto">
+        <div className="inline-flex flex-col gap-0">
+          {/* Month labels row */}
+          <div className="flex items-end ml-7 mb-1 h-3">
+            {calendarData.weeks.map((_, wIdx) => {
+              const ml = monthLabels.find(m => m.weekIdx === wIdx);
+              return (
+                <div key={wIdx} className="w-[13px] mx-[1px] shrink-0">
+                  {ml && (
+                    <span className="text-[9px] text-muted-foreground/60 font-medium whitespace-nowrap">
+                      {ml.label}
+                    </span>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Grid: 7 rows (Mon-Sun) x N weeks */}
+          {Array.from({ length: 7 }).map((_, dayIdx) => (
+            <div key={dayIdx} className="flex items-center gap-0">
+              {/* Day label */}
+              <span className="w-7 text-[9px] text-muted-foreground/50 font-mono text-right pr-1.5 shrink-0">
+                {DAY_LABELS[dayIdx]}
+              </span>
+              {/* Week cells */}
+              {calendarData.weeks.map((week, wIdx) => {
+                const cell = week[dayIdx];
+                if (!cell) {
+                  return <div key={wIdx} className="w-[13px] h-[13px] mx-[1px] shrink-0" />;
+                }
+                return (
+                  <TooltipProvider key={wIdx}>
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div
+                          className={`w-[13px] h-[13px] mx-[1px] shrink-0 rounded-[2px] transition-colors cursor-pointer hover:ring-1 hover:ring-foreground/20 ${
+                            getCellColor(cell.value, calendarData.maxVal, cell.isFuture)
+                          } ${cell.isToday ? "ring-1 ring-foreground/40" : ""}`}
+                        />
+                      </TooltipTrigger>
+                      <TooltipContent side="top" className="text-xs">
+                        <div className="font-medium">{formatShortDay(cell.day)}</div>
+                        {cell.data ? (
+                          <>
+                            <div>{cell.data.count} activities</div>
+                            {cell.data.tokens > 0 && <div>{formatTokens(cell.data.tokens)} tokens</div>}
+                            {cell.data.cost > 0 && <div>{formatCost(cell.data.cost)}</div>}
+                            {cell.data.errors > 0 && <div className="text-red-400">{cell.data.errors} errors</div>}
+                          </>
+                        ) : (
+                          <div className="text-muted-foreground">No data</div>
+                        )}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Legend */}
+      <div className="flex items-center gap-1.5 mt-2 text-[9px] text-muted-foreground/50">
+        <span>Less</span>
+        <div className="w-[11px] h-[11px] rounded-[2px] bg-muted/20 dark:bg-muted/15" />
+        <div className="w-[11px] h-[11px] rounded-[2px] bg-emerald-500/25 dark:bg-emerald-400/20" />
+        <div className="w-[11px] h-[11px] rounded-[2px] bg-emerald-500/45 dark:bg-emerald-400/40" />
+        <div className="w-[11px] h-[11px] rounded-[2px] bg-emerald-500/70 dark:bg-emerald-400/65" />
+        <div className="w-[11px] h-[11px] rounded-[2px] bg-emerald-500 dark:bg-emerald-400/90" />
+        <span>More</span>
+      </div>
+    </div>
+  );
+}
+
 // Auto-generated insights strip
 function InsightsStrip({
   analytics,
@@ -562,6 +797,7 @@ const DAILY_BREAKDOWN_COLLAPSE_THRESHOLD = 7;
 export function AnalyticsView() {
   const [days, setDays] = useState(14);
   const [heatmapMetric, setHeatmapMetric] = useState<"count" | "tokens" | "cost">("count");
+  const [calendarMetric, setCalendarMetric] = useState<"count" | "tokens" | "cost">("count");
   const [breakdownExpanded, setBreakdownExpanded] = useState(false);
   const { data: analytics, error, mutate } = useSWR(
     ["analytics", days],
@@ -821,6 +1057,31 @@ export function AnalyticsView() {
 
         {/* Model Cost Bar — stacked horizontal bar showing cost proportions */}
         <ModelCostBar models={analytics.models} totalCost={analytics.totalCost} />
+
+        {/* Contribution Calendar — GitHub-style daily activity grid */}
+        {days >= 14 && (
+          <div className="rounded-xl border border-border/50 bg-card/30 p-4">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium">Contribution Calendar</h3>
+              <div className="flex gap-1" data-testid="calendar-metric-toggle">
+                {HEATMAP_METRICS.map((m) => (
+                  <button
+                    key={m.key}
+                    onClick={() => setCalendarMetric(m.key)}
+                    className={`px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors ${
+                      calendarMetric === m.key
+                        ? "bg-primary/15 text-primary"
+                        : "text-muted-foreground/60 hover:text-muted-foreground hover:bg-muted/30"
+                    }`}
+                  >
+                    {m.label}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <ContributionCalendar daily={analytics.daily} metric={calendarMetric} />
+          </div>
+        )}
 
         {/* Daily Cost Chart */}
         <div className="rounded-xl border border-border/50 bg-card/30 p-4">
