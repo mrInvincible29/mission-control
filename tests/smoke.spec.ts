@@ -3532,3 +3532,61 @@ test("AnalyticsView keyboard shortcut ] cycles to next time range", async ({ pag
   // 30d should now be active
   await expect(btn30d).toHaveClass(/secondary/, { timeout: 3000 });
 });
+
+// === NEW FEATURE TESTS: Contribution Calendar ===
+
+test("AnalyticsView contribution calendar renders at 14d range", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  // Calendar should be visible at default 14d range
+  const calendar = page.getByTestId("contribution-calendar");
+  await expect(calendar).toBeVisible({ timeout: 10000 });
+});
+
+test("AnalyticsView contribution calendar has metric toggle", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  const toggle = page.getByTestId("calendar-metric-toggle");
+  await expect(toggle).toBeVisible({ timeout: 10000 });
+  // Should have Activity, Tokens, Cost buttons
+  await expect(toggle.getByText("Activity")).toBeVisible();
+  await expect(toggle.getByText("Tokens")).toBeVisible();
+  await expect(toggle.getByText("Cost")).toBeVisible();
+});
+
+test("AnalyticsView contribution calendar metric toggle switches", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  const toggle = page.getByTestId("calendar-metric-toggle");
+  await expect(toggle).toBeVisible({ timeout: 10000 });
+  // Click Tokens
+  await toggle.getByText("Tokens").click();
+  // The Tokens button should now have the active style
+  await expect(toggle.getByText("Tokens")).toHaveClass(/text-primary/, { timeout: 3000 });
+});
+
+test("AnalyticsView contribution calendar shows legend", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  const calendar = page.getByTestId("contribution-calendar");
+  await expect(calendar).toBeVisible({ timeout: 10000 });
+  // Legend should show Less and More text
+  await expect(calendar.getByText("Less")).toBeVisible();
+  await expect(calendar.getByText("More")).toBeVisible();
+});
+
+test("AnalyticsView has 90d time range button", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  const btn90d = page.getByRole("button", { name: "90d", exact: true });
+  await expect(btn90d).toBeVisible();
+});
+
+test("AnalyticsView contribution calendar shows streak stats", async ({ page }) => {
+  await page.goto("/?tab=activity&view=analytics");
+  await expect(page.getByText("Usage Analytics")).toBeVisible({ timeout: 10000 });
+  const calendar = page.getByTestId("contribution-calendar");
+  await expect(calendar).toBeVisible({ timeout: 10000 });
+  // Should show "of Xd active" text
+  await expect(calendar.getByText(/of \d+d active/)).toBeVisible();
+});
