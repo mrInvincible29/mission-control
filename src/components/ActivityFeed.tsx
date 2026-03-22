@@ -13,15 +13,35 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from "@/components/ui/tooltip";
-import { useState, useMemo, useCallback, useEffect, Fragment } from "react";
+import {
+  HoverCard,
+  HoverCardContent,
+  HoverCardTrigger,
+} from "@/components/ui/hover-card";
+import { useState, useMemo, useCallback, useEffect, useRef, Fragment } from "react";
 import {
   Search, X, ChevronDown, ChevronRight, ArrowRight,
   Bot, MessageSquare, XCircle, AlertTriangle, Circle, RefreshCw,
   Zap, BookOpen, Pencil, Mail, CheckCircle2, Wrench, Settings,
-  CalendarDays,
+  CalendarDays, Rows3, Rows4, Radio,
 } from "lucide-react";
 import type { Activity } from "@/types";
 import { formatTokens, formatCost, formatRelativeTime, formatDuration } from "@/lib/formatters";
+
+/** Density mode — compact shows less padding/smaller text, comfortable is the default */
+type DensityMode = "comfortable" | "compact";
+const DENSITY_KEY = "mc-activity-density";
+
+function getDensity(): DensityMode {
+  try {
+    const v = localStorage.getItem(DENSITY_KEY);
+    return v === "compact" ? "compact" : "comfortable";
+  } catch { return "comfortable"; }
+}
+
+function setDensityStorage(mode: DensityMode) {
+  try { localStorage.setItem(DENSITY_KEY, mode); } catch {}
+}
 
 const CATEGORY_COLORS: Record<string, string> = {
   important: "bg-red-500/20 text-red-400 border-red-500/30",
@@ -319,8 +339,31 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
   const [searchText, setSearchText] = useState("");
   const [collapsedSessions, setCollapsedSessions] = useState<Set<string>>(new Set());
 
+  // Keyboard navigation
+  const [focusedIndex, setFocusedIndex] = useState<number>(-1);
+  const feedContainerRef = useRef<HTMLDivElement>(null);
+
+  // Density toggle
+  const [density, setDensity] = useState<DensityMode>("comfortable");
+  const isCompact = density === "compact";
+
+  // Live streaming badge — counts new activities arriving via SWR refresh
+  const [liveCount, setLiveCount] = useState(0);
+  const prevCountRef = useRef<number | null>(null);
+
   const [mounted, setMounted] = useState(false);
-  useEffect(() => { setMounted(true); }, []);
+  useEffect(() => {
+    setMounted(true);
+    setDensity(getDensity());
+  }, []);
+
+  const toggleDensity = useCallback(() => {
+    setDensity(prev => {
+      const next = prev === "compact" ? "comfortable" : "compact";
+      setDensityStorage(next);
+      return next;
+    });
+  }, []);
 
   // Track last refresh time for the "Updated Xs ago" indicator
   const [lastRefresh, setLastRefresh] = useState(0);
@@ -398,6 +441,24 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
   const currentPage = cursors.length;
   const hasPrev = cursors.length > 1;
 
+  // Live streaming badge — detect new activities arriving via SWR refresh
+  useEffect(() => {
+    if (!rawActivities) return;
+    const currentCount = rawActivities.length;
+    if (prevCountRef.current === null) {
+      prevCountRef.current = currentCount;
+    } else if (currentCount > prevCountRef.current) {
+      setLiveCount(prev => prev + (currentCount - (prevCountRef.current ?? 0)));
+      prevCountRef.current = currentCount;
+    }
+  }, [rawActivities]);
+
+  // Reset live count when filters change
+  useEffect(() => {
+    setLiveCount(0);
+    prevCountRef.current = null;
+  }, [category, dateRange]);
+
   // Client-side text search filter
   const activities = useMemo(() => {
     if (!rawActivities) return undefined;
@@ -447,6 +508,42 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
     });
   }, []);
 
+  // j/k keyboard navigation for activity items
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+      if (e.metaKey || e.ctrlKey || e.altKey) return;
+
+      const itemCount = activities?.length ?? 0;
+      if (itemCount === 0) return;
+
+      if (e.key === "j") {
+        e.preventDefault();
+        setFocusedIndex(prev => Math.min(prev + 1, itemCount - 1));
+      } else if (e.key === "k") {
+        e.preventDefault();
+        setFocusedIndex(prev => Math.max(prev - 1, 0));
+      } else if (e.key === "Escape" && focusedIndex >= 0) {
+        setFocusedIndex(-1);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [activities, focusedIndex]);
+
+  // Scroll focused item into view
+  useEffect(() => {
+    if (focusedIndex < 0 || !feedContainerRef.current) return;
+    const el = feedContainerRef.current.querySelector(`[data-activity-index="${focusedIndex}"]`);
+    if (el) el.scrollIntoView({ block: "nearest", behavior: "smooth" });
+  }, [focusedIndex]);
+
+  // Reset focus when filters/data change
+  useEffect(() => {
+    setFocusedIndex(-1);
+  }, [category, dateRange, searchText]);
+
   const loadNext = useCallback(() => {
     if (nextCursor !== undefined) {
       setCursors(prev => [...prev, nextCursor]);
@@ -489,16 +586,36 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
       <CardHeader className="pb-2 flex-shrink-0 px-4 pt-4">
         <div className="flex items-center justify-between">
-          <CardTitle className="text-lg font-semibold">Activity Feed</CardTitle>
           <div className="flex items-center gap-2">
+            <CardTitle className="text-lg font-semibold">Activity Feed</CardTitle>
+            {liveCount > 0 && (
+              <span
+                className="inline-flex items-center gap-1 text-[10px] font-medium text-emerald-400 bg-emerald-500/10 rounded-full px-2 py-0.5 animate-in fade-in slide-in-from-left-2"
+                data-testid="live-badge"
+              >
+                <Radio className="h-2.5 w-2.5 animate-pulse" />
+                +{liveCount} new
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-1.5">
             {lastRefresh > 0 && (
               <span className="text-[10px] text-muted-foreground/50 tabular-nums">
-                Updated {Math.round((Date.now() - lastRefresh) / 1000)}s ago
+                {Math.round((Date.now() - lastRefresh) / 1000)}s ago
               </span>
             )}
             <button
-              onClick={() => { mutateActivities(); mutateStats(); mutateAnalytics(); }}
-              className="text-muted-foreground/40 hover:text-muted-foreground transition-colors"
+              onClick={toggleDensity}
+              className="text-muted-foreground/40 hover:text-muted-foreground transition-colors p-1 rounded"
+              aria-label={`Switch to ${isCompact ? "comfortable" : "compact"} density`}
+              title={`${isCompact ? "Comfortable" : "Compact"} view`}
+              data-testid="density-toggle"
+            >
+              {isCompact ? <Rows3 className="h-3.5 w-3.5" /> : <Rows4 className="h-3.5 w-3.5" />}
+            </button>
+            <button
+              onClick={() => { mutateActivities(); mutateStats(); mutateAnalytics(); setLiveCount(0); }}
+              className="text-muted-foreground/40 hover:text-muted-foreground transition-colors p-1 rounded"
               aria-label="Refresh feed"
             >
               <RefreshCw className={`h-3.5 w-3.5 ${isValidating ? "animate-spin" : ""}`} />
@@ -656,7 +773,7 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
               onExpandDateRange={() => setDateRange(dateRange === 1 ? 7 : dateRange === 7 ? 14 : 30)}
             />
           ) : (
-            <div className="space-y-1.5">
+            <div ref={feedContainerRef} className={isCompact ? "space-y-0.5" : "space-y-1.5"}>
               {(() => {
                 // Build a set of activities to hide (collapsed session members)
                 const hidden = new Set<number>();
@@ -688,6 +805,7 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
                   const isSessionFirst = group && sessionFirstIndex.get(session!) === index;
                   const isInSession = group && !isSessionFirst;
                   const isCollapsed = session ? collapsedSessions.has(session) : false;
+                  const isFocused = index === focusedIndex;
 
                   return (
                     <Fragment key={activity.id}>
@@ -703,8 +821,15 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
                           onToggle={() => toggleSession(session)}
                         />
                       )}
-                      <div className={isInSession ? "ml-4 border-l-2 border-muted/40 pl-2" : ""}>
-                        <ActivityItem activity={activity} />
+                      <div
+                        className={isInSession ? "ml-4 border-l-2 border-muted/40 pl-2" : ""}
+                        data-activity-index={index}
+                      >
+                        <ActivityItem
+                          activity={activity}
+                          compact={isCompact}
+                          focused={isFocused}
+                        />
                       </div>
                     </Fragment>
                   );
@@ -714,33 +839,48 @@ export function ActivityFeed({ lastVisit, onNewCount }: ActivityFeedProps = {}) 
           )}
         </ScrollArea>
 
-        {/* Pagination controls */}
-        {(hasPrev || hasMore) && (
-          <div className="flex items-center justify-between pt-3 mt-2 border-t border-border/50 flex-shrink-0">
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs h-7"
-              onClick={loadPrev}
-              disabled={!hasPrev}
-            >
-              Newer
-            </Button>
-            <span className="text-xs text-muted-foreground tabular-nums">
-              Page {currentPage}
-              {!hasMore && !hasPrev ? "" : hasMore ? "+" : ""}
-            </span>
-            <Button
-              variant="outline"
-              size="sm"
-              className="text-xs h-7"
-              onClick={loadNext}
-              disabled={!hasMore}
-            >
-              Older
-            </Button>
-          </div>
-        )}
+        {/* Pagination + keyboard hint */}
+        <div className="pt-3 mt-2 border-t border-border/50 flex-shrink-0 space-y-1.5">
+          {(hasPrev || hasMore) && (
+            <div className="flex items-center justify-between">
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs h-7"
+                onClick={loadPrev}
+                disabled={!hasPrev}
+              >
+                Newer
+              </Button>
+              <span className="text-xs text-muted-foreground tabular-nums">
+                Page {currentPage}
+                {!hasMore && !hasPrev ? "" : hasMore ? "+" : ""}
+              </span>
+              <Button
+                variant="outline"
+                size="sm"
+                className="text-xs h-7"
+                onClick={loadNext}
+                disabled={!hasMore}
+              >
+                Older
+              </Button>
+            </div>
+          )}
+          {activities && activities.length > 0 && (
+            <div className="flex items-center justify-center gap-3 text-[10px] text-muted-foreground/40" data-testid="keyboard-hints">
+              <span className="hidden sm:flex items-center gap-1">
+                <kbd className="rounded border border-border/30 bg-muted/20 px-1 py-0 font-mono text-[9px]">j</kbd>
+                <kbd className="rounded border border-border/30 bg-muted/20 px-1 py-0 font-mono text-[9px]">k</kbd>
+                navigate
+              </span>
+              <span className="hidden sm:flex items-center gap-1">
+                <kbd className="rounded border border-border/30 bg-muted/20 px-1 py-0 font-mono text-[9px]">hover</kbd>
+                peek
+              </span>
+            </div>
+          )}
+        </div>
       </CardContent>
     </Card>
   );
@@ -811,7 +951,37 @@ function EmptyState({
   );
 }
 
-function ActivityItem({ activity }: { activity: Activity }) {
+/** Hover card showing activity metadata at a glance */
+function ActivityHoverDetail({ meta }: { meta: Activity["metadata"] }) {
+  if (!meta) return null;
+  const entries: Array<{ label: string; value: string; color?: string }> = [];
+  if (meta.model) entries.push({ label: "Model", value: meta.model, color: "text-purple-400" });
+  if (meta.tokens) entries.push({ label: "Tokens", value: formatTokens(meta.tokens), color: "text-blue-400" });
+  if (meta.cost) entries.push({ label: "Cost", value: formatCost(meta.cost), color: "text-green-400" });
+  if (meta.duration) entries.push({ label: "Duration", value: formatDuration(meta.duration) });
+  if (meta.tool) entries.push({ label: "Tool", value: meta.tool });
+  if (meta.session) entries.push({ label: "Session", value: meta.session.slice(0, 12) + "..." });
+  if (meta.channel) entries.push({ label: "Channel", value: meta.channel });
+  if (entries.length === 0) return null;
+
+  return (
+    <div className="grid grid-cols-2 gap-x-3 gap-y-1 text-xs" data-testid="hover-detail">
+      {entries.map(({ label, value, color }) => (
+        <Fragment key={label}>
+          <span className="text-muted-foreground">{label}</span>
+          <span className={`font-mono truncate ${color ?? ""}`}>{value}</span>
+        </Fragment>
+      ))}
+      {meta.error && (
+        <div className="col-span-2 mt-1 rounded bg-red-500/10 px-2 py-1 text-[10px] text-red-400 line-clamp-3 font-mono">
+          {meta.error}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ActivityItem({ activity, compact = false, focused = false }: { activity: Activity; compact?: boolean; focused?: boolean }) {
   const [expanded, setExpanded] = useState(false);
   const icon = ACTION_TYPE_ICONS[activity.actionType] || <Circle className="h-4 w-4" />;
   const categoryColor = CATEGORY_COLORS[activity.category ?? "system"] || CATEGORY_COLORS.system;
@@ -822,6 +992,7 @@ function ActivityItem({ activity }: { activity: Activity }) {
     meta.error || meta.tool || meta.session || meta.sessionKey || meta.channel ||
     meta.model || meta.tokens || meta.cost || meta.duration
   );
+  const hasHoverContent = meta && (meta.model || meta.tokens || meta.cost || meta.tool || meta.duration);
 
   const absoluteTime = new Date(activity.timestamp).toLocaleString("en-US", {
     weekday: "short",
@@ -832,15 +1003,15 @@ function ActivityItem({ activity }: { activity: Activity }) {
     second: "2-digit",
   });
 
-  return (
+  const itemContent = (
     <div
       role="button"
       tabIndex={0}
-      className={`p-2.5 rounded-lg border border-l-[3px] transition-colors cursor-pointer ${categoryBorder} ${
+      className={`${compact ? "p-1.5" : "p-2.5"} rounded-lg border border-l-[3px] transition-all cursor-pointer ${categoryBorder} ${
         activity.status === "error"
           ? "border-red-500/30 border-l-red-500 bg-red-500/5"
           : "border-border/50 bg-card/50 hover:bg-card/80"
-      } focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
+      } ${focused ? "ring-2 ring-primary/50 ring-offset-1 ring-offset-background bg-primary/5" : ""} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2`}
       onClick={() => setExpanded(e => !e)}
       onKeyDown={(e) => {
         if (e.key === "Enter" || e.key === " ") {
@@ -849,26 +1020,47 @@ function ActivityItem({ activity }: { activity: Activity }) {
         }
       }}
       aria-expanded={expanded}
+      data-testid="activity-item"
     >
-      <div className="flex items-start gap-2">
-        <span className="mt-0.5 text-muted-foreground">{icon}</span>
+      <div className={`flex items-start ${compact ? "gap-1.5" : "gap-2"}`}>
+        <span className={`${compact ? "mt-0" : "mt-0.5"} text-muted-foreground ${compact ? "scale-90" : ""}`}>{icon}</span>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 flex-wrap">
             <Badge
               variant="outline"
-              className={`text-[10px] px-1.5 py-0 ${categoryColor}`}
+              className={`${compact ? "text-[9px] px-1 py-0" : "text-[10px] px-1.5 py-0"} ${categoryColor}`}
             >
               {activity.actionType.replace(/_/g, " ")}
             </Badge>
             {activity.status === "error" && (
-              <Badge variant="secondary" className={STATUS_COLORS.error}>
+              <Badge variant="secondary" className={`${compact ? "text-[9px]" : ""} ${STATUS_COLORS.error}`}>
                 error
               </Badge>
+            )}
+            {/* Compact mode: inline key metadata */}
+            {compact && !expanded && meta && (
+              <>
+                {meta.model && (
+                  <span className="text-[9px] px-1 rounded bg-purple-500/10 text-purple-400/80">
+                    {meta.model}
+                  </span>
+                )}
+                {meta.tokens && (
+                  <span className="text-[9px] text-blue-400/60 tabular-nums">
+                    {formatTokens(meta.tokens)}
+                  </span>
+                )}
+                {meta.cost && (
+                  <span className="text-[9px] text-green-400/60 tabular-nums">
+                    {formatCost(meta.cost)}
+                  </span>
+                )}
+              </>
             )}
             <TooltipProvider>
               <Tooltip>
                 <TooltipTrigger asChild>
-                  <span className="text-xs text-muted-foreground ml-auto flex items-center gap-1 cursor-default">
+                  <span className={`${compact ? "text-[10px]" : "text-xs"} text-muted-foreground ml-auto flex items-center gap-1 cursor-default`}>
                     {formatRelativeTime(activity.timestamp)}
                     {hasExpandableContent && (
                       <ChevronDown className={`h-3 w-3 transition-transform ${expanded ? "rotate-180" : ""}`} />
@@ -882,12 +1074,12 @@ function ActivityItem({ activity }: { activity: Activity }) {
             </TooltipProvider>
           </div>
 
-          <p className={`text-sm text-foreground/90 mt-1 ${expanded ? "" : "line-clamp-2"}`}>
+          <p className={`${compact ? "text-xs mt-0.5" : "text-sm mt-1"} text-foreground/90 ${expanded ? "" : "line-clamp-2"} ${compact && !expanded ? "line-clamp-1" : ""}`}>
             {activity.description}
           </p>
 
-          {/* Collapsed: inline metadata badges */}
-          {!expanded && meta && (
+          {/* Collapsed: inline metadata badges (comfortable mode only) */}
+          {!expanded && !compact && meta && (
             <div className="flex items-center gap-2 mt-1.5 flex-wrap">
               {meta.model && (
                 <span className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-400">
@@ -985,4 +1177,30 @@ function ActivityItem({ activity }: { activity: Activity }) {
       </div>
     </div>
   );
+
+  // Wrap in HoverCard for quick-peek metadata (only when not expanded and has content)
+  if (hasHoverContent && !expanded) {
+    return (
+      <HoverCard openDelay={400} closeDelay={100}>
+        <HoverCardTrigger asChild>
+          {itemContent}
+        </HoverCardTrigger>
+        <HoverCardContent side="right" align="start" className="w-72 p-3">
+          <div className="space-y-2">
+            <div className="flex items-center gap-1.5">
+              <span className="text-muted-foreground">{icon}</span>
+              <span className="text-xs font-medium truncate">{activity.actionType.replace(/_/g, " ")}</span>
+              <span className="text-[10px] text-muted-foreground/60 ml-auto">{formatRelativeTime(activity.timestamp)}</span>
+            </div>
+            <p className="text-xs text-foreground/80 line-clamp-3">{activity.description}</p>
+            <div className="border-t border-border/50 pt-2">
+              <ActivityHoverDetail meta={meta} />
+            </div>
+          </div>
+        </HoverCardContent>
+      </HoverCard>
+    );
+  }
+
+  return itemContent;
 }
