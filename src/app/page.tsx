@@ -51,6 +51,11 @@ const TabReturnNotifier = dynamic(
   { ssr: false }
 );
 
+const NotificationCenter = dynamic(
+  () => import("@/components/NotificationCenter").then((mod) => ({ default: mod.NotificationCenter })),
+  { ssr: false }
+);
+
 const QuickStats = dynamic(
   () => import("@/components/QuickStats").then((mod) => ({ default: mod.QuickStats })),
   { ssr: false }
@@ -450,6 +455,7 @@ export default function Home() {
                     </kbd>
                   </span>
                 </button>
+                <NotificationCenter />
                 <button
                   onClick={() => window.dispatchEvent(new CustomEvent("toggle-shortcuts"))}
                   className="hidden sm:flex items-center justify-center rounded-lg border border-border/60 bg-muted/30 w-8 h-8 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"

@@ -432,6 +432,18 @@ export function CommandPalette() {
       },
       // Actions
       {
+        id: "action-notifications",
+        label: "Notifications",
+        description: "View alerts from system, services, tasks, cron",
+        icon: <Zap className="h-4 w-4 text-amber-400" />,
+        section: "Actions",
+        keywords: ["notifications", "alerts", "bell", "warnings", "errors", "issues"],
+        action: () => {
+          window.dispatchEvent(new CustomEvent("open-notification-center"));
+          close();
+        },
+      },
+      {
         id: "action-new-task",
         label: "New Task",
         description: "Create a task — or type \"> task title\" for quick add",
