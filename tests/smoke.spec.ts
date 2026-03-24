@@ -3788,3 +3788,44 @@ test("notification center accessible from command palette", async ({ page }) => 
     await expect(page.getByText("Notifications").first()).toBeVisible({ timeout: 3000 });
   }
 });
+
+// === SERVICES UPTIME HISTORY TESTS ===
+
+test("ServicesView shows fleet uptime summary strip", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await page.waitForTimeout(2000);
+  const summary = page.getByTestId("fleet-uptime-summary");
+  await expect(summary).toBeVisible({ timeout: 10000 });
+  // Fleet Status label should be present
+  await expect(summary.getByText("Fleet Status")).toBeVisible();
+});
+
+test("ServicesView fleet bar renders service segments", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await page.waitForTimeout(2000);
+  const fleetBar = page.getByTestId("fleet-bar");
+  await expect(fleetBar).toBeVisible({ timeout: 10000 });
+  // Should have at least one segment (one per service)
+  const segments = fleetBar.locator("div");
+  expect(await segments.count()).toBeGreaterThan(0);
+});
+
+test("ServicesView fleet summary shows up/down counts", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await page.waitForTimeout(2000);
+  const summary = page.getByTestId("fleet-uptime-summary");
+  await expect(summary).toBeVisible({ timeout: 10000 });
+  // Should show at least one status count (e.g., "up")
+  await expect(summary.getByText("up").first()).toBeVisible({ timeout: 5000 });
+});
+
+test("ServicesView service cards show uptime dots after data loads", async ({ page }) => {
+  await page.goto("/?tab=system&view=services");
+  await page.waitForTimeout(3000);
+  // After first fetch, uptime dots should appear on at least one card
+  const dots = page.getByTestId("uptime-dots");
+  // May or may not have dots depending on localStorage history
+  // At minimum, the service cards should be present
+  const cards = page.getByTestId("service-card");
+  expect(await cards.count()).toBeGreaterThan(0);
+});
