@@ -40,6 +40,12 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import {
+  Tooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from "@/components/ui/tooltip";
+import {
   Plus,
   GripVertical,
   Trash2,
@@ -51,6 +57,12 @@ import {
   MessageSquare,
   Timer,
   Clock,
+  Search,
+  X,
+  TrendingUp,
+  BarChart3,
+  Hourglass,
+  Zap,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 import { formatRelativeTime } from "@/lib/formatters";
@@ -138,6 +150,8 @@ function formatDate(ts: number): string {
 }
 
 const STALE_THRESHOLD_MS = 3 * 24 * 60 * 60 * 1000; // 3 days
+const ONE_HOUR_MS = 60 * 60 * 1000;
+const ONE_DAY_MS = 24 * ONE_HOUR_MS;
 
 function isStale(task: Task): boolean {
   if (task.status !== "blocked" && task.status !== "in_progress") return false;
@@ -153,6 +167,110 @@ const PRIORITY_BAR_COLORS: Record<TaskPriority, string> = {
 };
 
 // ---------------------------------------------------------------------------
+// TaskAgeBadge — visual indicator of how long a task has been in current status
+// ---------------------------------------------------------------------------
+
+function TaskAgeBadge({ task }: { task: Task }) {
+  const age = Date.now() - task.updatedAt;
+  if (task.status === "done") return null;
+
+  // Under 1h: no badge (fresh)
+  if (age < ONE_HOUR_MS) return null;
+
+  let label: string;
+  let colorClass: string;
+
+  if (age < ONE_DAY_MS) {
+    const hours = Math.floor(age / ONE_HOUR_MS);
+    label = `${hours}h`;
+    colorClass = "bg-emerald-500/15 text-emerald-400";
+  } else if (age < 3 * ONE_DAY_MS) {
+    const days = Math.floor(age / ONE_DAY_MS);
+    label = `${days}d`;
+    colorClass = "bg-blue-500/15 text-blue-400";
+  } else if (age < 7 * ONE_DAY_MS) {
+    const days = Math.floor(age / ONE_DAY_MS);
+    label = `${days}d`;
+    colorClass = "bg-amber-500/15 text-amber-400";
+  } else {
+    const days = Math.floor(age / ONE_DAY_MS);
+    label = `${days}d`;
+    colorClass = "bg-red-500/15 text-red-400";
+  }
+
+  return (
+    <span
+      className={`text-[9px] font-mono px-1 py-0.5 rounded ${colorClass}`}
+      title={`In current status for ${label}`}
+    >
+      {label}
+    </span>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// SummaryStrip — glanceable task stats
+// ---------------------------------------------------------------------------
+
+function SummaryStrip({ tasks }: { tasks: Task[] }) {
+  const total = tasks.length;
+  const done = tasks.filter((t) => t.status === "done").length;
+  const inProgress = tasks.filter((t) => t.status === "in_progress").length;
+  const blocked = tasks.filter((t) => t.status === "blocked").length;
+  const stale = tasks.filter(isStale).length;
+
+  // Completion rate
+  const completionRate = total > 0 ? Math.round((done / total) * 100) : 0;
+
+  // Average age of active tasks (not done)
+  const activeTasks = tasks.filter((t) => t.status !== "done");
+  const avgAge = activeTasks.length > 0
+    ? activeTasks.reduce((sum, t) => sum + (Date.now() - t.updatedAt), 0) / activeTasks.length
+    : 0;
+
+  function formatAge(ms: number): string {
+    if (ms < ONE_HOUR_MS) return "<1h";
+    if (ms < ONE_DAY_MS) return `${Math.floor(ms / ONE_HOUR_MS)}h`;
+    return `${Math.floor(ms / ONE_DAY_MS)}d`;
+  }
+
+  // Recently completed (last 24h)
+  const recentlyDone = tasks.filter(
+    (t) => t.status === "done" && t.completedAt && Date.now() - t.completedAt < ONE_DAY_MS
+  ).length;
+
+  if (total === 0) return null;
+
+  const stats = [
+    { icon: <BarChart3 className="h-3 w-3" />, label: "Total", value: String(total), color: "text-foreground/70" },
+    { icon: <TrendingUp className="h-3 w-3" />, label: "Done", value: `${completionRate}%`, color: completionRate >= 50 ? "text-emerald-400" : "text-foreground/70" },
+    { icon: <Loader2 className="h-3 w-3" />, label: "Active", value: String(inProgress), color: inProgress > 0 ? "text-blue-400" : "text-foreground/70" },
+    ...(blocked > 0 ? [{ icon: <AlertTriangle className="h-3 w-3" />, label: "Blocked", value: String(blocked), color: "text-amber-400" }] : []),
+    ...(stale > 0 ? [{ icon: <Hourglass className="h-3 w-3" />, label: "Stale", value: String(stale), color: "text-red-400" }] : []),
+    { icon: <Clock className="h-3 w-3" />, label: "Avg age", value: formatAge(avgAge), color: avgAge > 3 * ONE_DAY_MS ? "text-amber-400" : "text-foreground/70" },
+    ...(recentlyDone > 0 ? [{ icon: <Zap className="h-3 w-3" />, label: "Done today", value: String(recentlyDone), color: "text-emerald-400" }] : []),
+  ];
+
+  return (
+    <TooltipProvider>
+      <div className="flex items-center gap-3 px-4 py-2 border-b border-border/20 overflow-x-auto" data-testid="kanban-summary-strip">
+        {stats.map((stat) => (
+          <Tooltip key={stat.label}>
+            <TooltipTrigger asChild>
+              <div className={`flex items-center gap-1 text-[11px] tabular-nums whitespace-nowrap ${stat.color}`}>
+                {stat.icon}
+                <span className="font-medium">{stat.value}</span>
+              </div>
+            </TooltipTrigger>
+            <TooltipContent side="bottom" className="text-xs">{stat.label}</TooltipContent>
+          </Tooltip>
+        ))}
+      </div>
+    </TooltipProvider>
+  );
+}
+
+// ---------------------------------------------------------------------------
 // KanbanCard — draggable task card
 // ---------------------------------------------------------------------------
 
@@ -161,11 +279,13 @@ function KanbanCard({
   assignees,
   onClick,
   isDragOverlay,
+  isFocused,
 }: {
   task: Task;
   assignees: Assignee[];
   onClick?: () => void;
   isDragOverlay?: boolean;
+  isFocused?: boolean;
 }) {
   const {
     attributes,
@@ -192,9 +312,10 @@ function KanbanCard({
     <div
       ref={isDragOverlay ? undefined : setNodeRef}
       style={style}
+      data-task-id={task.id}
       className={`rounded-lg border border-border/30 bg-card p-3 cursor-pointer hover:border-border/60 hover:shadow-md hover:-translate-y-px transition-all duration-150 border-l-4 ${
         PRIORITY_COLORS[task.priority]
-      } ${isDragging ? "opacity-30" : ""} ${isDragOverlay ? "shadow-xl ring-2 ring-primary/20 rotate-2" : ""} ${stale ? "ring-1 ring-amber-500/30" : ""}`}
+      } ${isDragging ? "opacity-30" : ""} ${isDragOverlay ? "shadow-xl ring-2 ring-primary/20 rotate-2" : ""} ${stale ? "ring-1 ring-amber-500/30" : ""} ${isFocused ? "ring-2 ring-primary/40 border-primary/50 shadow-md" : ""}`}
       onClick={onClick}
       {...(isDragOverlay ? {} : attributes)}
     >
@@ -242,11 +363,23 @@ function KanbanCard({
             {/* Source icon */}
             {task.source !== "manual" && SOURCE_ICONS[task.source]}
 
+            {/* Task age badge */}
+            <TaskAgeBadge task={task} />
+
             {/* Relative time */}
             <span className={`text-[10px] flex items-center gap-0.5 ml-auto ${stale ? "text-amber-500" : "text-muted-foreground/50"}`} title={formatDate(task.updatedAt)}>
               {stale && <AlertTriangle className="h-2.5 w-2.5" />}
-              <Clock className="h-2.5 w-2.5" />
-              {formatRelativeTime(task.updatedAt)}
+              {task.status === "done" && task.completedAt ? (
+                <>
+                  <CheckCircle2 className="h-2.5 w-2.5 text-emerald-500" />
+                  <span className="text-emerald-500/70">{formatRelativeTime(task.completedAt)}</span>
+                </>
+              ) : (
+                <>
+                  <Clock className="h-2.5 w-2.5" />
+                  {formatRelativeTime(task.updatedAt)}
+                </>
+              )}
             </span>
           </div>
         </div>
@@ -281,6 +414,7 @@ function KanbanColumn({
   onCardClick,
   onQuickAdd,
   quickAddInputRef,
+  focusedTaskId,
 }: {
   column: (typeof COLUMNS)[number];
   tasks: Task[];
@@ -288,6 +422,7 @@ function KanbanColumn({
   onCardClick: (task: Task) => void;
   onQuickAdd?: (title: string) => void;
   quickAddInputRef?: React.RefObject<HTMLInputElement | null>;
+  focusedTaskId?: string | null;
 }) {
   const { setNodeRef, isOver } = useDroppable({ id: column.id });
   const [quickAddValue, setQuickAddValue] = useState("");
@@ -378,6 +513,7 @@ function KanbanColumn({
               task={task}
               assignees={assignees}
               onClick={() => onCardClick(task)}
+              isFocused={focusedTaskId === task.id}
             />
           ))}
 
@@ -675,6 +811,8 @@ export function KanbanBoard() {
   // Filters
   const [filterAssignee, setFilterAssignee] = useState<string | null>(null);
   const [filterPriority, setFilterPriority] = useState<TaskPriority | null>(null);
+  const [searchText, setSearchText] = useState("");
+  const searchInputRef = useRef<HTMLInputElement>(null);
 
   // Mobile column selector
   const [mobileColumn, setMobileColumn] = useState<TaskStatus>("todo");
@@ -711,6 +849,13 @@ export function KanbanBoard() {
       }
     }
     if (filterPriority !== null && t.priority !== filterPriority) return false;
+    if (searchText.trim()) {
+      const lower = searchText.toLowerCase();
+      const matchTitle = t.title.toLowerCase().includes(lower);
+      const matchDesc = (t.description ?? "").toLowerCase().includes(lower);
+      const matchTags = t.tags.some((tag) => tag.toLowerCase().includes(lower));
+      if (!matchTitle && !matchDesc && !matchTags) return false;
+    }
     return true;
   });
 
@@ -934,20 +1079,88 @@ export function KanbanBoard() {
     [mutateTasks, toast]
   );
 
-  // Keyboard shortcut: 'n' focuses quick-add input
+  // Keyboard navigation
+  const [focusedCardIdx, setFocusedCardIdx] = useState(-1);
   const quickAddRef = useRef<HTMLInputElement>(null);
+
+  // Flat list of all visible tasks for keyboard navigation (column order)
+  const allVisibleTasks = useMemo(() => {
+    const result: Task[] = [];
+    for (const col of COLUMNS) {
+      result.push(...(tasksByColumn[col.id] || []));
+    }
+    return result;
+  }, [tasksByColumn]);
+
+  // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      // 'n' focuses quick-add input
       if (e.key === "n" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
         e.preventDefault();
         quickAddRef.current?.focus();
+        return;
+      }
+
+      // '/' focuses search
+      if (e.key === "/" && !e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+        return;
+      }
+
+      // 'j' / 'k' navigate cards
+      if (e.key === "j" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        setFocusedCardIdx((prev) => {
+          const next = prev + 1;
+          return next >= allVisibleTasks.length ? 0 : next;
+        });
+        return;
+      }
+
+      if (e.key === "k" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        setFocusedCardIdx((prev) => {
+          const next = prev - 1;
+          return next < 0 ? allVisibleTasks.length - 1 : next;
+        });
+        return;
+      }
+
+      // Enter opens the focused card
+      if (e.key === "Enter" && !e.metaKey && !e.ctrlKey && !e.altKey && !e.shiftKey) {
+        if (focusedCardIdx >= 0 && focusedCardIdx < allVisibleTasks.length) {
+          e.preventDefault();
+          setSelectedTask(allVisibleTasks[focusedCardIdx]);
+        }
+        return;
+      }
+
+      // Escape clears focus or closes sheet
+      if (e.key === "Escape") {
+        if (selectedTask) return; // let sheet handle it
+        if (focusedCardIdx >= 0) {
+          e.preventDefault();
+          setFocusedCardIdx(-1);
+        }
+        return;
       }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, []);
+  }, [allVisibleTasks, focusedCardIdx, selectedTask]);
+
+  // Scroll focused card into view
+  useEffect(() => {
+    if (focusedCardIdx < 0 || focusedCardIdx >= allVisibleTasks.length) return;
+    const taskId = allVisibleTasks[focusedCardIdx].id;
+    const el = document.querySelector(`[data-task-id="${taskId}"]`);
+    if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [focusedCardIdx, allVisibleTasks]);
 
   // Unique assignees present in tasks (for filter buttons)
   const assigneeNames = [
@@ -1005,8 +1218,36 @@ export function KanbanBoard() {
 
   return (
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
+      {/* Summary strip */}
+      <SummaryStrip tasks={tasks} />
+
       {/* Filter bar */}
-      <div className="flex flex-wrap items-center gap-2 px-4 pt-4 pb-2">
+      <div className="flex flex-wrap items-center gap-2 px-4 pt-3 pb-2">
+        {/* Search */}
+        <div className="relative" data-testid="kanban-search">
+          <Search className="absolute left-2 top-1/2 -translate-y-1/2 h-3 w-3 text-muted-foreground" />
+          <Input
+            ref={searchInputRef}
+            type="text"
+            placeholder="Search tasks... (/)"
+            value={searchText}
+            onChange={(e) => setSearchText(e.target.value)}
+            className="pl-7 pr-7 h-7 w-[160px] text-xs"
+          />
+          {searchText && (
+            <button
+              onClick={() => setSearchText("")}
+              className="absolute right-1.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              aria-label="Clear search"
+            >
+              <X className="h-3 w-3" />
+            </button>
+          )}
+        </div>
+
+        {/* Separator */}
+        <div className="w-px h-5 bg-border/40 hidden sm:block" />
+
         {/* Assignee filters */}
         <div className="flex items-center gap-1">
           <Button
@@ -1168,6 +1409,7 @@ export function KanbanBoard() {
                 onCardClick={setSelectedTask}
                 onQuickAdd={col.id === "todo" ? handleQuickAdd : undefined}
                 quickAddInputRef={col.id === "todo" ? quickAddRef : undefined}
+                focusedTaskId={focusedCardIdx >= 0 && focusedCardIdx < allVisibleTasks.length ? allVisibleTasks[focusedCardIdx].id : null}
               />
             ))}
           </div>
@@ -1185,6 +1427,17 @@ export function KanbanBoard() {
             )}
           </DragOverlay>
         </DndContext>
+      </div>
+
+      {/* Keyboard hints footer */}
+      <div className="flex items-center justify-between px-4 pb-2 pt-1 border-t border-border/20 flex-shrink-0">
+        <span className="text-[10px] text-muted-foreground/50">
+          {filteredTasks.length} task{filteredTasks.length !== 1 ? "s" : ""}
+          {searchText && " (filtered)"}
+        </span>
+        <span className="text-[10px] text-muted-foreground/30 hidden sm:inline" data-testid="kanban-keyboard-hints">
+          <kbd className="font-mono">/</kbd> search · <kbd className="font-mono">n</kbd> new · <kbd className="font-mono">j</kbd>/<kbd className="font-mono">k</kbd> navigate · <kbd className="font-mono">Enter</kbd> open
+        </span>
       </div>
 
       {/* Task detail sheet */}
