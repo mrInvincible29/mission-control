@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { Component, type ReactNode, useState, useEffect, useCallback, useRef, Suspense } from "react";
+import { Component, type ReactNode, useState, useEffect, useCallback, useRef, Suspense, useMemo } from "react";
 import { useSearchParams, useRouter } from "next/navigation";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SetupGuide } from "@/components/SetupGuide";
@@ -186,6 +186,60 @@ const ServicesView = dynamic(
   { ssr: false, loading: () => <ServicesSkeleton /> }
 );
 
+/** Navigation HUD — brief floating pill when switching via keyboard */
+const VIEW_LABELS: Record<string, string> = {
+  feed: "Feed", analytics: "Analytics", agents: "Agents",
+  calendar: "Calendar", runs: "Run History",
+  board: "Kanban",
+  health: "Health", logs: "Logs", services: "Services",
+};
+
+const TAB_LABELS: Record<string, string> = {
+  activity: "Activity", schedule: "Schedule", tasks: "Tasks", system: "System",
+};
+
+function NavigationHUD() {
+  const [hud, setHud] = useState<{ tab: string; view: string } | null>(null);
+  const timeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (!detail?.tab) return;
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+      setHud({ tab: detail.tab, view: detail.view || "" });
+      timeoutRef.current = setTimeout(() => setHud(null), 1200);
+    };
+    window.addEventListener("nav-hud", handler);
+    return () => {
+      window.removeEventListener("nav-hud", handler);
+      if (timeoutRef.current) clearTimeout(timeoutRef.current);
+    };
+  }, []);
+
+  if (!hud) return null;
+
+  const tabLabel = TAB_LABELS[hud.tab] || hud.tab;
+  const viewLabel = hud.view ? VIEW_LABELS[hud.view] || hud.view : "";
+
+  return (
+    <div
+      className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 pointer-events-none animate-in fade-in slide-in-from-bottom-2 duration-150"
+      data-testid="nav-hud"
+    >
+      <div className="inline-flex items-center gap-1.5 rounded-full border border-border/60 bg-background/95 backdrop-blur-md shadow-lg px-4 py-2 text-sm font-medium">
+        <span className="text-primary">{tabLabel}</span>
+        {viewLabel && (
+          <>
+            <span className="text-muted-foreground/40">&rsaquo;</span>
+            <span className="text-foreground/80">{viewLabel}</span>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /** Notification dot for tabs — shows colored dot or count badge */
 function TabDot({ color }: { color: "red" | "amber" | "emerald" }) {
   const colors = {
@@ -273,11 +327,12 @@ function DashboardContent() {
 
       // Tab switching: 1-4
       if (!e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
-        if (e.key === "1") handleTabChange("activity");
-        else if (e.key === "2") handleTabChange("schedule");
-        else if (e.key === "3") handleTabChange("tasks");
-        else if (e.key === "4") handleTabChange("system");
-        else if (e.key === "r" || e.key === "R") {
+        const tabMap: Record<string, TabValue> = { "1": "activity", "2": "schedule", "3": "tasks", "4": "system" };
+        const tab = tabMap[e.key];
+        if (tab) {
+          handleTabChange(tab);
+          window.dispatchEvent(new CustomEvent("nav-hud", { detail: { tab, view: VALID_VIEWS[tab][0] } }));
+        } else if (e.key === "r" || e.key === "R") {
           e.preventDefault();
           window.dispatchEvent(new CustomEvent("refresh-view"));
         }
@@ -288,6 +343,7 @@ function DashboardContent() {
         const idx = parseInt(e.key) - 1;
         if (idx >= 0 && idx < views.length) {
           handleViewChange(views[idx]);
+          window.dispatchEvent(new CustomEvent("nav-hud", { detail: { tab: activeTab, view: views[idx] } }));
         }
       }
     };
@@ -424,6 +480,7 @@ export default function Home() {
       <KeyboardShortcuts />
       <DynamicFavicon />
       <TabReturnNotifier />
+      <NavigationHUD />
       <main className="min-h-screen bg-gradient-to-b from-background to-background/95">
         <div className="container mx-auto px-4 py-6">
           <header className="mb-8">
