@@ -931,10 +931,12 @@ test("keyboard shortcut help shows all sections", async ({ page }) => {
   await page.waitForTimeout(1000);
   await pressQuestionMark(page);
   await expect(page.getByText("Keyboard Shortcuts")).toBeVisible({ timeout: 5000 });
-  // Check for section headings
+  // Check for section headings (global groups + view-specific)
   await expect(page.getByText("Navigation").last()).toBeVisible();
-  await expect(page.getByText("Sub-views").last()).toBeVisible();
   await expect(page.getByText("Actions").last()).toBeVisible();
+  // Context-aware view shortcuts section should be present for Activity > Feed
+  const viewShortcuts = page.getByTestId("view-shortcuts");
+  await expect(viewShortcuts).toBeVisible();
 });
 
 test("keyboard shortcut help closes on backdrop click", async ({ page }) => {
