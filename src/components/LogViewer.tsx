@@ -28,6 +28,10 @@ import {
   Braces,
   Layers,
   XCircle,
+  Download,
+  AlertTriangle,
+  Activity,
+  Zap,
 } from "lucide-react";
 import { useToast } from "@/components/Toast";
 
@@ -68,7 +72,6 @@ function getLevelStyle(level: string) {
 
 /** Try to detect and extract JSON from a log message */
 function extractJson(message: string): { before: string; json: string; after: string } | null {
-  // Find first { or [ that could start JSON
   const startBrace = message.indexOf("{");
   const startBracket = message.indexOf("[");
   let start = -1;
@@ -77,16 +80,13 @@ function extractJson(message: string): { before: string; json: string; after: st
   else if (startBracket >= 0) start = startBracket;
   if (start < 0) return null;
 
-  // Try progressively shorter substrings from the end
   const sub = message.slice(start);
-  // Quick check: must have matching close
   const open = sub[0];
   const close = open === "{" ? "}" : "]";
   const lastClose = sub.lastIndexOf(close);
   if (lastClose <= 0) return null;
 
   const candidate = sub.slice(0, lastClose + 1);
-  // Minimum viable JSON object/array
   if (candidate.length < 5) return null;
 
   try {
@@ -252,6 +252,171 @@ function formatAbsoluteTime(timestamp: string): string {
   return timestamp.length > 19 ? timestamp.slice(11, 19) : timestamp.slice(-8);
 }
 
+/** Mini sparkline — renders a tiny SVG bar chart of log activity over time */
+function LogRateSparkline({ entries }: { entries: LogEntry[] }) {
+  const buckets = useMemo(() => {
+    if (entries.length === 0) return [];
+    const BUCKET_COUNT = 20;
+    const timestamps = entries
+      .map(e => new Date(e.timestamp).getTime())
+      .filter(t => !isNaN(t))
+      .sort((a, b) => a - b);
+    if (timestamps.length < 2) return [];
+
+    const min = timestamps[0];
+    const max = timestamps[timestamps.length - 1];
+    const range = max - min;
+    if (range === 0) return [{ count: timestamps.length, hasError: entries.some(e => e.level === "error") }];
+
+    const bucketSize = range / BUCKET_COUNT;
+    const result: { count: number; hasError: boolean }[] = Array.from({ length: BUCKET_COUNT }, () => ({ count: 0, hasError: false }));
+
+    entries.forEach(e => {
+      const ts = new Date(e.timestamp).getTime();
+      if (isNaN(ts)) return;
+      const idx = Math.min(BUCKET_COUNT - 1, Math.floor((ts - min) / bucketSize));
+      result[idx].count++;
+      if (e.level === "error") result[idx].hasError = true;
+    });
+
+    return result;
+  }, [entries]);
+
+  if (buckets.length === 0) return null;
+
+  const maxCount = Math.max(...buckets.map(b => b.count), 1);
+  const width = 80;
+  const height = 20;
+  const barWidth = width / buckets.length - 1;
+
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <svg width={width} height={height} className="flex-shrink-0" data-testid="log-sparkline">
+          {buckets.map((bucket, i) => {
+            const barHeight = Math.max(1, (bucket.count / maxCount) * (height - 2));
+            return (
+              <rect
+                key={i}
+                x={i * (barWidth + 1)}
+                y={height - barHeight}
+                width={barWidth}
+                height={barHeight}
+                rx={0.5}
+                className={bucket.hasError ? "fill-red-400/70" : "fill-primary/40"}
+              />
+            );
+          })}
+        </svg>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" className="text-xs">
+        Log activity over time — red bars contain errors
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** Summary strip — glanceable metrics for the current log view */
+function SummaryStrip({
+  entries,
+  stats,
+  logRate,
+  timeSpan,
+}: {
+  entries: LogEntry[];
+  stats: Record<string, number>;
+  logRate: string;
+  timeSpan: string;
+}) {
+  const lastError = useMemo(() => {
+    for (let i = entries.length - 1; i >= 0; i--) {
+      if (entries[i].level === "error") return entries[i].timestamp;
+    }
+    return null;
+  }, [entries]);
+
+  const items: { label: string; value: string; color?: string; icon: React.ReactNode }[] = [
+    {
+      label: "Rate",
+      value: logRate,
+      icon: <Zap className="h-3 w-3" />,
+    },
+    {
+      label: "Span",
+      value: timeSpan,
+      icon: <Clock className="h-3 w-3" />,
+    },
+    {
+      label: "Errors",
+      value: String(stats.error || 0),
+      color: (stats.error || 0) > 0 ? "text-red-400" : undefined,
+      icon: <AlertTriangle className="h-3 w-3" />,
+    },
+    {
+      label: "Warnings",
+      value: String(stats.warn || 0),
+      color: (stats.warn || 0) > 0 ? "text-amber-400" : undefined,
+      icon: <AlertTriangle className="h-3 w-3" />,
+    },
+  ];
+
+  if (lastError) {
+    items.push({
+      label: "Last error",
+      value: formatRelativeTime(lastError),
+      color: "text-red-400",
+      icon: <XCircle className="h-3 w-3" />,
+    });
+  }
+
+  return (
+    <div
+      className="flex items-center gap-3 overflow-x-auto py-2 px-3 rounded-lg bg-muted/20 border border-border/20"
+      data-testid="log-summary-strip"
+    >
+      <LogRateSparkline entries={entries} />
+      <div className="h-4 w-px bg-border/30 flex-shrink-0" />
+      {items.map(item => (
+        <div key={item.label} className="flex items-center gap-1.5 flex-shrink-0">
+          <span className={`${item.color || "text-muted-foreground/50"}`}>{item.icon}</span>
+          <span className={`text-[11px] font-medium tabular-nums ${item.color || "text-foreground/80"}`}>
+            {item.value}
+          </span>
+          <span className="text-[10px] text-muted-foreground/40">{item.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+/** Search match counter with prev/next navigation */
+function SearchMatchNav({
+  matchCount,
+  currentMatch,
+  onPrev,
+  onNext,
+}: {
+  matchCount: number;
+  currentMatch: number;
+  onPrev: () => void;
+  onNext: () => void;
+}) {
+  if (matchCount === 0) return null;
+  return (
+    <div className="flex items-center gap-0.5" data-testid="search-match-nav">
+      <span className="text-[10px] text-muted-foreground/60 tabular-nums min-w-[4ch] text-center">
+        {currentMatch >= 0 ? currentMatch + 1 : "—"}/{matchCount}
+      </span>
+      <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={onPrev}>
+        <ChevronUp className="h-3 w-3" />
+      </Button>
+      <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={onNext}>
+        <ChevronDown className="h-3 w-3" />
+      </Button>
+    </div>
+  );
+}
+
 export function LogViewer() {
   const { toast } = useToast();
   const [sources, setSources] = useState<LogSourceInfo[]>([]);
@@ -270,6 +435,7 @@ export function LogViewer() {
   const [dedup, setDedup] = useState(true);
   const [copiedLine, setCopiedLine] = useState<number | null>(null);
   const [, setTick] = useState(0);
+  const [currentSearchMatch, setCurrentSearchMatch] = useState(-1);
 
   const logContainerRef = useRef<HTMLDivElement>(null);
   const prevEntryCountRef = useRef(0);
@@ -372,6 +538,49 @@ export function LogViewer() {
     return result;
   }, [entries, filterLevel, filterText]);
 
+  // Search match indices (for navigating between matches within the filtered list)
+  const searchMatchIndices = useMemo(() => {
+    if (!filterText.trim()) return [];
+    const indices: number[] = [];
+    const lower = filterText.toLowerCase();
+    filteredEntries.forEach((entry, i) => {
+      if (entry.message.toLowerCase().includes(lower)) {
+        indices.push(i);
+      }
+    });
+    return indices;
+  }, [filteredEntries, filterText]);
+
+  // Reset search match index when filter changes
+  useEffect(() => {
+    setCurrentSearchMatch(-1);
+  }, [filterText]);
+
+  // Navigate search matches
+  const goToNextSearchMatch = useCallback(() => {
+    if (searchMatchIndices.length === 0) return;
+    const next = currentSearchMatch + 1 >= searchMatchIndices.length ? 0 : currentSearchMatch + 1;
+    setCurrentSearchMatch(next);
+    if (!logContainerRef.current) return;
+    const lines = logContainerRef.current.querySelectorAll("[data-log-line]");
+    if (lines[searchMatchIndices[next]]) {
+      lines[searchMatchIndices[next]].scrollIntoView({ behavior: "smooth", block: "center" });
+      setAutoScroll(false);
+    }
+  }, [searchMatchIndices, currentSearchMatch]);
+
+  const goToPrevSearchMatch = useCallback(() => {
+    if (searchMatchIndices.length === 0) return;
+    const prev = currentSearchMatch - 1 < 0 ? searchMatchIndices.length - 1 : currentSearchMatch - 1;
+    setCurrentSearchMatch(prev);
+    if (!logContainerRef.current) return;
+    const lines = logContainerRef.current.querySelectorAll("[data-log-line]");
+    if (lines[searchMatchIndices[prev]]) {
+      lines[searchMatchIndices[prev]].scrollIntoView({ behavior: "smooth", block: "center" });
+      setAutoScroll(false);
+    }
+  }, [searchMatchIndices, currentSearchMatch]);
+
   // Build display rows with deduplication and time gap separators
   const displayRows = useMemo((): DisplayRow[] => {
     const rows: DisplayRow[] = [];
@@ -423,6 +632,31 @@ export function LogViewer() {
     return counts;
   }, [entries]);
 
+  // Log rate (lines per minute) and time span
+  const { logRate, timeSpan } = useMemo(() => {
+    if (entries.length < 2) return { logRate: "—", timeSpan: "—" };
+    const timestamps = entries
+      .map(e => new Date(e.timestamp).getTime())
+      .filter(t => !isNaN(t))
+      .sort((a, b) => a - b);
+    if (timestamps.length < 2) return { logRate: "—", timeSpan: "—" };
+
+    const rangeMs = timestamps[timestamps.length - 1] - timestamps[0];
+    const rangeMin = rangeMs / 60000;
+    const rate = rangeMin > 0 ? entries.length / rangeMin : 0;
+
+    let spanStr = "—";
+    const rangeSec = rangeMs / 1000;
+    if (rangeSec < 120) spanStr = `${Math.round(rangeSec)}s`;
+    else if (rangeSec < 7200) spanStr = `${Math.round(rangeSec / 60)}m`;
+    else spanStr = `${(rangeSec / 3600).toFixed(1)}h`;
+
+    return {
+      logRate: rate >= 100 ? `${Math.round(rate)}/m` : rate >= 1 ? `${rate.toFixed(1)}/m` : `${(rate * 60).toFixed(1)}/h`,
+      timeSpan: spanStr,
+    };
+  }, [entries]);
+
   // Error/warning indices in filtered list for navigation
   const errorIndices = useMemo(() => {
     const indices: number[] = [];
@@ -467,11 +701,28 @@ export function LogViewer() {
     setCurrentErrorIdx(-1);
   }, [filteredEntries]);
 
-  // Keyboard shortcuts: n/N for error nav, / to focus search
+  // Keyboard shortcuts: n/N for error nav, / to focus search, Escape to clear
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      // Escape clears search when focused on search input
+      if (e.key === "Escape" && target === searchInputRef.current) {
+        e.preventDefault();
+        setFilterText("");
+        searchInputRef.current?.blur();
+        return;
+      }
+
+      if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) {
+        // Enter in search input navigates to next match
+        if (e.key === "Enter" && target === searchInputRef.current) {
+          e.preventDefault();
+          if (e.shiftKey) goToPrevSearchMatch();
+          else goToNextSearchMatch();
+        }
+        return;
+      }
 
       if (e.key === "n" && !e.metaKey && !e.ctrlKey && !e.altKey) {
         if (e.shiftKey) {
@@ -487,10 +738,16 @@ export function LogViewer() {
         e.preventDefault();
         searchInputRef.current?.focus();
       }
+
+      // Escape clears level filter
+      if (e.key === "Escape" && filterLevel) {
+        e.preventDefault();
+        setFilterLevel("");
+      }
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [goToNextError, goToPrevError]);
+  }, [goToNextError, goToPrevError, goToNextSearchMatch, goToPrevSearchMatch, filterLevel]);
 
   // Copy a log line to clipboard
   const copyLine = useCallback(async (entry: LogEntry, index: number) => {
@@ -505,6 +762,22 @@ export function LogViewer() {
     }
   }, [toast]);
 
+  // Export visible logs
+  const exportLogs = useCallback(() => {
+    const lines = filteredEntries.map(
+      e => `${e.timestamp} [${e.level.toUpperCase()}] ${e.message}`
+    );
+    const text = lines.join("\n");
+    const blob = new Blob([text], { type: "text/plain" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${selectedSource}-logs-${new Date().toISOString().slice(0, 19).replace(/:/g, "-")}.log`;
+    a.click();
+    URL.revokeObjectURL(url);
+    toast(`Exported ${filteredEntries.length} log lines`, "success");
+  }, [filteredEntries, selectedSource, toast]);
+
   // Clear all filters
   const clearAllFilters = useCallback(() => {
     setFilterText("");
@@ -515,11 +788,16 @@ export function LogViewer() {
 
   const currentSource = sources.find(s => s.id === selectedSource);
 
-  // Count errors per source for highlighting
-  const sourceErrorCounts = useMemo(() => {
-    if (!selectedSource) return {};
-    return { [selectedSource]: stats.error };
-  }, [selectedSource, stats.error]);
+  // Group sources by type for the selector
+  const groupedSources = useMemo(() => {
+    const groups: Record<string, LogSourceInfo[]> = {};
+    for (const s of sources) {
+      const type = s.type || "other";
+      if (!groups[type]) groups[type] = [];
+      groups[type].push(s);
+    }
+    return groups;
+  }, [sources]);
 
   // Deduplicated line count for footer
   const dedupedCount = useMemo(() => {
@@ -547,11 +825,39 @@ export function LogViewer() {
                   {currentSource.name}
                 </Badge>
               )}
+              {autoRefresh && (
+                <span className="flex items-center gap-1">
+                  <span className="relative flex h-2 w-2">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                    <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-500" />
+                  </span>
+                  <span className="text-[10px] text-emerald-400/70">LIVE</span>
+                </span>
+              )}
             </div>
             <div className="flex items-center gap-1.5">
               <span className="text-[10px] text-muted-foreground/60 hidden sm:inline">
                 {lastRefresh > 0 && `Updated ${Math.round((Date.now() - lastRefresh) / 1000)}s ago`}
               </span>
+
+              {/* Export button */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-7 w-7 p-0"
+                    onClick={exportLogs}
+                    disabled={filteredEntries.length === 0}
+                    data-testid="export-logs"
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                  </Button>
+                </TooltipTrigger>
+                <TooltipContent side="bottom" className="text-xs">
+                  Export visible logs as .log file
+                </TooltipContent>
+              </Tooltip>
 
               {/* Dedup toggle */}
               <Tooltip>
@@ -614,7 +920,7 @@ export function LogViewer() {
                 onClick={() => setAutoRefresh(!autoRefresh)}
               >
                 {autoRefresh ? <Pause className="h-3 w-3" /> : <Play className="h-3 w-3" />}
-                {autoRefresh ? "Live" : "Paused"}
+                <span className="hidden sm:inline">{autoRefresh ? "Pause" : "Resume"}</span>
               </Button>
               <Button
                 variant="ghost"
@@ -627,25 +933,37 @@ export function LogViewer() {
             </div>
           </div>
 
-          {/* Source selector */}
+          {/* Summary strip */}
+          {entries.length > 0 && (
+            <div className="mt-3">
+              <SummaryStrip entries={entries} stats={stats} logRate={logRate} timeSpan={timeSpan} />
+            </div>
+          )}
+
+          {/* Source selector — grouped by type */}
           <div className="flex flex-wrap gap-1.5 mt-3">
-            {sources.map(source => (
-              <Button
-                key={source.id}
-                variant={selectedSource === source.id ? "default" : "outline"}
-                size="sm"
-                className={`text-xs h-7 px-2.5 gap-1.5 ${
-                  !source.available ? "opacity-50" : ""
-                }`}
-                onClick={() => setSelectedSource(source.id)}
-                disabled={!source.available}
-              >
-                <Terminal className="h-3 w-3" />
-                {source.name}
-                {selectedSource === source.id && sourceErrorCounts[source.id] > 0 && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-red-500 flex-shrink-0" />
-                )}
-              </Button>
+            {Object.entries(groupedSources).map(([type, typeSources]) => (
+              <div key={type} className="flex items-center gap-1">
+                <span className="text-[9px] text-muted-foreground/30 uppercase tracking-wider mr-0.5 hidden sm:inline">
+                  {type === "systemd" ? "svc" : type === "systemd-user" ? "usr" : type === "file" ? "file" : type}
+                </span>
+                {typeSources.map(source => (
+                  <Button
+                    key={source.id}
+                    variant={selectedSource === source.id ? "default" : "outline"}
+                    size="sm"
+                    className={`text-xs h-7 px-2.5 gap-1.5 ${
+                      !source.available ? "opacity-50" : ""
+                    }`}
+                    onClick={() => setSelectedSource(source.id)}
+                    disabled={!source.available}
+                  >
+                    <Terminal className="h-3 w-3" />
+                    {source.name}
+                  </Button>
+                ))}
+                <div className="w-px h-4 bg-border/20 mx-0.5 hidden sm:block" />
+              </div>
             ))}
           </div>
 
@@ -754,25 +1072,36 @@ export function LogViewer() {
             </div>
           </div>
 
-          {/* Text search */}
-          <div className="relative mt-2">
-            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
-            <Input
-              ref={searchInputRef}
-              type="text"
-              placeholder="Filter log messages... (press / to focus)"
-              value={filterText}
-              onChange={(e) => setFilterText(e.target.value)}
-              className="pl-8 pr-8 h-8 text-xs font-mono"
-            />
+          {/* Text search with match navigation */}
+          <div className="relative mt-2 flex items-center gap-2">
+            <div className="relative flex-1">
+              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+              <Input
+                ref={searchInputRef}
+                type="text"
+                placeholder="Filter log messages... (/ to focus, Esc to clear)"
+                value={filterText}
+                onChange={(e) => setFilterText(e.target.value)}
+                className="pl-8 pr-8 h-8 text-xs font-mono"
+                data-testid="log-search-input"
+              />
+              {filterText && (
+                <button
+                  onClick={() => setFilterText("")}
+                  className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                  aria-label="Clear filter"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              )}
+            </div>
             {filterText && (
-              <button
-                onClick={() => setFilterText("")}
-                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                aria-label="Clear filter"
-              >
-                <X className="h-3.5 w-3.5" />
-              </button>
+              <SearchMatchNav
+                matchCount={searchMatchIndices.length}
+                currentMatch={currentSearchMatch}
+                onPrev={goToPrevSearchMatch}
+                onNext={goToNextSearchMatch}
+              />
             )}
           </div>
         </CardHeader>
@@ -876,6 +1205,7 @@ export function LogViewer() {
                 const i = row.index;
                 const style = getLevelStyle(entry.level);
                 const isHighlighted = currentErrorIdx >= 0 && errorIndices[currentErrorIdx] === i;
+                const isSearchHighlighted = currentSearchMatch >= 0 && searchMatchIndices[currentSearchMatch] === i;
                 const isCopied = copiedLine === i;
                 const isGroup = row.kind === "group";
                 const jsonParts = extractJson(entry.message);
@@ -886,7 +1216,9 @@ export function LogViewer() {
                     data-log-line
                     className={`flex gap-2 py-px group transition-colors ${style.text} ${
                       entry.level === "error" ? "bg-red-500/5" : ""
-                    } ${isHighlighted ? "bg-yellow-500/10 ring-1 ring-yellow-500/20 rounded-sm" : "hover:bg-white/[0.03]"}`}
+                    } ${isHighlighted ? "bg-yellow-500/10 ring-1 ring-yellow-500/20 rounded-sm" : ""} ${
+                      isSearchHighlighted && !isHighlighted ? "bg-blue-500/10 ring-1 ring-blue-500/20 rounded-sm" : ""
+                    } ${!isHighlighted && !isSearchHighlighted ? "hover:bg-white/[0.03]" : ""}`}
                   >
                     {/* Line number */}
                     <span className="text-muted-foreground/20 flex-shrink-0 select-none w-[3ch] text-right tabular-nums">
@@ -983,7 +1315,7 @@ export function LogViewer() {
             </span>
             <div className="flex items-center gap-3">
               <span className="text-[10px] text-muted-foreground/30 hidden sm:inline">
-                <kbd className="font-mono">/</kbd> search · <kbd className="font-mono">n</kbd>/<kbd className="font-mono">N</kbd> errors
+                <kbd className="font-mono">/</kbd> search · <kbd className="font-mono">n</kbd>/<kbd className="font-mono">N</kbd> errors · <kbd className="font-mono">Esc</kbd> clear
               </span>
               {currentSource && (
                 <span className="text-[10px] text-muted-foreground/60 hidden sm:inline">
