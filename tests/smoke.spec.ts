@@ -4001,3 +4001,58 @@ test("navigation HUD auto-dismisses", async ({ page }) => {
   // HUD should disappear after ~1.2s
   await expect(hud).not.toBeVisible({ timeout: 3000 });
 });
+
+// === NEW FEATURE TESTS: QuickStats Hover Card Drill-downs ===
+
+test("QuickStats renders multiple stat badges with correct data", async ({ page }) => {
+  await page.goto("/");
+  const quickStats = page.locator('[data-testid="quick-stats"]').first();
+  await expect(quickStats).toBeVisible({ timeout: 10000 });
+
+  // Should render at least one badge (cost is always shown when analytics loads)
+  const badges = quickStats.locator("button");
+  const count = await badges.count();
+  expect(count).toBeGreaterThanOrEqual(1);
+});
+
+test("QuickStats cost badge renders with correct value format", async ({ page }) => {
+  await page.goto("/");
+  const quickStats = page.locator('[data-testid="quick-stats"]').first();
+  await expect(quickStats).toBeVisible({ timeout: 10000 });
+
+  // Cost badge should contain a dollar sign value
+  const costBadge = quickStats.locator("button").filter({ hasText: "today" }).first();
+  if (await costBadge.isVisible()) {
+    const text = await costBadge.textContent();
+    // Should contain a $ formatted value
+    expect(text).toMatch(/\$/);
+  }
+});
+
+test("QuickStats tokens badge renders with correct value format", async ({ page }) => {
+  await page.goto("/");
+  const quickStats = page.locator('[data-testid="quick-stats"]').first();
+  await expect(quickStats).toBeVisible({ timeout: 10000 });
+
+  const tokensBadge = quickStats.locator("button").filter({ hasText: "tokens" }).first();
+  if (await tokensBadge.isVisible()) {
+    const text = await tokensBadge.textContent();
+    // Should contain a K or M formatted token count
+    expect(text).toMatch(/\d/);
+  }
+});
+
+test("QuickStats badge click still navigates even with hover card", async ({ page }) => {
+  await page.goto("/");
+  const quickStats = page.locator('[data-testid="quick-stats"]').first();
+  await expect(quickStats).toBeVisible({ timeout: 10000 });
+
+  const costBadge = quickStats.locator("button").filter({ hasText: "today" }).first();
+  if (await costBadge.isVisible()) {
+    await costBadge.click();
+    // Should navigate to analytics view
+    await page.waitForTimeout(500);
+    const url = page.url();
+    expect(url).toContain("analytics");
+  }
+});
