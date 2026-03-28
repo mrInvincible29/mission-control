@@ -792,6 +792,248 @@ function InsightsStrip({
   );
 }
 
+// Cumulative cost area chart with projected month-end line
+function CumulativeCostChart({
+  daily,
+  days,
+}: {
+  daily: Array<{ day: string; cost: number }>;
+  days: number;
+}) {
+  const chartData = useMemo(() => {
+    if (daily.length === 0) return { points: [], projectedPoints: [], maxVal: 1, totalSoFar: 0, projectedMonthEnd: 0, daysInMonth: 30, dayOfMonth: 1, burnRate: 0 };
+
+    // Sort chronologically
+    const sorted = [...daily].sort((a, b) => a.day.localeCompare(b.day));
+
+    // Build cumulative series
+    let cumulative = 0;
+    const points = sorted.map((d) => {
+      cumulative += d.cost;
+      return { day: d.day, cumCost: cumulative, dailyCost: d.cost };
+    });
+
+    const totalSoFar = cumulative;
+
+    // Calculate burn rate and projection
+    const activeDays = sorted.filter(d => d.cost > 0).length;
+    const burnRate = activeDays > 0 ? totalSoFar / activeDays : 0;
+
+    // Project to end of current month
+    const today = new Date();
+    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+    const dayOfMonth = today.getDate();
+    const remainingDays = daysInMonth - dayOfMonth;
+
+    // Use the ratio of active days to total days to estimate future active days
+    const activeRatio = days > 0 ? activeDays / days : 0;
+    const projectedRemainingActive = remainingDays * activeRatio;
+    const projectedMonthEnd = totalSoFar + burnRate * projectedRemainingActive;
+
+    // Build projected extension points (dashed line from last real point to month end)
+    const projectedPoints: Array<{ day: string; cumCost: number }> = [];
+    if (points.length > 0 && remainingDays > 0) {
+      const lastPoint = points[points.length - 1];
+      projectedPoints.push({ day: lastPoint.day, cumCost: lastPoint.cumCost });
+
+      // Add 3-4 intermediate projected points
+      const projSteps = Math.min(remainingDays, 4);
+      for (let i = 1; i <= projSteps; i++) {
+        const frac = i / projSteps;
+        const projDate = new Date(today);
+        projDate.setDate(dayOfMonth + Math.round(remainingDays * frac));
+        const projDay = projDate.toISOString().split("T")[0];
+        const projCost = lastPoint.cumCost + (projectedMonthEnd - lastPoint.cumCost) * frac;
+        projectedPoints.push({ day: projDay, cumCost: projCost });
+      }
+    }
+
+    const maxVal = Math.max(totalSoFar, projectedMonthEnd, 0.01);
+
+    return { points, projectedPoints, maxVal, totalSoFar, projectedMonthEnd, daysInMonth, dayOfMonth, burnRate };
+  }, [daily, days]);
+
+  if (chartData.points.length < 2) {
+    return (
+      <div className="w-full flex items-center justify-center text-xs text-muted-foreground py-6">
+        Not enough data for cumulative chart
+      </div>
+    );
+  }
+
+  const { points, projectedPoints, maxVal } = chartData;
+  const allPoints = [...points, ...projectedPoints];
+  const totalCount = allPoints.length;
+  const realCount = points.length;
+
+  // SVG dimensions
+  const vbWidth = 700;
+  const vbHeight = 140;
+  const leftPad = 60;
+  const rightPad = 20;
+  const topPad = 10;
+  const bottomPad = 24;
+  const chartW = vbWidth - leftPad - rightPad;
+  const chartH = vbHeight - topPad - bottomPad;
+
+  const toX = (i: number) => leftPad + (i / Math.max(totalCount - 1, 1)) * chartW;
+  const toY = (val: number) => topPad + chartH - (val / maxVal) * chartH;
+
+  // Build real area path
+  const realPathPoints = points.map((p, i) => `${toX(i)},${toY(p.cumCost)}`);
+  const realLine = `M${realPathPoints.join(" L")}`;
+  const realArea = `${realLine} L${toX(realCount - 1)},${toY(0)} L${toX(0)},${toY(0)} Z`;
+
+  // Build projected dashed line
+  const projLine = projectedPoints.length > 0
+    ? `M${projectedPoints.map((p, i) => `${toX(realCount - 1 + i)},${toY(p.cumCost)}`).join(" L")}`
+    : "";
+
+  // Projected area (lighter)
+  const projArea = projectedPoints.length > 1
+    ? `M${toX(realCount - 1)},${toY(points[realCount - 1].cumCost)} ${projectedPoints.slice(1).map((p, i) => `L${toX(realCount + i)},${toY(p.cumCost)}`).join(" ")} L${toX(totalCount - 1)},${toY(0)} L${toX(realCount - 1)},${toY(0)} Z`
+    : "";
+
+  // Y-axis gridlines
+  const ySteps = [0.25, 0.5, 0.75, 1];
+
+  return (
+    <TooltipProvider>
+      <div className="w-full">
+        {/* Chart header with projection summary */}
+        <div className="flex items-center justify-between mb-2">
+          <div className="flex items-center gap-3 text-[10px] text-muted-foreground">
+            <span className="flex items-center gap-1">
+              <span className="inline-block w-3 h-[2px] bg-emerald-500 rounded" />
+              Actual
+            </span>
+            {projectedPoints.length > 0 && (
+              <span className="flex items-center gap-1">
+                <span className="inline-block w-3 h-[2px] border-t border-dashed border-emerald-400/60" />
+                Projected
+              </span>
+            )}
+          </div>
+          <div className="flex items-center gap-2 text-[10px]">
+            {chartData.projectedMonthEnd > 0 && (
+              <span className="text-muted-foreground">
+                Month est:{" "}
+                <span className={`font-mono font-medium ${
+                  chartData.projectedMonthEnd > chartData.totalSoFar * 3 ? "text-amber-400" : "text-emerald-400"
+                }`}>
+                  {formatCost(chartData.projectedMonthEnd)}
+                </span>
+              </span>
+            )}
+            {chartData.burnRate > 0 && (
+              <span className="text-muted-foreground/60">
+                ({formatCost(chartData.burnRate)}/active day)
+              </span>
+            )}
+          </div>
+        </div>
+
+        <svg viewBox={`0 0 ${vbWidth} ${vbHeight}`} className="w-full" preserveAspectRatio="xMidYMid meet">
+          {/* Y-axis gridlines and labels */}
+          {ySteps.map((frac) => {
+            const y = toY(maxVal * frac);
+            return (
+              <g key={frac}>
+                <line x1={leftPad} y1={y} x2={vbWidth - rightPad} y2={y} stroke="currentColor" strokeOpacity={0.06} strokeWidth={0.5} />
+                <text x={leftPad - 6} y={y + 3} textAnchor="end" fill="currentColor" opacity={0.3} fontSize={9} fontFamily="monospace">
+                  {formatCost(maxVal * frac)}
+                </text>
+              </g>
+            );
+          })}
+
+          {/* Projected area (lighter) */}
+          {projArea && (
+            <path d={projArea} fill="rgb(16 185 129)" fillOpacity={0.04} />
+          )}
+
+          {/* Real area */}
+          <path d={realArea} fill="rgb(16 185 129)" fillOpacity={0.12} />
+
+          {/* Real line */}
+          <path d={realLine} fill="none" stroke="rgb(16 185 129)" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+
+          {/* Projected dashed line */}
+          {projLine && (
+            <path d={projLine} fill="none" stroke="rgb(16 185 129)" strokeWidth={1.5} strokeDasharray="6 4" strokeOpacity={0.5} strokeLinecap="round" />
+          )}
+
+          {/* Data point dots on real line */}
+          {points.map((p, i) => (
+            <Tooltip key={i}>
+              <TooltipTrigger asChild>
+                <circle
+                  cx={toX(i)}
+                  cy={toY(p.cumCost)}
+                  r={points.length > 30 ? 2 : 3}
+                  fill="rgb(16 185 129)"
+                  className="cursor-pointer hover:r-4 transition-all"
+                  opacity={0.7}
+                />
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                <div className="font-medium">{formatShortDay(p.day)}</div>
+                <div>Daily: {formatCost(p.dailyCost)}</div>
+                <div className="text-emerald-400">Cumulative: {formatCost(p.cumCost)}</div>
+              </TooltipContent>
+            </Tooltip>
+          ))}
+
+          {/* Projected end marker */}
+          {projectedPoints.length > 0 && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <circle
+                  cx={toX(totalCount - 1)}
+                  cy={toY(projectedPoints[projectedPoints.length - 1].cumCost)}
+                  r={4}
+                  fill="none"
+                  stroke="rgb(16 185 129)"
+                  strokeWidth={1.5}
+                  strokeDasharray="3 2"
+                  className="cursor-pointer"
+                  opacity={0.5}
+                />
+              </TooltipTrigger>
+              <TooltipContent side="top" className="text-xs">
+                <div className="font-medium">Projected Month End</div>
+                <div className="text-emerald-400">{formatCost(chartData.projectedMonthEnd)}</div>
+                <div className="text-muted-foreground">Based on {formatCost(chartData.burnRate)}/active day</div>
+              </TooltipContent>
+            </Tooltip>
+          )}
+
+          {/* X-axis labels */}
+          {points.map((p, i) => {
+            const maxLabels = Math.max(4, Math.floor(chartW / 80));
+            const step = Math.ceil(points.length / maxLabels);
+            if (i !== 0 && i !== points.length - 1 && i % step !== 0) return null;
+            return (
+              <text
+                key={`xl-${i}`}
+                x={toX(i)}
+                y={vbHeight - 2}
+                textAnchor="middle"
+                fill="currentColor"
+                opacity={0.35}
+                fontSize={9}
+                fontFamily="monospace"
+              >
+                {formatShortDay(p.day)}
+              </text>
+            );
+          })}
+        </svg>
+      </div>
+    </TooltipProvider>
+  );
+}
+
 const DAILY_BREAKDOWN_COLLAPSE_THRESHOLD = 7;
 
 export function AnalyticsView() {
@@ -879,6 +1121,27 @@ export function AnalyticsView() {
   const costPer1K = useMemo(() => {
     if (!analytics || analytics.totalTokens === 0) return 0;
     return (analytics.totalCost / analytics.totalTokens) * 1000;
+  }, [analytics]);
+
+  // Monthly cost projection
+  const monthProjection = useMemo(() => {
+    if (!analytics || analytics.daily.length === 0) return null;
+    const activeDays = analytics.daily.filter(d => d.cost > 0).length;
+    if (activeDays === 0) return null;
+    const burnRate = analytics.totalCost / activeDays;
+    const activeRatio = analytics.days > 0 ? activeDays / analytics.days : 0;
+    const today = new Date();
+    const daysInMonth = new Date(today.getFullYear(), today.getMonth() + 1, 0).getDate();
+    const dayOfMonth = today.getDate();
+    const remainingDays = daysInMonth - dayOfMonth;
+    const projected = analytics.totalCost + burnRate * remainingDays * activeRatio;
+    // Compare to previous period (simple: double the first half as "last period")
+    const mid = Math.floor(analytics.daily.length / 2);
+    const firstHalfCost = analytics.daily.slice(0, mid).reduce((s, d) => s + d.cost, 0);
+    const secondHalfCost = analytics.daily.slice(mid).reduce((s, d) => s + d.cost, 0);
+    const velocity = firstHalfCost > 0 ? ((secondHalfCost - firstHalfCost) / firstHalfCost) * 100 : 0;
+    const velocityDir = velocity > 10 ? "up" as const : velocity < -10 ? "down" as const : "flat" as const;
+    return { projected, burnRate, daysInMonth, dayOfMonth, velocity, velocityDir };
   }, [analytics]);
 
   // Active days count (days with at least 1 activity)
@@ -1026,11 +1289,14 @@ export function AnalyticsView() {
             sparklineColor="rgb(59 130 246)"
           />
           <StatCard
-            label="Efficiency"
-            value={costPer1K > 0 ? formatCost(costPer1K) : "\u2014"}
+            label="Month Projection"
+            value={monthProjection ? formatCost(monthProjection.projected) : "\u2014"}
             icon={Gauge}
             color="bg-cyan-500/15 text-cyan-400"
-            subtitle="cost per 1K tokens"
+            trend={monthProjection?.velocityDir}
+            trendPercent={monthProjection ? Math.abs(monthProjection.velocity) : undefined}
+            trendSemantic="negative"
+            subtitle={monthProjection ? `${formatCost(monthProjection.burnRate)}/active day · ${costPer1K > 0 ? formatCost(costPer1K) + "/1K tok" : ""}` : "no data"}
           />
           <StatCard
             label="Activities"
@@ -1057,6 +1323,19 @@ export function AnalyticsView() {
 
         {/* Model Cost Bar — stacked horizontal bar showing cost proportions */}
         <ModelCostBar models={analytics.models} totalCost={analytics.totalCost} />
+
+        {/* Cumulative Cost — running total with month-end projection */}
+        {analytics.daily.length >= 2 && analytics.totalCost > 0 && (
+          <div className="rounded-xl border border-border/50 bg-card/30 p-4" data-testid="cumulative-cost-chart">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium">Cumulative Cost</h3>
+              <Badge variant="outline" className="text-[10px] bg-emerald-500/10 text-emerald-400 border-emerald-500/20">
+                {formatCost(analytics.totalCost)} spent
+              </Badge>
+            </div>
+            <CumulativeCostChart daily={analytics.daily} days={days} />
+          </div>
+        )}
 
         {/* Contribution Calendar — GitHub-style daily activity grid */}
         {days >= 14 && (
