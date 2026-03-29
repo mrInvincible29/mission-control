@@ -562,6 +562,7 @@ export function SystemHealth() {
   const [diskHistory, setDiskHistory] = useState<number[]>([]);
   const [, setTick] = useState(0);
   const [networkRates, setNetworkRates] = useState<NetworkRate[]>([]);
+  const [networkRateHistory, setNetworkRateHistory] = useState<Record<string, { rx: number[]; tx: number[] }>>({});
   const prevNetworkRef = useRef<NetworkSnapshot | null>(null);
 
   const fetchHealth = useCallback(async () => {
@@ -606,6 +607,18 @@ export function SystemHealth() {
           }
         }
         setNetworkRates(rates);
+        // Track rate history (last 20 snapshots per interface)
+        setNetworkRateHistory(prev => {
+          const next = { ...prev };
+          for (const rate of rates) {
+            const existing = next[rate.interface] || { rx: [], tx: [] };
+            next[rate.interface] = {
+              rx: [...existing.rx.slice(-19), rate.rxRate],
+              tx: [...existing.tx.slice(-19), rate.txRate],
+            };
+          }
+          return next;
+        });
       }
       prevNetworkRef.current = currentSnapshot;
     } catch (err: unknown) {
@@ -995,35 +1008,44 @@ export function SystemHealth() {
             }
           >
             {data.docker.length === 0 ? (
-              <p className="text-xs text-muted-foreground">No running containers</p>
+              <div className="flex flex-col items-center py-4 text-center" data-testid="docker-empty">
+                <Container className="h-8 w-8 text-muted-foreground/20 mb-2" />
+                <p className="text-xs text-muted-foreground">No running containers</p>
+              </div>
             ) : (
-              <div className="space-y-2">
-                {data.docker.map((c) => (
-                  <div key={c.id} className="flex items-center justify-between text-xs rounded-lg bg-muted/20 px-2.5 py-2">
-                    <div className="flex items-center gap-2 min-w-0">
-                      <div className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                        c.state === "running" ? "bg-emerald-500" : "bg-red-500"
-                      }`} />
-                      <span className="font-medium truncate">{c.name}</span>
+              <div className="space-y-2" data-testid="docker-containers">
+                {data.docker.map((c) => {
+                  const imageName = c.image.split(":")[0].split("/").pop() || c.image;
+                  const imageTag = c.image.includes(":") ? c.image.split(":").pop() : "latest";
+                  const ports = c.ports ? c.ports.split(",").map(p => p.trim()).filter(Boolean) : [];
+                  const isRunning = c.state === "running";
+
+                  return (
+                    <div key={c.id} className="rounded-lg bg-muted/20 p-2.5 space-y-1.5" data-testid="docker-card">
+                      <div className="flex items-center gap-2">
+                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${
+                          isRunning ? "bg-emerald-500" : "bg-red-500"
+                        }`} />
+                        <span className="text-xs font-medium truncate flex-1">{c.name}</span>
+                        <span className="text-[10px] text-muted-foreground/50 font-mono">{c.uptime || c.status}</span>
+                      </div>
+                      <div className="flex items-center gap-1.5 flex-wrap pl-4">
+                        <span className="text-[10px] px-1.5 py-0 rounded bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
+                          {imageName}
+                          <span className="text-cyan-400/50 ml-0.5">:{imageTag}</span>
+                        </span>
+                        {ports.slice(0, 3).map((port, i) => (
+                          <span key={i} className="text-[9px] px-1 py-0 rounded bg-muted/50 text-muted-foreground font-mono">
+                            {port.replace("0.0.0.0:", "").replace(":::", "")}
+                          </span>
+                        ))}
+                        {ports.length > 3 && (
+                          <span className="text-[9px] text-muted-foreground/50">+{ports.length - 3}</span>
+                        )}
+                      </div>
                     </div>
-                    <div className="flex items-center gap-2 flex-shrink-0 ml-2">
-                      <TooltipProvider>
-                        <Tooltip>
-                          <TooltipTrigger asChild>
-                            <span className="text-[10px] text-muted-foreground/60 truncate max-w-[100px]">
-                              {c.image.split(":")[0].split("/").pop()}
-                            </span>
-                          </TooltipTrigger>
-                          <TooltipContent side="top" className="text-xs">
-                            <div>Image: {c.image}</div>
-                            <div>Status: {c.status}</div>
-                            {c.ports && <div>Ports: {c.ports}</div>}
-                          </TooltipContent>
-                        </Tooltip>
-                      </TooltipProvider>
-                    </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </CollapsibleSection>
@@ -1115,36 +1137,79 @@ export function SystemHealth() {
               ) : undefined
             }
           >
-            <div className="overflow-x-auto">
-              <table className="w-full text-xs">
-                <thead>
-                  <tr className="text-muted-foreground border-b border-border/30">
-                    <th className="text-left py-1.5 pr-3 font-medium">Interface</th>
-                    <th className="text-right py-1.5 px-2 font-medium">RX Rate</th>
-                    <th className="text-right py-1.5 px-2 font-medium">TX Rate</th>
-                    <th className="text-right py-1.5 px-2 font-medium">RX Total</th>
-                    <th className="text-right py-1.5 pl-2 font-medium">TX Total</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {data.network.map((n) => {
-                    const rate = networkRates.find((r) => r.interface === n.interface);
-                    return (
-                      <tr key={n.interface} className="border-b border-border/10 hover:bg-muted/20">
-                        <td className="py-1.5 pr-3 font-mono text-muted-foreground">{n.interface}</td>
-                        <td className="py-1.5 px-2 text-right font-mono text-sky-400">
+            <div className="space-y-3" data-testid="network-interfaces">
+              {data.network.map((n) => {
+                const rate = networkRates.find((r) => r.interface === n.interface);
+                const history = networkRateHistory[n.interface];
+                const maxRate = Math.max(
+                  rate?.rxRate || 0,
+                  rate?.txRate || 0,
+                  ...(history?.rx || []),
+                  ...(history?.tx || []),
+                  1024 // min 1 KB/s for scale
+                );
+
+                return (
+                  <div key={n.interface} className="rounded-lg bg-muted/20 p-3 space-y-2">
+                    <div className="flex items-center justify-between">
+                      <span className="text-xs font-mono font-medium text-muted-foreground">{n.interface}</span>
+                      <div className="flex items-center gap-3 text-[10px] text-muted-foreground/60">
+                        <span>↓ {formatBytes(n.rxBytes)}</span>
+                        <span>↑ {formatBytes(n.txBytes)}</span>
+                      </div>
+                    </div>
+
+                    {/* RX bar + rate */}
+                    <div className="space-y-1">
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-sky-400 w-6 font-medium">RX</span>
+                        <div className="flex-1 h-2 rounded-full bg-muted/40 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-sky-500/70 transition-all duration-500"
+                            style={{ width: `${Math.max((rate?.rxRate || 0) / maxRate * 100, rate?.rxRate ? 2 : 0)}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-mono text-sky-400 w-20 text-right">
                           {rate ? formatRate(rate.rxRate) : "—"}
-                        </td>
-                        <td className="py-1.5 px-2 text-right font-mono text-amber-400">
+                        </span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-[10px] text-amber-400 w-6 font-medium">TX</span>
+                        <div className="flex-1 h-2 rounded-full bg-muted/40 overflow-hidden">
+                          <div
+                            className="h-full rounded-full bg-amber-500/70 transition-all duration-500"
+                            style={{ width: `${Math.max((rate?.txRate || 0) / maxRate * 100, rate?.txRate ? 2 : 0)}%` }}
+                          />
+                        </div>
+                        <span className="text-[10px] font-mono text-amber-400 w-20 text-right">
                           {rate ? formatRate(rate.txRate) : "—"}
-                        </td>
-                        <td className="py-1.5 px-2 text-right text-muted-foreground/60">{formatBytes(n.rxBytes)}</td>
-                        <td className="py-1.5 pl-2 text-right text-muted-foreground/60">{formatBytes(n.txBytes)}</td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Throughput sparklines — show once we have ≥3 data points */}
+                    {history && history.rx.length >= 3 && (
+                      <div className="pt-1 border-t border-border/20" data-testid="network-sparkline">
+                        <div className="flex items-center gap-2 mb-1">
+                          <span className="text-[9px] text-muted-foreground/40">Throughput history</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <div className="flex-1">
+                            <Sparkline data={history.rx} height={20} color="rgb(56 189 248)" />
+                          </div>
+                          <div className="flex-1">
+                            <Sparkline data={history.tx} height={20} color="rgb(251 191 36)" />
+                          </div>
+                        </div>
+                        <div className="flex justify-between text-[8px] text-muted-foreground/30 mt-0.5">
+                          <span>↓ RX</span>
+                          <span>↑ TX</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </CollapsibleSection>
         )}
@@ -1211,6 +1276,54 @@ interface ProcessGroup {
   processes: Array<{ pid: number; user: string; cpu: number; mem: number; command: string }>;
 }
 
+/** Memory distribution bar — horizontal stacked bar showing memory usage by process group */
+function MemoryDistributionBar({ groups }: { groups: ProcessGroup[] }) {
+  const totalMem = groups.reduce((s, g) => s + g.totalMem, 0);
+  if (totalMem <= 0) return null;
+
+  // Sort by memory for the bar
+  const sorted = [...groups].sort((a, b) => b.totalMem - a.totalMem);
+
+  return (
+    <div className="mb-3" data-testid="memory-distribution">
+      <div className="flex items-center justify-between text-[10px] text-muted-foreground/60 mb-1">
+        <span>Memory Distribution</span>
+        <span className="font-mono">{totalMem.toFixed(1)}% total</span>
+      </div>
+      <div className="flex h-3 rounded-full overflow-hidden bg-muted/30 gap-px">
+        {sorted.map((g) => {
+          const pct = (g.totalMem / totalMem) * 100;
+          if (pct < 1) return null;
+          return (
+            <TooltipProvider key={g.name}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className={`${getProcessColor(g.name)} opacity-70 hover:opacity-100 transition-opacity cursor-default first:rounded-l-full last:rounded-r-full`}
+                    style={{ width: `${pct}%`, minWidth: "3px" }}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  <div className="font-medium">{g.name}</div>
+                  <div>{g.totalMem.toFixed(1)}% memory ({g.count} process{g.count !== 1 ? "es" : ""})</div>
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          );
+        })}
+      </div>
+      <div className="flex items-center gap-2 mt-1 flex-wrap">
+        {sorted.filter(g => (g.totalMem / totalMem) * 100 >= 5).map((g) => (
+          <span key={g.name} className="flex items-center gap-1 text-[9px] text-muted-foreground/60">
+            <span className={`inline-block w-1.5 h-1.5 rounded-full ${getProcessColor(g.name)}`} />
+            {g.name} {g.totalMem.toFixed(1)}%
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /** Grouped process view — aggregates by base command name with visual CPU/MEM bars */
 function ProcessGroupView({ processes }: { processes: Array<{ pid: number; user: string; cpu: number; mem: number; command: string }> }) {
   const [expandedGroup, setExpandedGroup] = useState<string | null>(null);
@@ -1242,6 +1355,8 @@ function ProcessGroupView({ processes }: { processes: Array<{ pid: number; user:
 
   return (
     <div className="space-y-1.5" data-testid="process-groups">
+      {/* Memory distribution bar */}
+      <MemoryDistributionBar groups={groups} />
       {groups.map((group) => (
         <div key={group.name}>
           <button
