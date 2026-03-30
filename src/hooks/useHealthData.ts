@@ -10,6 +10,7 @@ export interface HealthData {
   uptime: number;
   diskPercent: number;
   hostname: string;
+  topProcess: string | null; // Name of top CPU process when under load
   raw: any; // Full API response for SystemHealth component
 }
 
@@ -27,6 +28,10 @@ const fetcher = async (): Promise<HealthData> => {
   const res = await fetch("/api/health");
   if (!res.ok) throw new Error("Health fetch failed");
   const data = await res.json();
+  // Extract top CPU process name (first process from topProcesses array)
+  const topProc = data.topProcesses?.[0];
+  const topProcessName = topProc?.command || topProc?.name || null;
+
   return {
     cpu: Math.round(100 - (data.cpu?.idle ?? 100)),
     memPercent: Math.round(data.memory?.usedPercent ?? 0),
@@ -34,6 +39,7 @@ const fetcher = async (): Promise<HealthData> => {
     uptime: data.uptime ?? 0,
     diskPercent: Math.round(data.disks?.[0]?.usedPercent ?? 0),
     hostname: data.hostname ?? "",
+    topProcess: topProcessName,
     raw: data,
   };
 };

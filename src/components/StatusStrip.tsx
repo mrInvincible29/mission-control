@@ -195,6 +195,19 @@ export function StatusStrip({ compact = false }: { compact?: boolean }) {
               </span>
             </>
           )}
+          {/* Top process indicator when under load */}
+          {data.cpu >= 70 && data.topProcess && (
+            <>
+              <span className="text-border">|</span>
+              <span
+                className="text-[10px] text-amber-400/80 truncate max-w-[80px] font-mono"
+                title={`Top process: ${data.topProcess}`}
+                data-testid="top-process"
+              >
+                {data.topProcess}
+              </span>
+            </>
+          )}
           <div
             className={`w-1.5 h-1.5 rounded-full transition-all duration-500 ${getDotColor(Math.max(data.cpu, data.memPercent))}${Math.max(data.cpu, data.memPercent) >= 70 ? " animate-pulse" : ""}${isValidating ? " scale-150 opacity-60" : ""}`}
             title={data.cpu >= 70 || data.memPercent >= 70 ? "High resource usage" : "System healthy"}

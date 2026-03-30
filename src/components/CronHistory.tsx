@@ -37,6 +37,8 @@ import {
   TrendingDown,
   Minus,
   AlertTriangle,
+  Bot,
+  ExternalLink,
 } from "lucide-react";
 
 interface CronRun {
@@ -430,6 +432,202 @@ function DailyDensity({ runs }: { runs: CronRun[] }) {
   );
 }
 
+/** 30-day GitHub-contributions-style run heatmap */
+function MonthHeatmap({ runs }: { runs: CronRun[] }) {
+  const cells = useMemo(() => {
+    const now = new Date();
+    const result: { date: string; label: string; ok: number; error: number; total: number; isToday: boolean }[] = [];
+    for (let i = 29; i >= 0; i--) {
+      const d = new Date(now);
+      d.setDate(d.getDate() - i);
+      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      const dayEnd = dayStart + 86400000;
+      const dayRuns = runs.filter(r => r.ts >= dayStart && r.ts < dayEnd);
+      result.push({
+        date: d.toISOString().slice(0, 10),
+        label: d.toLocaleDateString("en-US", { weekday: "short", month: "short", day: "numeric" }),
+        ok: dayRuns.filter(r => r.status === "ok").length,
+        error: dayRuns.filter(r => r.status !== "ok").length,
+        total: dayRuns.length,
+        isToday: i === 0,
+      });
+    }
+    return result;
+  }, [runs]);
+
+  const maxTotal = Math.max(...cells.map(c => c.total), 1);
+
+  return (
+    <div data-testid="month-heatmap" className="space-y-1.5">
+      <div className="flex items-center justify-between">
+        <span className="text-[10px] font-medium text-muted-foreground">30-Day Run Activity</span>
+        <div className="flex items-center gap-1.5 text-[9px] text-muted-foreground/50">
+          <span>Less</span>
+          <div className="flex gap-px">
+            {[0, 0.25, 0.5, 0.75, 1].map((intensity, i) => (
+              <div
+                key={i}
+                className="w-2.5 h-2.5 rounded-[2px]"
+                style={{
+                  backgroundColor: intensity === 0
+                    ? "hsl(var(--muted) / 0.3)"
+                    : `hsl(142, 70%, ${65 - intensity * 30}%, ${0.3 + intensity * 0.6})`,
+                }}
+              />
+            ))}
+          </div>
+          <span>More</span>
+        </div>
+      </div>
+      <div className="flex gap-[3px] flex-wrap">
+        {cells.map((cell) => {
+          const intensity = cell.total > 0 ? cell.total / maxTotal : 0;
+          const hasErrors = cell.error > 0;
+          const errorRatio = cell.total > 0 ? cell.error / cell.total : 0;
+
+          // Color: green for all-ok, gradient to red as error ratio increases
+          let bgColor: string;
+          if (cell.total === 0) {
+            bgColor = "hsl(var(--muted) / 0.2)";
+          } else if (errorRatio > 0.5) {
+            bgColor = `hsl(0, 70%, ${65 - intensity * 25}%, ${0.4 + intensity * 0.5})`;
+          } else if (hasErrors) {
+            bgColor = `hsl(35, 80%, ${60 - intensity * 20}%, ${0.4 + intensity * 0.5})`;
+          } else {
+            bgColor = `hsl(142, 70%, ${65 - intensity * 30}%, ${0.3 + intensity * 0.6})`;
+          }
+
+          return (
+            <TooltipProvider key={cell.date}>
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <div
+                    className={`w-3.5 h-3.5 rounded-[2px] transition-colors cursor-default ${
+                      cell.isToday ? "ring-1 ring-primary/50 ring-offset-1 ring-offset-background" : ""
+                    }`}
+                    style={{ backgroundColor: bgColor }}
+                  />
+                </TooltipTrigger>
+                <TooltipContent side="top" className="text-xs">
+                  <div className="font-medium">{cell.label}</div>
+                  {cell.total > 0 ? (
+                    <div>{cell.ok} ok{cell.error > 0 ? `, ${cell.error} failed` : ""} ({cell.total} total)</div>
+                  ) : (
+                    <div className="text-muted-foreground">No runs</div>
+                  )}
+                </TooltipContent>
+              </Tooltip>
+            </TooltipProvider>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/** Fleet Health Grid — StatusPage-style compact overview of all jobs' recent runs */
+function FleetHealthGrid({
+  jobs,
+  runsByJob,
+  onJobClick,
+  onViewSession,
+}: {
+  jobs: JobInfo[];
+  runsByJob: Record<string, CronRun[]>;
+  onJobClick: (jobId: string) => void;
+  onViewSession?: (sessionId: string) => void;
+}) {
+  if (jobs.length === 0) return null;
+
+  const DOTS = 20;
+
+  return (
+    <div className="rounded-lg border border-border/40 bg-card/30 overflow-hidden" data-testid="fleet-health-grid">
+      <div className="px-3 py-2 border-b border-border/30 flex items-center justify-between">
+        <span className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Fleet Health</span>
+        <span className="text-[9px] text-muted-foreground/40">last {DOTS} runs per job</span>
+      </div>
+      <div className="divide-y divide-border/20">
+        {jobs.map((job) => {
+          const jobRuns = (runsByJob[job.id] || []).slice(0, DOTS);
+          const recentOk = jobRuns.filter(r => r.status === "ok").length;
+          const recentTotal = jobRuns.length;
+          const uptimePct = recentTotal > 0 ? (recentOk / recentTotal) * 100 : 0;
+          const latestRun = jobRuns[0];
+
+          return (
+            <button
+              key={job.id}
+              onClick={() => onJobClick(job.id)}
+              className="w-full flex items-center gap-3 px-3 py-2 hover:bg-muted/20 transition-colors text-left group"
+            >
+              {/* Job name + model dot */}
+              <div className="w-28 sm:w-36 flex items-center gap-1.5 flex-shrink-0 min-w-0">
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 ${getModelColor(job.model)}`} />
+                <span className="text-xs font-medium truncate">{job.name}</span>
+              </div>
+
+              {/* Run dots — StatusPage style */}
+              <div className="flex items-center gap-px flex-1 min-w-0">
+                {Array.from({ length: DOTS }).map((_, i) => {
+                  const run = jobRuns[DOTS - 1 - i]; // oldest to newest
+                  if (!run) {
+                    return <div key={i} className="flex-1 h-5 rounded-[1px] bg-muted/20" />;
+                  }
+                  return (
+                    <TooltipProvider key={i}>
+                      <Tooltip>
+                        <TooltipTrigger asChild>
+                          <div
+                            className={`flex-1 h-5 rounded-[1px] transition-colors ${
+                              run.status === "ok"
+                                ? "bg-emerald-500/60 hover:bg-emerald-500/80"
+                                : "bg-red-500/60 hover:bg-red-500/80"
+                            }`}
+                          />
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="text-xs">
+                          <div className="font-medium">{run.status === "ok" ? "Success" : "Failed"}</div>
+                          <div>{formatDateTime(run.ts)}</div>
+                          {run.durationMs != null && <div>{formatDuration(run.durationMs)}</div>}
+                        </TooltipContent>
+                      </Tooltip>
+                    </TooltipProvider>
+                  );
+                })}
+              </div>
+
+              {/* Uptime % */}
+              <span className={`text-[10px] font-mono tabular-nums flex-shrink-0 w-12 text-right ${
+                uptimePct >= 90 ? "text-emerald-400" :
+                uptimePct >= 70 ? "text-amber-400" :
+                recentTotal > 0 ? "text-red-400" :
+                "text-muted-foreground/40"
+              }`}>
+                {recentTotal > 0 ? `${uptimePct.toFixed(0)}%` : "—"}
+              </span>
+
+              {/* Latest run session link */}
+              {latestRun?.sessionId && onViewSession && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onViewSession(latestRun.sessionId!);
+                  }}
+                  className="text-muted-foreground/40 hover:text-primary transition-colors flex-shrink-0 opacity-0 group-hover:opacity-100"
+                  title="View latest session"
+                >
+                  <Bot className="size-3.5" />
+                </button>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 /** Success rate progress bar for stats banner */
 function SuccessRateBar({ ok, total }: { ok: number; total: number }) {
   if (total === 0) return null;
@@ -514,6 +712,23 @@ export function CronHistory() {
     window.addEventListener("refresh-view", handler);
     return () => window.removeEventListener("refresh-view", handler);
   }, [fetchRuns]);
+
+  // Listen for cross-navigation focus-item events (e.g. from CalendarView "View Run History")
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { jobId } = (e as CustomEvent).detail || {};
+      if (jobId && typeof jobId === "string") {
+        setSelectedJobId(jobId);
+        setExpandedJobs(prev => {
+          const next = new Set(prev);
+          next.add(jobId);
+          return next;
+        });
+      }
+    };
+    window.addEventListener("focus-item", handler);
+    return () => window.removeEventListener("focus-item", handler);
+  }, []);
 
   // "Updated Xs ago" ticker
   useEffect(() => {
@@ -810,6 +1025,13 @@ export function CronHistory() {
           </div>
         )}
 
+        {/* 30-day run heatmap */}
+        {runs.length > 0 && (
+          <div className="mt-3">
+            <MonthHeatmap runs={runs} />
+          </div>
+        )}
+
         {/* Search input */}
         <div className="relative mt-3">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -886,6 +1108,29 @@ export function CronHistory() {
       </CardHeader>
 
       <CardContent className="flex-1 overflow-y-auto px-4 pb-4">
+        {/* Fleet Health Grid — compact StatusPage-style overview */}
+        {jobs.length > 1 && !selectedJobId && (
+          <div className="mb-4">
+            <FleetHealthGrid
+              jobs={sortedJobs}
+              runsByJob={runsByJob}
+              onJobClick={(jobId) => {
+                const idx = sortedJobs.findIndex(j => j.id === jobId);
+                if (idx >= 0) toggleJobExpand(jobId);
+              }}
+              onViewSession={(sessionId) => {
+                window.dispatchEvent(new CustomEvent("navigate-to", {
+                  detail: {
+                    tab: "activity",
+                    view: "agents",
+                    context: { sessionId },
+                  },
+                }));
+              }}
+            />
+          </div>
+        )}
+
         {/* Jobs overview with expandable run lists */}
         <div className="space-y-2" ref={jobListRef}>
           {sortedJobs.map((job, jobIdx) => {
@@ -1204,6 +1449,24 @@ export function CronHistory() {
                       {selectedRun.sessionId}
                     </code>
                     <CopyButton text={selectedRun.sessionId} label="Copy session ID" />
+                    <button
+                      onClick={() => {
+                        setSelectedRun(null);
+                        window.dispatchEvent(new CustomEvent("navigate-to", {
+                          detail: {
+                            tab: "activity",
+                            view: "agents",
+                            context: { sessionId: selectedRun.sessionId },
+                          },
+                        }));
+                      }}
+                      className="inline-flex items-center gap-1 text-[10px] text-primary hover:text-primary/80 transition-colors"
+                      data-testid="view-session-link"
+                    >
+                      <Bot className="size-3" />
+                      View Session
+                      <ExternalLink className="size-2.5" />
+                    </button>
                   </div>
                 </div>
               )}

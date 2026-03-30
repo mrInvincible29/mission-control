@@ -319,6 +319,38 @@ function DashboardContent() {
     router.replace(url, { scroll: false });
   }, [router]);
 
+  // Cross-view navigation: any component can dispatch "navigate-to" to switch tabs/views
+  const navigateTo = useCallback((tab: TabValue, view?: string, context?: Record<string, string>) => {
+    setActiveTab(tab);
+    const targetView = view && VALID_VIEWS[tab]?.includes(view) ? view : VALID_VIEWS[tab][0];
+    setActiveView(targetView);
+
+    const params = new URLSearchParams();
+    if (tab !== "activity") params.set("tab", tab);
+    if (targetView !== VALID_VIEWS[tab][0]) params.set("view", targetView);
+    const url = params.toString() ? `/?${params}` : "/";
+    router.replace(url, { scroll: false });
+
+    window.dispatchEvent(new CustomEvent("nav-hud", { detail: { tab, view: targetView } }));
+
+    if (context) {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("focus-item", { detail: context }));
+      }, 300);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { tab, view, context } = (e as CustomEvent).detail || {};
+      if (tab && VALID_TABS.includes(tab)) {
+        navigateTo(tab as TabValue, view, context);
+      }
+    };
+    window.addEventListener("navigate-to", handler);
+    return () => window.removeEventListener("navigate-to", handler);
+  }, [navigateTo]);
+
   // Keyboard shortcuts: 1-4 for tabs, Shift+1/2/3 for sub-views, r for refresh
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

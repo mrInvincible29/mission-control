@@ -333,6 +333,18 @@ export function AgentSessions() {
     return () => window.removeEventListener("refresh-view", handler);
   }, [fetchSessions, fetchDetail, selectedId]);
 
+  // Listen for cross-navigation focus-item events (e.g. from CronHistory "View Session")
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { sessionId } = (e as CustomEvent).detail || {};
+      if (sessionId && typeof sessionId === "string") {
+        setSelectedId(sessionId);
+      }
+    };
+    window.addEventListener("focus-item", handler);
+    return () => window.removeEventListener("focus-item", handler);
+  }, []);
+
   // Unique models for filter pills
   const uniqueModels = useMemo(() => getUniqueModels(sessions), [sessions]);
 

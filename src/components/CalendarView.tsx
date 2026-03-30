@@ -17,7 +17,7 @@ import {
   HoverCardContent,
 } from "@/components/ui/hover-card";
 import { useState, useMemo, useEffect, useRef, useCallback } from "react";
-import { ChevronLeft, ChevronRight, Plus, RefreshCw, Clock, Copy, Check, Filter, Timer, Crosshair, Calendar, Keyboard } from "lucide-react";
+import { ChevronLeft, ChevronRight, Plus, RefreshCw, Clock, Copy, Check, Filter, Timer, Crosshair, Calendar, Keyboard, History } from "lucide-react";
 import type { CronJob } from "@/types";
 import { CreateCronDialog } from "@/components/CreateCronDialog";
 import { useToast } from "@/components/Toast";
@@ -459,7 +459,7 @@ function ScheduleSummary({ tasks, bannerCount }: {
   );
 }
 
-function TaskCardPopover({ job }: { job: CronJob }) {
+function TaskCardPopover({ job, runStatus }: { job: CronJob; runStatus?: { status: string; ts: number } }) {
   return (
     <div className="space-y-2">
       <div className="flex items-center gap-2">
@@ -467,6 +467,18 @@ function TaskCardPopover({ job }: { job: CronJob }) {
         <Badge variant={job.enabled ? "default" : "secondary"} className="text-[10px] h-4">
           {job.enabled ? "Enabled" : "Disabled"}
         </Badge>
+        {runStatus && (
+          <Badge
+            variant="outline"
+            className={`text-[10px] h-4 ${
+              runStatus.status === "ok"
+                ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/30"
+                : "bg-red-500/10 text-red-400 border-red-500/30"
+            }`}
+          >
+            {runStatus.status === "ok" ? "Last: OK" : "Last: Failed"}
+          </Badge>
+        )}
       </div>
       <div className="text-xs text-muted-foreground">{job.schedule}</div>
       {job.model && (
@@ -487,8 +499,32 @@ function TaskCardPopover({ job }: { job: CronJob }) {
   );
 }
 
+/** Fetch last run status per job from the cron-runs API */
+function useLastRunStatus() {
+  const { data } = useSWR(
+    "cron-runs-status",
+    async () => {
+      const res = await fetch("/api/cron-runs?limit=200");
+      if (!res.ok) return {};
+      const json = await res.json();
+      const runs: Array<{ jobId: string; status: string; ts: number }> = json.runs || [];
+      // Keep only the most recent run per job
+      const byJob: Record<string, { status: string; ts: number }> = {};
+      for (const run of runs) {
+        if (!byJob[run.jobId] || run.ts > byJob[run.jobId].ts) {
+          byJob[run.jobId] = { status: run.status, ts: run.ts };
+        }
+      }
+      return byJob;
+    },
+    { refreshInterval: 120000, dedupingInterval: 60000 }
+  );
+  return data || {};
+}
+
 export function CalendarView() {
   const { data: cronJobs } = useSWR("cron-jobs", listCronJobs, { refreshInterval: 60000 });
+  const lastRunStatus = useLastRunStatus();
   const { toast } = useToast();
   const [selectedJob, setSelectedJob] = useState<CronJob | null>(null);
   const [showCreateDialog, setShowCreateDialog] = useState(false);
@@ -1067,12 +1103,20 @@ export function CalendarView() {
                         <span className={`font-semibold ${task.job.enabled ? "" : "line-through"}`}>
                           {task.job.name}
                         </span>
+                        {lastRunStatus[task.job.id] && (
+                          <span
+                            className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                              lastRunStatus[task.job.id].status === "ok" ? "bg-emerald-400" : "bg-red-400"
+                            }`}
+                            data-testid="banner-run-status"
+                          />
+                        )}
                         <span className="opacity-50">·</span>
                         <span className="opacity-60">{task.schedule}</span>
                       </button>
                     </HoverCardTrigger>
                     <HoverCardContent side="bottom" className="w-64">
-                      <TaskCardPopover job={task.job} />
+                      <TaskCardPopover job={task.job} runStatus={lastRunStatus[task.job.id]} />
                     </HoverCardContent>
                   </HoverCard>
                 ))}
@@ -1204,10 +1248,22 @@ export function CalendarView() {
                             height: `${Math.max(HOUR_HEIGHT - minuteOffset - 6, 20)}px`,
                           }}
                         >
-                          <div className={`text-[10px] font-semibold truncate leading-tight ${
+                          <div className={`text-[10px] font-semibold truncate leading-tight flex items-center gap-1 ${
                             task.job.enabled ? "" : "line-through"
                           }`}>
                             {task.job.name}
+                            {/* Last run status dot */}
+                            {lastRunStatus[task.job.id] && (
+                              <span
+                                className={`inline-block w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                                  lastRunStatus[task.job.id].status === "ok"
+                                    ? "bg-emerald-400"
+                                    : "bg-red-400"
+                                }`}
+                                title={`Last run: ${lastRunStatus[task.job.id].status === "ok" ? "success" : "failed"}`}
+                                data-testid="task-run-status"
+                              />
+                            )}
                           </div>
                           {isDayView ? (
                             <>
@@ -1229,7 +1285,7 @@ export function CalendarView() {
                         </button>
                       </HoverCardTrigger>
                       <HoverCardContent side="right" className="w-64">
-                        <TaskCardPopover job={task.job} />
+                        <TaskCardPopover job={task.job} runStatus={lastRunStatus[task.job.id]} />
                       </HoverCardContent>
                     </HoverCard>
                   );
@@ -1396,6 +1452,30 @@ export function CalendarView() {
                 <pre className="text-xs bg-black/20 dark:bg-black/40 p-3 rounded-lg whitespace-pre-wrap break-words max-h-[40vh] overflow-y-auto font-mono leading-relaxed border border-border/20">
                   {selectedJob.command}
                 </pre>
+              </div>
+
+              {/* Cross-navigation: View Run History */}
+              <div className="pt-2 border-t border-border/30">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="text-xs gap-1.5 w-full justify-center"
+                  data-testid="view-run-history-btn"
+                  onClick={() => {
+                    setSelectedJob(null);
+                    window.dispatchEvent(new CustomEvent("navigate-to", {
+                      detail: {
+                        tab: "schedule",
+                        view: "runs",
+                        context: { jobId: selectedJob.id },
+                      },
+                    }));
+                  }}
+                >
+                  <History className="size-3.5" />
+                  View Run History
+                  <ChevronRight className="size-3 ml-auto" />
+                </Button>
               </div>
             </div>
           )}
