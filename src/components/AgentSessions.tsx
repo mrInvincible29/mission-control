@@ -6,7 +6,7 @@ import { Badge } from "@/components/ui/badge";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Input } from "@/components/ui/input";
 import { Button } from "@/components/ui/button";
-import { Search, X, RefreshCw, Clock, ChevronDown, ChevronRight, Copy, Check, Timer, DollarSign, Zap, ArrowUpDown, Bot } from "lucide-react";
+import { Search, X, RefreshCw, Clock, ChevronDown, ChevronRight, Copy, Check, Timer, DollarSign, Zap, ArrowUpDown, Bot, BarChart3, Activity, CheckCircle2, AlertCircle, Gauge } from "lucide-react";
 import { formatTokens, formatCost, formatRelativeTime, getModelColor } from "@/lib/formatters";
 
 interface SessionMeta {
@@ -96,6 +96,50 @@ function isRecentlyActive(session: SessionMeta): boolean {
   return Date.now() - lastTs < 5 * 60 * 1000;
 }
 
+type SessionStatus = "active" | "completed" | "error";
+
+/** Derive session status from available data */
+function getSessionStatus(session: SessionMeta): SessionStatus {
+  if (isRecentlyActive(session)) return "active";
+  // Heuristic: sessions with 0 tool calls and very few messages may have errored
+  // Also check if the session ended abnormally (very short with high cost)
+  const dur = getMetaDuration(session);
+  if (dur && dur < 5000 && session.messageCount <= 2 && session.totalCost > 0) return "error";
+  return "completed";
+}
+
+function getStatusColor(status: SessionStatus): string {
+  switch (status) {
+    case "active": return "text-emerald-400";
+    case "completed": return "text-blue-400";
+    case "error": return "text-red-400";
+  }
+}
+
+function getStatusBg(status: SessionStatus): string {
+  switch (status) {
+    case "active": return "bg-emerald-500/15 border-emerald-500/30";
+    case "completed": return "bg-blue-500/10 border-blue-500/20";
+    case "error": return "bg-red-500/15 border-red-500/30";
+  }
+}
+
+function getStatusIcon(status: SessionStatus) {
+  switch (status) {
+    case "active": return Activity;
+    case "completed": return CheckCircle2;
+    case "error": return AlertCircle;
+  }
+}
+
+function getStatusLabel(status: SessionStatus): string {
+  switch (status) {
+    case "active": return "Active";
+    case "completed": return "Completed";
+    case "error": return "Error";
+  }
+}
+
 /** Extract unique model names from sessions */
 function getUniqueModels(sessions: SessionMeta[]): string[] {
   const models = new Set<string>();
@@ -154,6 +198,217 @@ function CopyButton({ text, label }: { text: string; label?: string }) {
 
 const PAGE_SIZE = 25;
 const THINKING_COLLAPSE_THRESHOLD = 200;
+const TIMELINE_KEY = "mc-agent-timeline";
+
+function getTimelineOpen(): boolean {
+  try { return localStorage.getItem(TIMELINE_KEY) !== "closed"; } catch { return true; }
+}
+
+/** Parse a timestamp that might be a number (ms) or ISO string */
+function parseTs(ts: string | number | undefined): number {
+  if (!ts) return 0;
+  if (typeof ts === "number") return ts;
+  const d = new Date(ts);
+  return isNaN(d.getTime()) ? 0 : d.getTime();
+}
+
+/** Format a time window label */
+function formatWindowLabel(ms: number): string {
+  const hours = ms / (60 * 60 * 1000);
+  if (hours <= 24) return "24h";
+  const days = Math.round(hours / 24);
+  return `${days}d`;
+}
+
+/** Session Timeline — visual Gantt chart of sessions over a recent time window */
+function SessionTimeline({
+  sessions,
+  onSelectSession,
+  selectedId,
+}: {
+  sessions: SessionMeta[];
+  onSelectSession: (id: string) => void;
+  selectedId: string | null;
+}) {
+  const now = Date.now();
+
+  // Parse all session timestamps and determine the best time window
+  const { timelineSessions, windowStart, windowMs } = useMemo(() => {
+    // Parse and sort sessions by start time
+    const parsed = sessions
+      .map((s) => ({
+        session: s,
+        start: parseTs(s.timestamp),
+        end: parseTs(s.lastActivity) || parseTs(s.timestamp),
+      }))
+      .filter((s) => s.start > 0)
+      .sort((a, b) => a.start - b.start);
+
+    if (parsed.length === 0) return { timelineSessions: [] as SessionMeta[], windowStart: now - 86400000, windowMs: 86400000 };
+
+    // Try 24h first, then expand to cover data
+    const day = 24 * 60 * 60 * 1000;
+    let winMs = day;
+    let winStart = now - winMs;
+    let inWindow = parsed.filter((s) => s.end > winStart && s.start < now);
+
+    if (inWindow.length === 0) {
+      // Expand window to cover the most recent sessions (up to 30 days)
+      const newest = Math.max(...parsed.map((s) => s.end));
+      const oldest = Math.min(...parsed.slice(-20).map((s) => s.start)); // last 20 sessions
+      winMs = Math.min(Math.max(newest - oldest + day, day), 30 * day);
+      winStart = newest - winMs;
+      inWindow = parsed.filter((s) => s.end > winStart);
+    }
+
+    return {
+      timelineSessions: inWindow.map((s) => s.session),
+      windowStart: winStart,
+      windowMs: winMs,
+    };
+  }, [sessions, now]);
+
+  // Stack overlapping sessions into rows
+  const rows = useMemo(() => {
+    const result: SessionMeta[][] = [];
+    for (const session of timelineSessions) {
+      const start = Math.max(parseTs(session.timestamp), windowStart);
+      let placed = false;
+      for (const row of result) {
+        const lastInRow = row[row.length - 1];
+        const lastEnd = parseTs(lastInRow.lastActivity) || parseTs(lastInRow.timestamp);
+        if (start >= lastEnd) {
+          row.push(session);
+          placed = true;
+          break;
+        }
+      }
+      if (!placed) result.push([session]);
+    }
+    return result;
+  }, [timelineSessions, windowStart]);
+
+  if (timelineSessions.length === 0) return null;
+
+  const windowEnd = windowStart + windowMs;
+  const toPercent = (ts: number) => Math.max(0, Math.min(100, ((ts - windowStart) / windowMs) * 100));
+  const nowPercent = toPercent(now);
+
+  // Time markers — adapt interval based on window size
+  const hourMarkers: { label: string; pct: number }[] = [];
+  const hoursInWindow = windowMs / (60 * 60 * 1000);
+  const markerIntervalHours = hoursInWindow <= 24 ? 3 : hoursInWindow <= 72 ? 6 : hoursInWindow <= 168 ? 24 : 48;
+  const startDate = new Date(windowStart);
+  const firstMarker = new Date(startDate);
+  firstMarker.setMinutes(0, 0, 0);
+  if (firstMarker.getTime() < windowStart) firstMarker.setHours(firstMarker.getHours() + 1);
+  // Align to interval
+  const rem = firstMarker.getHours() % markerIntervalHours;
+  if (rem !== 0) firstMarker.setHours(firstMarker.getHours() + (markerIntervalHours - rem));
+  for (let t = firstMarker.getTime(); t < windowEnd; t += markerIntervalHours * 60 * 60 * 1000) {
+    const d = new Date(t);
+    const label = markerIntervalHours >= 24
+      ? `${d.getMonth() + 1}/${d.getDate()}`
+      : String(d.getHours()).padStart(2, "0");
+    hourMarkers.push({ label, pct: toPercent(t) });
+  }
+
+  const rowHeight = 18;
+  const gap = 2;
+  const totalHeight = rows.length * (rowHeight + gap) + 16; // +16 for hour labels
+
+  return (
+    <div className="relative rounded-lg bg-muted/20 border border-border/30 px-3 py-2 overflow-hidden" data-testid="session-timeline">
+      {/* Time labels */}
+      <div className="relative h-3 mb-1">
+        {hourMarkers.map(({ label, pct }) => (
+          <span
+            key={`${label}-${pct}`}
+            className="absolute text-[8px] text-muted-foreground/50 font-mono -translate-x-1/2"
+            style={{ left: `${pct}%` }}
+          >
+            {label}
+          </span>
+        ))}
+      </div>
+
+      {/* Session bars */}
+      <div className="relative" style={{ height: `${rows.length * (rowHeight + gap)}px` }}>
+        {/* Grid lines */}
+        {hourMarkers.map(({ label, pct }) => (
+          <div
+            key={`line-${label}-${pct}`}
+            className="absolute top-0 bottom-0 border-l border-border/20"
+            style={{ left: `${pct}%` }}
+          />
+        ))}
+
+        {/* Now indicator — only show if within the visible window */}
+        {now >= windowStart && now <= windowEnd && (
+          <div
+            className="absolute top-0 bottom-0 w-[2px] bg-red-500/60 z-10"
+            style={{ left: `${nowPercent}%` }}
+          />
+        )}
+
+        {/* Session bars */}
+        {rows.map((row, rowIdx) =>
+          row.map((session) => {
+            const start = Math.max(parseTs(session.timestamp), windowStart);
+            const end = Math.max(parseTs(session.lastActivity) || start, start + 60000); // min 1 minute width
+            const leftPct = toPercent(start);
+            const widthPct = Math.max(toPercent(end) - leftPct, 0.5); // min 0.5% width
+            const colors = getModelColor(session.model);
+            const active = isRecentlyActive(session);
+            const isSelected = session.id === selectedId;
+            const promptLabel = getPromptLabel(session.prompt).slice(0, 40);
+
+            return (
+              <button
+                key={session.id}
+                onClick={() => onSelectSession(session.id)}
+                title={`${promptLabel} — ${session.model} — ${formatCost(session.totalCost)}`}
+                className={`absolute rounded-sm transition-all duration-150 cursor-pointer overflow-hidden group ${
+                  isSelected
+                    ? `${colors.bar} ring-1 ring-primary/50 opacity-90`
+                    : `${colors.bar} opacity-60 hover:opacity-90`
+                }`}
+                style={{
+                  left: `${leftPct}%`,
+                  width: `${widthPct}%`,
+                  top: `${rowIdx * (rowHeight + gap)}px`,
+                  height: `${rowHeight}px`,
+                }}
+              >
+                {active && (
+                  <span className="absolute right-0.5 top-1/2 -translate-y-1/2 flex size-1.5">
+                    <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-white opacity-75" />
+                    <span className="relative inline-flex rounded-full size-1.5 bg-white" />
+                  </span>
+                )}
+                {widthPct > 5 && (
+                  <span className="text-[8px] text-white/80 px-1 truncate block leading-[18px] font-medium">
+                    {promptLabel}
+                  </span>
+                )}
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      {/* Legend */}
+      <div className="flex items-center gap-3 mt-1.5 text-[9px] text-muted-foreground/50">
+        <span>{timelineSessions.length} sessions in last {formatWindowLabel(windowMs)}</span>
+        {now >= windowStart && now <= windowEnd && (
+          <span className="flex items-center gap-1">
+            <span className="w-1.5 h-1.5 rounded-full bg-red-500/60" /> now
+          </span>
+        )}
+      </div>
+    </div>
+  );
+}
 
 const SORT_OPTIONS: { value: SortMode; label: string }[] = [
   { value: "recent", label: "Recent" },
@@ -209,8 +464,23 @@ export function AgentSessions() {
   const [page, setPage] = useState(0);
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [modelFilter, setModelFilter] = useState<string | null>(null);
+  const [statusFilter, setStatusFilter] = useState<SessionStatus | null>(null);
   const [focusedIndex, setFocusedIndex] = useState(-1);
   const listContainerRef = useRef<HTMLDivElement>(null);
+  const [timelineOpen, setTimelineOpen] = useState(true);
+
+  // Init timeline state from localStorage
+  useEffect(() => {
+    setTimelineOpen(getTimelineOpen());
+  }, []);
+
+  const toggleTimeline = useCallback(() => {
+    setTimelineOpen((prev) => {
+      const next = !prev;
+      try { localStorage.setItem(TIMELINE_KEY, next ? "open" : "closed"); } catch {}
+      return next;
+    });
+  }, []);
 
   // Abort controllers to prevent request pileup
   const sessionsAbortRef = useRef<AbortController | null>(null);
@@ -352,8 +622,14 @@ export function AgentSessions() {
   const stats = useMemo(() => {
     const totalCost = sessions.reduce((s, sess) => s + sess.totalCost, 0);
     const totalTokens = sessions.reduce((s, sess) => s + sess.totalTokens, 0);
-    const activeCount = sessions.filter(isRecentlyActive).length;
-    return { totalCost, totalTokens, activeCount, total: sessions.length };
+    const activeCount = sessions.filter(s => getSessionStatus(s) === "active").length;
+    const completedCount = sessions.filter(s => getSessionStatus(s) === "completed").length;
+    const errorCount = sessions.filter(s => getSessionStatus(s) === "error").length;
+    const totalMessages = sessions.reduce((s, sess) => s + sess.messageCount, 0);
+    const totalDuration = sessions.reduce((s, sess) => s + (getMetaDuration(sess) || 0), 0);
+    const avgCostPerSession = sessions.length > 0 ? totalCost / sessions.length : 0;
+    const avgTokensPerMsg = totalMessages > 0 ? totalTokens / totalMessages : 0;
+    return { totalCost, totalTokens, activeCount, completedCount, errorCount, total: sessions.length, totalMessages, totalDuration, avgCostPerSession, avgTokensPerMsg };
   }, [sessions]);
 
   // Model breakdown for summary strip
@@ -365,12 +641,16 @@ export function AgentSessions() {
     return Math.max(...sessions.map((s) => s.totalCost), 0.001);
   }, [sessions]);
 
-  // Filter sessions by search + model
+  // Filter sessions by search + model + status
   const filteredSessions = useMemo(() => {
     let result = sessions;
 
     if (modelFilter) {
       result = result.filter((s) => s.model === modelFilter);
+    }
+
+    if (statusFilter) {
+      result = result.filter((s) => getSessionStatus(s) === statusFilter);
     }
 
     if (searchText.trim()) {
@@ -384,7 +664,7 @@ export function AgentSessions() {
     }
 
     return result;
-  }, [sessions, searchText, modelFilter]);
+  }, [sessions, searchText, modelFilter, statusFilter]);
 
   // Sort sessions
   const sortedSessions = useMemo(() => {
@@ -417,7 +697,7 @@ export function AgentSessions() {
   // Reset page when search/filter/sort changes
   useEffect(() => {
     setPage(0);
-  }, [searchText, modelFilter, sortMode]);
+  }, [searchText, modelFilter, statusFilter, sortMode]);
 
   const handleSelectSession = useCallback((id: string) => {
     setSelectedId(id);
@@ -476,39 +756,78 @@ export function AgentSessions() {
 
   return (
     <div className="space-y-3">
-      {/* Summary Stats Bar */}
+      {/* Summary Stats Strip — mini metric cards */}
       {!loading && sessions.length > 0 && (
-        <div className="flex items-center gap-3 flex-wrap text-xs" data-testid="agent-stats-bar">
-          <div className="flex items-center gap-1.5 text-muted-foreground">
-            <Bot className="size-3.5" />
-            <span className="font-medium">{stats.total}</span> sessions
+        <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-2" data-testid="agent-stats-bar">
+          {/* Sessions count */}
+          <div className="rounded-lg bg-muted/40 border border-border/30 p-2.5 flex items-center gap-2.5">
+            <div className="rounded-md bg-primary/10 p-1.5">
+              <Bot className="size-3.5 text-primary" />
+            </div>
+            <div>
+              <div className="text-lg font-bold tabular-nums leading-none">{stats.total}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Sessions</div>
+            </div>
           </div>
-          {stats.activeCount > 0 && (
-            <div className="flex items-center gap-1.5">
-              <span className="relative flex size-2">
+
+          {/* Active sessions */}
+          <div className={`rounded-lg border p-2.5 flex items-center gap-2.5 ${
+            stats.activeCount > 0 ? "bg-emerald-500/10 border-emerald-500/20" : "bg-muted/40 border-border/30"
+          }`}>
+            <div className={`rounded-md p-1.5 ${stats.activeCount > 0 ? "bg-emerald-500/15" : "bg-muted/30"}`}>
+              <Activity className={`size-3.5 ${stats.activeCount > 0 ? "text-emerald-400" : "text-muted-foreground/50"}`} />
+            </div>
+            <div>
+              <div className={`text-lg font-bold tabular-nums leading-none ${stats.activeCount > 0 ? "text-emerald-400" : ""}`}>
+                {stats.activeCount}
+              </div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Active</div>
+            </div>
+            {stats.activeCount > 0 && (
+              <span className="relative flex size-2 ml-auto">
                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
                 <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
               </span>
-              <span className="text-emerald-400 font-medium">{stats.activeCount} active</span>
-            </div>
-          )}
-          {stats.totalCost > 0 && (
-            <div className="flex items-center gap-1 text-emerald-400">
-              <DollarSign className="size-3" />
-              <span className="font-medium">{formatCost(stats.totalCost)}</span>
-            </div>
-          )}
-          {stats.totalTokens > 0 && (
-            <div className="flex items-center gap-1 text-blue-400">
-              <Zap className="size-3" />
-              <span className="font-medium">{formatTokens(stats.totalTokens)}</span>
-            </div>
-          )}
+            )}
+          </div>
 
-          {/* Model breakdown mini-bar */}
+          {/* Total cost */}
+          <div className="rounded-lg bg-muted/40 border border-border/30 p-2.5 flex items-center gap-2.5">
+            <div className="rounded-md bg-emerald-500/10 p-1.5">
+              <DollarSign className="size-3.5 text-emerald-400" />
+            </div>
+            <div>
+              <div className="text-lg font-bold tabular-nums leading-none text-emerald-400">{formatCost(stats.totalCost)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Total Cost</div>
+            </div>
+          </div>
+
+          {/* Total tokens */}
+          <div className="rounded-lg bg-muted/40 border border-border/30 p-2.5 flex items-center gap-2.5">
+            <div className="rounded-md bg-blue-500/10 p-1.5">
+              <Zap className="size-3.5 text-blue-400" />
+            </div>
+            <div>
+              <div className="text-lg font-bold tabular-nums leading-none text-blue-400">{formatTokens(stats.totalTokens)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Tokens</div>
+            </div>
+          </div>
+
+          {/* Avg cost per session */}
+          <div className="rounded-lg bg-muted/40 border border-border/30 p-2.5 flex items-center gap-2.5 hidden sm:flex">
+            <div className="rounded-md bg-orange-500/10 p-1.5">
+              <Gauge className="size-3.5 text-orange-400" />
+            </div>
+            <div>
+              <div className="text-lg font-bold tabular-nums leading-none text-orange-400">{formatCost(stats.avgCostPerSession)}</div>
+              <div className="text-[10px] text-muted-foreground mt-0.5">Avg/Session</div>
+            </div>
+          </div>
+
+          {/* Model breakdown bar */}
           {modelBreakdown.length > 1 && (
-            <div className="flex items-center gap-1.5 ml-auto" data-testid="agent-model-breakdown">
-              <div className="flex h-2 w-24 rounded-full overflow-hidden bg-muted/40">
+            <div className="rounded-lg bg-muted/40 border border-border/30 p-2.5 hidden lg:flex flex-col justify-center" data-testid="agent-model-breakdown">
+              <div className="flex h-2.5 rounded-full overflow-hidden bg-muted/40">
                 {modelBreakdown.map(({ model, pct }) => {
                   const colors = getModelColor(model);
                   return (
@@ -521,9 +840,42 @@ export function AgentSessions() {
                   );
                 })}
               </div>
-              <span className="text-muted-foreground/60 text-[10px]">
-                {modelBreakdown.map((m) => m.model.split("/").pop()?.replace("claude-", "").charAt(0).toUpperCase()).join("/")}
-              </span>
+              <div className="flex items-center gap-1.5 mt-1.5">
+                {modelBreakdown.map(({ model, count }) => {
+                  const colors = getModelColor(model);
+                  const shortName = model.split("/").pop()?.replace("claude-", "").replace("-latest", "") || model;
+                  return (
+                    <span key={model} className="flex items-center gap-0.5 text-[9px] text-muted-foreground/60">
+                      <span className={`inline-block size-1.5 rounded-full ${colors.dot}`} />
+                      {shortName} ({count})
+                    </span>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Session Timeline — collapsible Gantt chart */}
+      {!loading && sessions.length > 0 && (
+        <div>
+          <button
+            onClick={toggleTimeline}
+            className="flex items-center gap-1.5 text-[10px] text-muted-foreground/60 hover:text-muted-foreground transition-colors font-medium uppercase tracking-wider mb-1.5"
+            data-testid="timeline-toggle"
+          >
+            <BarChart3 className="h-3 w-3" />
+            Timeline
+            <ChevronRight className={`h-3 w-3 transition-transform duration-200 ${timelineOpen ? "rotate-90" : ""}`} />
+          </button>
+          {timelineOpen && (
+            <div className="animate-in fade-in slide-in-from-top-1 duration-200">
+              <SessionTimeline
+                sessions={sessions}
+                onSelectSession={handleSelectSession}
+                selectedId={selectedId}
+              />
             </div>
           )}
         </div>
@@ -590,8 +942,37 @@ export function AgentSessions() {
               )}
             </div>
 
+            {/* Status Filter Pills */}
+            <div className="flex items-center gap-1 mt-2 bg-muted rounded-lg p-0.5" data-testid="status-filter-pills">
+              <Button
+                variant={!statusFilter ? "secondary" : "ghost"}
+                size="xs"
+                onClick={() => setStatusFilter(null)}
+                className="text-[10px]"
+              >
+                All {stats.total > 0 && <span className="ml-0.5 opacity-60">{stats.total}</span>}
+              </Button>
+              {([
+                { status: "active" as const, count: stats.activeCount, icon: Activity },
+                { status: "completed" as const, count: stats.completedCount, icon: CheckCircle2 },
+                { status: "error" as const, count: stats.errorCount, icon: AlertCircle },
+              ]).filter(s => s.count > 0).map(({ status, count, icon: Icon }) => (
+                <Button
+                  key={status}
+                  variant={statusFilter === status ? "secondary" : "ghost"}
+                  size="xs"
+                  onClick={() => setStatusFilter(statusFilter === status ? null : status)}
+                  className={`text-[10px] gap-1 ${statusFilter === status ? getStatusColor(status) : ""}`}
+                >
+                  <Icon className="size-3" />
+                  {getStatusLabel(status)}
+                  <span className="opacity-60">{count}</span>
+                </Button>
+              ))}
+            </div>
+
             {/* Model Filter Pills + Sort */}
-            <div className="flex items-center justify-between mt-2 gap-2 flex-wrap">
+            <div className="flex items-center justify-between mt-1.5 gap-2 flex-wrap">
               <div className="flex items-center gap-1 flex-wrap" data-testid="model-filter-pills">
                 <button
                   onClick={() => setModelFilter(null)}
@@ -642,8 +1023,8 @@ export function AgentSessions() {
             </div>
 
             {/* Stats */}
-            <div className="flex items-center justify-between mt-2 text-xs text-muted-foreground">
-              <span>{sortedSessions.length} sessions{modelFilter ? ` (${modelFilter.split("/").pop()})` : ""}</span>
+            <div className="flex items-center justify-between mt-1.5 text-xs text-muted-foreground">
+              <span>{sortedSessions.length} sessions{modelFilter ? ` (${modelFilter.split("/").pop()})` : ""}{statusFilter ? ` · ${getStatusLabel(statusFilter)}` : ""}</span>
               <span className="flex items-center gap-1">
                 {lastFetch > 0 && (
                   <>
@@ -663,22 +1044,24 @@ export function AgentSessions() {
                 </div>
               ) : sortedSessions.length === 0 ? (
                 <div className="flex flex-col items-center justify-center h-40 text-muted-foreground gap-2">
-                  {searchText || modelFilter ? (
+                  {searchText || modelFilter || statusFilter ? (
                     <>
                       <Search className="size-8 opacity-20" />
                       <p className="text-sm">No sessions matching filters</p>
                       <button
-                        onClick={() => { setSearchText(""); setModelFilter(null); }}
+                        onClick={() => { setSearchText(""); setModelFilter(null); setStatusFilter(null); }}
                         className="text-xs text-primary hover:underline"
                       >
-                        Clear filters
+                        Clear all filters
                       </button>
                     </>
                   ) : (
                     <>
                       <Bot className="size-8 opacity-20" />
-                      <p className="text-sm">No active sessions</p>
-                      <p className="text-xs text-muted-foreground/50">Sessions appear when agents start working</p>
+                      <p className="text-sm font-medium">No agent sessions yet</p>
+                      <p className="text-xs text-muted-foreground/50 max-w-[220px] text-center">
+                        Sessions will appear here when cron jobs or manual agents start working
+                      </p>
                     </>
                   )}
                 </div>
@@ -782,16 +1165,21 @@ function SessionListItem({
   maxCost: number;
   onSelect: (id: string) => void;
 }) {
-  const durationLabel = useMemo(() => {
-    const dur = getMetaDuration(session);
-    return dur ? formatDuration(dur) : null;
-  }, [session]);
+  const durationMs = useMemo(() => getMetaDuration(session), [session]);
+  const durationLabel = durationMs ? formatDuration(durationMs) : null;
 
   const sparkline = useMemo(() => buildActivitySparkline(session), [session]);
 
-  const active = isRecentlyActive(session);
+  const status = getSessionStatus(session);
+  const StatusIcon = getStatusIcon(status);
   const modelColors = getModelColor(session.model);
   const costPct = maxCost > 0 ? (session.totalCost / maxCost) * 100 : 0;
+
+  // Cost efficiency: cost per minute
+  const costPerMin = useMemo(() => {
+    if (!durationMs || durationMs < 60000 || session.totalCost <= 0) return null;
+    return session.totalCost / (durationMs / 60000);
+  }, [durationMs, session.totalCost]);
 
   return (
     <div
@@ -814,18 +1202,19 @@ function SessionListItem({
         }
       }}
     >
-      <div className="flex items-start justify-between gap-2 mb-2">
+      {/* Row 1: Status + Prompt + Sparkline */}
+      <div className="flex items-start gap-2 mb-2">
+        <StatusIcon className={`size-4 mt-0.5 flex-shrink-0 ${getStatusColor(status)}`} />
         <div className="text-sm text-foreground/90 font-medium line-clamp-2 flex-1">
           {getPromptLabel(session.prompt)}
         </div>
         <div className="flex items-center gap-1.5 shrink-0 mt-0.5">
-          {active && (
-            <span className="relative flex size-2" title="Active in last 5 min">
+          {status === "active" && (
+            <span className="relative flex size-2" title="Active now">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
               <span className="relative inline-flex rounded-full size-2 bg-emerald-500" />
             </span>
           )}
-          {/* Mini activity sparkline */}
           {sparkline.length > 0 && (
             <div className="flex items-end gap-px h-3" title="Activity density" data-testid="session-sparkline">
               {sparkline.map((val, i) => {
@@ -844,48 +1233,49 @@ function SessionListItem({
         </div>
       </div>
 
-      <div className="flex items-center gap-1.5 flex-wrap mb-2">
+      {/* Row 2: Key metrics — cost + duration prominently, then model */}
+      <div className="flex items-center gap-2 mb-2">
         <Badge
           variant="outline"
           className={`text-[10px] px-1.5 py-0 ${getModelBadgeClasses(session.model)}`}
         >
-          {session.model}
+          {session.model.split("/").pop()?.replace("claude-", "") || session.model}
         </Badge>
+
+        {/* Cost — prominent */}
         {session.totalCost > 0 && (
-          <Badge
-            variant="outline"
-            className="text-[10px] px-1.5 py-0 bg-emerald-500/20 text-emerald-400 border-emerald-500/30"
-          >
-            {formatCost(session.totalCost)}
-          </Badge>
+          <span className="text-[11px] font-semibold text-emerald-400 tabular-nums flex items-center gap-0.5">
+            <DollarSign className="size-3" />
+            {formatCost(session.totalCost).replace("$", "")}
+          </span>
         )}
-        {session.totalTokens > 0 && (
-          <Badge
-            variant="outline"
-            className="text-[10px] px-1.5 py-0 bg-blue-500/20 text-blue-400 border-blue-500/30"
-          >
-            {formatTokens(session.totalTokens)} tokens
-          </Badge>
-        )}
-        {session.toolCallCount > 0 && (
-          <Badge
-            variant="outline"
-            className="text-[10px] px-1.5 py-0 bg-cyan-500/20 text-cyan-400 border-cyan-500/30"
-          >
-            {session.toolCallCount} tools
-          </Badge>
-        )}
+
+        {/* Duration — prominent */}
         {durationLabel && (
-          <Badge
-            variant="outline"
-            className="text-[10px] px-1.5 py-0 bg-orange-500/20 text-orange-400 border-orange-500/30"
-          >
+          <span className="text-[11px] font-medium text-orange-400 tabular-nums flex items-center gap-0.5">
+            <Timer className="size-3" />
             {durationLabel}
-          </Badge>
+          </span>
         )}
+
+        {/* Cost/min efficiency indicator */}
+        {costPerMin != null && (
+          <span className="text-[9px] text-muted-foreground/50 tabular-nums" title="Cost per minute">
+            ({formatCost(costPerMin)}/min)
+          </span>
+        )}
+
+        <div className="flex-1" />
+
+        {/* Tokens + tools compact */}
+        <span className="text-[10px] text-muted-foreground tabular-nums">
+          {formatTokens(session.totalTokens)}
+          {session.toolCallCount > 0 && <span className="text-cyan-400/60"> · {session.toolCallCount}t</span>}
+        </span>
       </div>
 
-      <div className="flex items-center justify-between text-xs text-muted-foreground">
+      {/* Row 3: Messages + time */}
+      <div className="flex items-center justify-between text-[11px] text-muted-foreground">
         <span>{session.messageCount} messages</span>
         <span>{formatRelativeTime(session.lastActivity || session.timestamp)}</span>
       </div>
@@ -944,15 +1334,23 @@ function SessionDetailView({ detail }: { detail: SessionDetail }) {
             >
               {detail.model}
             </Badge>
-            {isRecentlyActive(detail) && (
-              <span className="flex items-center gap-1 text-[10px] text-emerald-400">
-                <span className="relative flex size-1.5">
-                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
-                  <span className="relative inline-flex rounded-full size-1.5 bg-emerald-500" />
+            {(() => {
+              const status = getSessionStatus(detail);
+              const StatusIcon = getStatusIcon(status);
+              return (
+                <span className={`flex items-center gap-1 text-[10px] ${getStatusColor(status)}`}>
+                  {status === "active" ? (
+                    <span className="relative flex size-1.5">
+                      <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+                      <span className="relative inline-flex rounded-full size-1.5 bg-emerald-500" />
+                    </span>
+                  ) : (
+                    <StatusIcon className="size-3" />
+                  )}
+                  {getStatusLabel(status)}
                 </span>
-                Active
-              </span>
-            )}
+              );
+            })()}
           </div>
           <div className="grid grid-cols-2 gap-x-4 gap-y-1">
             <div className="flex items-center gap-2">
