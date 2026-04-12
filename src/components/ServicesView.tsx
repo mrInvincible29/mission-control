@@ -12,6 +12,12 @@ import {
   TooltipTrigger,
 } from "@/components/ui/tooltip";
 import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
+import {
   RefreshCw,
   ExternalLink,
   Search,
@@ -20,6 +26,14 @@ import {
   ArrowUpDown,
   Shield,
   TrendingUp,
+  Copy,
+  Check,
+  Clock3,
+  Gauge,
+  X,
+  AlertTriangle,
+  Activity,
+  ChevronRight,
 } from "lucide-react";
 import { useServiceHistory, type PingResult } from "@/hooks/useServiceHistory";
 
@@ -272,15 +286,31 @@ function formatPingTime(ts: number): string {
   });
 }
 
+function formatRelativeTime(ts: number): string {
+  const diff = Date.now() - ts;
+  const seconds = Math.floor(diff / 1000);
+  if (seconds < 60) return `${seconds}s ago`;
+  const minutes = Math.floor(seconds / 60);
+  if (minutes < 60) return `${minutes}m ago`;
+  const hours = Math.floor(minutes / 60);
+  if (hours < 24) return `${hours}h ago`;
+  const days = Math.floor(hours / 24);
+  return `${days}d ago`;
+}
+
 export function ServicesView() {
   const [services, setServices] = useState<ServiceData[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState<string>("");
+  const [statusFilter, setStatusFilter] = useState<"all" | "attention" | "healthy" | "slow">("all");
   const [lastRefresh, setLastRefresh] = useState<number>(0);
   const [sortBy, setSortBy] = useState<"name" | "status" | "response">("status");
+  const [selectedService, setSelectedService] = useState<ServiceData | null>(null);
+  const [copiedUrl, setCopiedUrl] = useState(false);
   const [, setTick] = useState(0);
+  const hasActiveFilters = filter.trim().length > 0 || categoryFilter !== "" || statusFilter !== "all";
 
   const { historyMap, recordPings, fleetUptime, totalPings } = useServiceHistory();
 
@@ -350,11 +380,83 @@ export function ServicesView() {
     return counts;
   }, [services]);
 
+  const serviceFlags = useMemo(() => {
+    return Object.fromEntries(
+      services.map((svc) => {
+        const history = historyMap[svc.name];
+        const uptimePercent = history?.uptimePercent;
+        const hasAttention =
+          svc.status !== "up" ||
+          (uptimePercent !== undefined && uptimePercent < 99) ||
+          (svc.responseTime !== null && svc.responseTime >= 500);
+        const isSlow = svc.responseTime !== null && svc.responseTime >= 500;
+        const isHealthy = svc.status === "up" && !hasAttention;
+        return [svc.name, { hasAttention, isSlow, isHealthy }];
+      })
+    ) as Record<string, { hasAttention: boolean; isSlow: boolean; isHealthy: boolean }>;
+  }, [services, historyMap]);
+
+  const statusCounts = useMemo(() => {
+    return services.reduce(
+      (acc, svc) => {
+        const flags = serviceFlags[svc.name];
+        if (flags?.hasAttention) acc.attention += 1;
+        if (flags?.isHealthy) acc.healthy += 1;
+        if (flags?.isSlow) acc.slow += 1;
+        return acc;
+      },
+      { attention: 0, healthy: 0, slow: 0 }
+    );
+  }, [services, serviceFlags]);
+
+  const attentionQueue = useMemo(() => {
+    return services
+      .map((svc) => {
+        const history = historyMap[svc.name];
+        const uptimePercent = history?.uptimePercent;
+        const latency = svc.responseTime ?? 0;
+        const severity =
+          (svc.status === "down" ? 300 : svc.status === "degraded" ? 180 : 0) +
+          (uptimePercent !== undefined ? Math.max(0, 100 - uptimePercent) * 2 : 0) +
+          Math.min(latency / 10, 80);
+
+        const reason =
+          svc.status === "down"
+            ? "service unreachable"
+            : svc.status === "degraded"
+              ? "service degraded"
+              : latency >= 1000
+                ? `latency ${latency}ms`
+                : latency >= 500
+                  ? `latency ${latency}ms`
+                  : uptimePercent !== undefined && uptimePercent < 99
+                    ? `${uptimePercent}% uptime`
+                    : null;
+
+        return {
+          ...svc,
+          uptimePercent,
+          latency,
+          severity,
+          reason,
+        };
+      })
+      .filter((svc) => svc.reason)
+      .sort((a, b) => b.severity - a.severity || a.name.localeCompare(b.name))
+      .slice(0, 4);
+  }, [services, historyMap]);
+
   const filtered = useMemo(() => {
     const statusOrder = { down: 0, degraded: 1, up: 2 };
     return services
       .filter((svc) => {
         if (categoryFilter && svc.category !== categoryFilter) return false;
+
+        const flags = serviceFlags[svc.name];
+        if (statusFilter === "attention" && !flags?.hasAttention) return false;
+        if (statusFilter === "healthy" && !flags?.isHealthy) return false;
+        if (statusFilter === "slow" && !flags?.isSlow) return false;
+
         if (!filter.trim()) return true;
         const q = filter.toLowerCase();
         return (
@@ -369,9 +471,41 @@ export function ServicesView() {
         // status: down first, then degraded, then up
         return statusOrder[a.status] - statusOrder[b.status] || a.name.localeCompare(b.name);
       });
-  }, [services, categoryFilter, filter, sortBy]);
+  }, [services, categoryFilter, statusFilter, filter, sortBy, serviceFlags]);
 
   const upCount = services.filter((s) => s.status === "up").length;
+  const selectedHistory = selectedService ? historyMap[selectedService.name] : undefined;
+  const selectedPings = selectedHistory?.pings ?? [];
+
+  const handleCopyUrl = useCallback(async () => {
+    if (!selectedService) return;
+    try {
+      await navigator.clipboard.writeText(selectedService.url);
+      setCopiedUrl(true);
+      window.setTimeout(() => setCopiedUrl(false), 2000);
+    } catch {
+      setCopiedUrl(false);
+    }
+  }, [selectedService]);
+
+  useEffect(() => {
+    setCopiedUrl(false);
+  }, [selectedService]);
+
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      if (target && (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable)) return;
+      if (e.key === "/") {
+        e.preventDefault();
+        const input = document.querySelector<HTMLInputElement>("[data-testid='service-filter-input']");
+        input?.focus();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, []);
 
   if (loading && services.length === 0) {
     return (
@@ -436,28 +570,173 @@ export function ServicesView() {
           </div>
 
           {/* Fleet Uptime Summary */}
-          <div className="mt-3">
+          <div className="mt-3 space-y-3">
             <FleetUptimeSummary
               services={services}
               historyMap={historyMap}
               fleetUptime={fleetUptime}
               totalPings={totalPings}
             />
+
+            {attentionQueue.length > 0 && (
+              <div
+                className="rounded-lg border border-amber-500/20 bg-amber-500/8 p-3"
+                data-testid="services-attention-queue"
+              >
+                <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
+                  <div>
+                    <div className="flex items-center gap-2 text-xs font-medium text-amber-200">
+                      <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                      Needs attention now
+                    </div>
+                    <p className="mt-1 text-[11px] text-muted-foreground">
+                      Prioritized from live status, latency, and recent uptime.
+                    </p>
+                  </div>
+                  <button
+                    onClick={() => setStatusFilter("attention")}
+                    className="inline-flex items-center gap-1 self-start rounded-full border border-amber-500/20 bg-background/70 px-2.5 py-1 text-[10px] font-medium text-amber-300 transition-colors hover:border-amber-400/30 hover:text-amber-200"
+                  >
+                    Focus attention
+                    <ChevronRight className="h-3 w-3" />
+                  </button>
+                </div>
+
+                <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-4">
+                  {attentionQueue.map((svc) => (
+                    <button
+                      key={svc.name}
+                      type="button"
+                      onClick={() => setSelectedService(svc)}
+                      className="rounded-lg border border-border/40 bg-background/60 p-2.5 text-left transition-colors hover:border-amber-400/30 hover:bg-background"
+                    >
+                      <div className="flex items-center gap-2">
+                        <span className={`h-2 w-2 rounded-full ${STATUS_COLORS[svc.status]}`} />
+                        <span className="truncate text-xs font-medium text-foreground">{svc.name}</span>
+                        <span className="ml-auto rounded-full bg-muted/60 px-1.5 py-0.5 text-[9px] uppercase tracking-wide text-muted-foreground">
+                          {svc.status}
+                        </span>
+                      </div>
+                      <div className="mt-2 flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                        <Activity className="h-3 w-3 text-amber-400/80" />
+                        <span className="truncate">{svc.reason}</span>
+                      </div>
+                      <div className="mt-2 flex items-center gap-3 text-[10px] text-muted-foreground">
+                        {svc.responseTime !== null && <span>{svc.responseTime}ms</span>}
+                        {svc.uptimePercent !== undefined && <span>{svc.uptimePercent}% uptime</span>}
+                        <span className="capitalize">{svc.category}</span>
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
           {/* Filter bar */}
           <div className="relative mt-3">
             <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground/60 z-10" />
             <Input
-              placeholder="Filter services..."
+              placeholder="Filter services by name, category, or URL..."
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
-              className="pl-8 h-8 text-xs bg-muted/30"
+              className="pl-8 pr-16 h-8 text-xs bg-muted/30"
+              data-testid="service-filter-input"
             />
+            <div className="absolute right-2 top-1/2 -translate-y-1/2 flex items-center gap-1 text-[10px] text-muted-foreground/50">
+              {filter.trim() && (
+                <button
+                  onClick={() => setFilter("")}
+                  className="rounded p-0.5 hover:bg-muted/60 hover:text-foreground transition-colors"
+                  aria-label="Clear service filter"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              )}
+              <kbd className="hidden sm:inline rounded border border-border/40 bg-background/60 px-1 py-0.5 font-mono text-[9px]">
+                /
+              </kbd>
+            </div>
           </div>
 
-          {/* Sort + Category filter pills */}
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px]" data-testid="services-filter-summary">
+            <span className="rounded-full border border-border/40 bg-muted/30 px-2.5 py-1 text-muted-foreground">
+              Showing <span className="font-semibold text-foreground">{filtered.length}</span> of {services.length}
+            </span>
+            {statusFilter !== "all" && (
+              <button
+                onClick={() => setStatusFilter("all")}
+                className="inline-flex items-center gap-1 rounded-full border border-border/40 bg-background/70 px-2.5 py-1 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+              >
+                Status: <span className="font-medium text-foreground">{statusFilter === "attention" ? "Needs attention" : statusFilter}</span>
+                <X className="h-3 w-3" />
+              </button>
+            )}
+            {categoryFilter && (
+              <button
+                onClick={() => setCategoryFilter("")}
+                className="inline-flex items-center gap-1 rounded-full border border-border/40 bg-background/70 px-2.5 py-1 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors"
+              >
+                Category: <span className="font-medium text-foreground">{categoryFilter}</span>
+                <X className="h-3 w-3" />
+              </button>
+            )}
+            {filter.trim() && (
+              <button
+                onClick={() => setFilter("")}
+                className="inline-flex items-center gap-1 rounded-full border border-border/40 bg-background/70 px-2.5 py-1 text-muted-foreground hover:text-foreground hover:border-primary/30 transition-colors max-w-full"
+              >
+                <span className="truncate">Search: <span className="font-medium text-foreground">{filter.trim()}</span></span>
+                <X className="h-3 w-3 shrink-0" />
+              </button>
+            )}
+            {hasActiveFilters && (
+              <button
+                onClick={() => {
+                  setFilter("");
+                  setCategoryFilter("");
+                  setStatusFilter("all");
+                }}
+                className="inline-flex items-center gap-1 rounded-full border border-primary/20 bg-primary/10 px-2.5 py-1 text-primary hover:bg-primary/15 transition-colors"
+              >
+                Clear all
+              </button>
+            )}
+          </div>
+
+          {/* Sort + triage + category filter pills */}
           <div className="flex items-center gap-2 mt-2 flex-wrap">
+            <div className="flex items-center gap-1 mr-1">
+              {[
+                { key: "all", label: "All", count: services.length },
+                { key: "attention", label: "Needs attention", count: statusCounts.attention },
+                { key: "healthy", label: "Healthy", count: statusCounts.healthy },
+                { key: "slow", label: "Slow", count: statusCounts.slow },
+              ].map((option) => (
+                <button
+                  key={option.key}
+                  onClick={() => setStatusFilter(option.key as typeof statusFilter)}
+                  data-testid={`status-filter-${option.key}`}
+                  className={`text-[10px] rounded-full px-2.5 py-0.5 border transition-colors ${
+                    statusFilter === option.key
+                      ? option.key === "attention"
+                        ? "bg-red-500/10 text-red-400 border-red-500/30 font-medium"
+                        : option.key === "slow"
+                          ? "bg-amber-500/10 text-amber-400 border-amber-500/30 font-medium"
+                          : "bg-primary/15 text-primary border-primary/30 font-medium"
+                      : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/50"
+                  }`}
+                >
+                  {option.label}
+                  <span className={`ml-1 ${statusFilter === option.key ? "text-current/70" : "text-muted-foreground/50"}`}>
+                    {option.count}
+                  </span>
+                </button>
+              ))}
+            </div>
+
+            <div className="h-4 w-px bg-border/40 hidden sm:block" />
+
             {/* Sort toggle */}
             <div className="flex items-center gap-1 mr-1">
               <ArrowUpDown className="h-3 w-3 text-muted-foreground/50" />
@@ -527,8 +806,17 @@ export function ServicesView() {
               return (
                 <div
                   key={svc.name}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => setSelectedService(svc)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      setSelectedService(svc);
+                    }
+                  }}
                   data-testid="service-card"
-                  className="rounded-xl border border-border/50 bg-card/30 p-4 flex flex-col gap-2 hover:bg-card/50 transition-colors"
+                  className="rounded-xl border border-border/50 bg-card/30 p-4 flex flex-col gap-2 hover:bg-card/50 hover:border-border/80 transition-colors text-left cursor-pointer focus:outline-none focus:ring-2 focus:ring-primary/40"
                 >
                   {/* Header: name + status dot */}
                   <div className="flex items-center gap-2 min-w-0">
@@ -577,6 +865,7 @@ export function ServicesView() {
                     href={svc.url}
                     target="_blank"
                     rel="noopener noreferrer"
+                    onClick={(e) => e.stopPropagation()}
                     className="flex items-center gap-1 text-xs text-primary/70 hover:text-primary truncate"
                   >
                     <ExternalLink className="h-3 w-3 flex-shrink-0" />
@@ -620,10 +909,113 @@ export function ServicesView() {
                 ? <>No services match &ldquo;{filter}&rdquo;</>
                 : categoryFilter
                   ? <>No services in category &ldquo;{categoryFilter}&rdquo;</>
-                  : "No services found"}
+                  : statusFilter !== "all"
+                    ? <>No services match the &ldquo;{statusFilter === "attention" ? "needs attention" : statusFilter}&rdquo; filter</>
+                    : "No services found"}
             </div>
           )}
         </CardContent>
+
+        <Dialog open={selectedService !== null} onOpenChange={(open) => !open && setSelectedService(null)}>
+          <DialogContent className="sm:max-w-lg">
+            {selectedService && (
+              <>
+                <DialogHeader>
+                  <DialogTitle className="flex items-center gap-2">
+                    <span className={`h-2.5 w-2.5 rounded-full ${STATUS_COLORS[selectedService.status]}`} />
+                    <span>{selectedService.name}</span>
+                    <Badge variant="outline" className={`ml-auto text-[10px] px-1.5 py-0 ${CATEGORY_COLORS[selectedService.category] || "bg-muted/50 text-muted-foreground"}`}>
+                      {selectedService.category}
+                    </Badge>
+                  </DialogTitle>
+                </DialogHeader>
+
+                <div className="space-y-4">
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div className="rounded-lg border border-border/40 bg-muted/20 p-2.5">
+                      <div className="text-[10px] text-muted-foreground">Status</div>
+                      <div className="mt-1 text-sm font-medium capitalize">{selectedService.status}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/40 bg-muted/20 p-2.5">
+                      <div className="text-[10px] text-muted-foreground">Response</div>
+                      <div className="mt-1 text-sm font-medium">{selectedService.responseTime !== null ? `${selectedService.responseTime}ms` : "n/a"}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/40 bg-muted/20 p-2.5">
+                      <div className="text-[10px] text-muted-foreground">HTTP</div>
+                      <div className="mt-1 text-sm font-medium">{selectedService.httpStatus ?? "n/a"}</div>
+                    </div>
+                    <div className="rounded-lg border border-border/40 bg-muted/20 p-2.5">
+                      <div className="text-[10px] text-muted-foreground">Port</div>
+                      <div className="mt-1 text-sm font-medium">{selectedService.port ?? "n/a"}</div>
+                    </div>
+                  </div>
+
+                  <div className="rounded-lg border border-border/40 bg-muted/20 p-3 space-y-2">
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <ExternalLink className="h-3.5 w-3.5 text-muted-foreground/60" />
+                        <span className="text-xs truncate">{selectedService.url}</span>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <Button variant="ghost" size="sm" className="h-7 px-2" onClick={handleCopyUrl}>
+                          {copiedUrl ? <Check className="h-3.5 w-3.5 text-emerald-400" /> : <Copy className="h-3.5 w-3.5" />}
+                        </Button>
+                        <Button variant="ghost" size="sm" className="h-7 px-2" asChild>
+                          <a href={selectedService.url} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="h-3.5 w-3.5" />
+                          </a>
+                        </Button>
+                      </div>
+                    </div>
+                    {selectedService.responseTime !== null && (
+                      <ResponseBar ms={selectedService.responseTime} maxMs={maxResponseTime} />
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div className="rounded-lg border border-border/40 bg-muted/20 p-3 space-y-2">
+                      <div className="flex items-center gap-2 text-xs font-medium">
+                        <Gauge className="h-3.5 w-3.5 text-muted-foreground/60" />
+                        Recent uptime
+                      </div>
+                      {selectedPings.length > 0 ? (
+                        <>
+                          <UptimeDots pings={selectedPings} maxDots={20} />
+                          <div className="text-[11px] text-muted-foreground">
+                            {selectedHistory?.uptimePercent ?? 0}% over {selectedPings.length} checks
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-[11px] text-muted-foreground">No history yet</div>
+                      )}
+                    </div>
+
+                    <div className="rounded-lg border border-border/40 bg-muted/20 p-3 space-y-2">
+                      <div className="flex items-center gap-2 text-xs font-medium">
+                        <Clock3 className="h-3.5 w-3.5 text-muted-foreground/60" />
+                        Runtime details
+                      </div>
+                      <div className="space-y-1.5 text-[11px] text-muted-foreground">
+                        <div className="flex items-center justify-between gap-2">
+                          <span>Systemd</span>
+                          <span className="font-medium text-foreground/80">{selectedService.systemd ?? "none"}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span>Service state</span>
+                          <span className="font-medium capitalize text-foreground/80">{selectedService.systemdStatus ?? "n/a"}</span>
+                        </div>
+                        <div className="flex items-center justify-between gap-2">
+                          <span>Last refresh</span>
+                          <span className="font-medium text-foreground/80">{lastRefresh > 0 ? formatRelativeTime(lastRefresh) : "n/a"}</span>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </>
+            )}
+          </DialogContent>
+        </Dialog>
       </Card>
     </TooltipProvider>
   );
