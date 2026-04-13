@@ -7,18 +7,19 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { SetupGuide } from "@/components/SetupGuide";
 import { ToastProvider } from "@/components/Toast";
 import { SubViewToggle } from "@/components/SubViewToggle";
+import { CommandPalette } from "@/components/CommandPalette";
+import { SystemHealth } from "@/components/SystemHealth";
+import { ServicesView } from "@/components/ServicesView";
 import { useTabNotifications } from "@/hooks/useTabNotifications";
-import { Activity, CalendarDays, CheckSquare, Server, Search } from "lucide-react";
+import { Activity, CalendarDays, CheckSquare, Server, Search, ChevronLeft, ChevronRight, History } from "lucide-react";
 import {
   ActivitySkeleton,
   CalendarSkeleton,
   AgentsSkeleton,
   AnalyticsSkeleton,
-  HealthSkeleton,
   CronRunsSkeleton,
   LogsSkeleton,
   KanbanSkeleton,
-  ServicesSkeleton,
 } from "@/components/Skeletons";
 
 const ThemeToggle = dynamic(
@@ -28,11 +29,6 @@ const ThemeToggle = dynamic(
 
 const KeyboardShortcuts = dynamic(
   () => import("@/components/KeyboardShortcuts").then((mod) => ({ default: mod.KeyboardShortcuts })),
-  { ssr: false }
-);
-
-const CommandPalette = dynamic(
-  () => import("@/components/CommandPalette").then((mod) => ({ default: mod.CommandPalette })),
   { ssr: false }
 );
 
@@ -70,6 +66,98 @@ const VALID_VIEWS: Record<TabValue, string[]> = {
   tasks: ["board"],
   system: ["health", "logs", "services"],
 };
+
+const TAB_VIEW_STORAGE_KEY = "mc-last-subviews";
+const RECENT_VIEWS_STORAGE_KEY = "mc-recent-views";
+const MAX_RECENT_VIEWS = 4;
+
+type RecentView = {
+  tab: TabValue;
+  view: string;
+  timestamp: number;
+};
+
+type NavEntry = {
+  tab: TabValue;
+  view: string;
+};
+
+function readStoredTabViews(): Partial<Record<TabValue, string>> {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = window.localStorage.getItem(TAB_VIEW_STORAGE_KEY);
+    if (!raw) return {};
+
+    const parsed = JSON.parse(raw) as Record<string, string>;
+    const normalized: Partial<Record<TabValue, string>> = {};
+
+    for (const tab of VALID_TABS) {
+      const view = parsed[tab];
+      if (view && VALID_VIEWS[tab].includes(view)) {
+        normalized[tab] = view;
+      }
+    }
+
+    return normalized;
+  } catch {
+    return {};
+  }
+}
+
+function getStoredTabView(tab: TabValue): string | null {
+  return readStoredTabViews()[tab] ?? null;
+}
+
+function storeTabView(tab: TabValue, view: string) {
+  if (typeof window === "undefined") return;
+
+  try {
+    const current = readStoredTabViews();
+    window.localStorage.setItem(
+      TAB_VIEW_STORAGE_KEY,
+      JSON.stringify({
+        ...current,
+        [tab]: view,
+      })
+    );
+  } catch {
+    // Best-effort only.
+  }
+}
+
+function readRecentViews(): RecentView[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = window.localStorage.getItem(RECENT_VIEWS_STORAGE_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw) as RecentView[];
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter(
+      (item) =>
+        item &&
+        VALID_TABS.includes(item.tab) &&
+        typeof item.view === "string" &&
+        VALID_VIEWS[item.tab].includes(item.view) &&
+        typeof item.timestamp === "number"
+    );
+  } catch {
+    return [];
+  }
+}
+
+function storeRecentViews(items: RecentView[]) {
+  if (typeof window === "undefined") return;
+
+  try {
+    window.localStorage.setItem(RECENT_VIEWS_STORAGE_KEY, JSON.stringify(items.slice(0, MAX_RECENT_VIEWS)));
+  } catch {
+    // Best-effort only.
+  }
+}
 
 /** Track last visit timestamp in localStorage for "new since" markers */
 function useLastVisit() {
@@ -161,11 +249,6 @@ const AnalyticsView = dynamic(
   { ssr: false, loading: () => <AnalyticsSkeleton /> }
 );
 
-const SystemHealth = dynamic(
-  () => import("@/components/SystemHealth").then((mod) => ({ default: mod.SystemHealth })),
-  { ssr: false, loading: () => <HealthSkeleton /> }
-);
-
 const CronHistory = dynamic(
   () => import("@/components/CronHistory").then((mod) => ({ default: mod.CronHistory })),
   { ssr: false, loading: () => <CronRunsSkeleton /> }
@@ -179,11 +262,6 @@ const LogViewer = dynamic(
 const KanbanBoard = dynamic(
   () => import("@/components/KanbanBoard").then((mod) => ({ default: mod.KanbanBoard })),
   { ssr: false, loading: () => <KanbanSkeleton /> }
-);
-
-const ServicesView = dynamic(
-  () => import("@/components/ServicesView").then((mod) => ({ default: mod.ServicesView })),
-  { ssr: false, loading: () => <ServicesSkeleton /> }
 );
 
 /** Navigation HUD — brief floating pill when switching via keyboard */
@@ -292,53 +370,122 @@ function DashboardContent() {
 
   // Read initial view from URL
   const viewParam = searchParams.get("view");
-  const [activeView, setActiveView] = useState<string>(
+  const initialView =
     viewParam && VALID_VIEWS[initialTab]?.includes(viewParam)
       ? viewParam
-      : VALID_VIEWS[initialTab][0]
-  );
+      : getStoredTabView(initialTab) ?? VALID_VIEWS[initialTab][0];
+
+  const [activeView, setActiveView] = useState<string>(initialView);
+  const [recentViews, setRecentViews] = useState<RecentView[]>([]);
+  const navHistoryRef = useRef<NavEntry[]>([{ tab: initialTab, view: initialView }]);
+  const navIndexRef = useRef(0);
+  const [navState, setNavState] = useState({ canBack: false, canForward: false });
+
+  const recordRecentView = useCallback((tab: TabValue, view: string) => {
+    setRecentViews((prev) => {
+      const next = [
+        { tab, view, timestamp: Date.now() },
+        ...prev.filter((item) => !(item.tab === tab && item.view === view)),
+      ].slice(0, MAX_RECENT_VIEWS);
+      storeRecentViews(next);
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
+    setRecentViews(readRecentViews());
+  }, []);
+
+  useEffect(() => {
+    recordRecentView(activeTab, activeView);
+  }, [activeTab, activeView, recordRecentView]);
+
+  useEffect(() => {
+    storeTabView(activeTab, activeView);
+  }, [activeTab, activeView]);
+
+  const syncNavState = useCallback(() => {
+    setNavState({
+      canBack: navIndexRef.current > 0,
+      canForward: navIndexRef.current < navHistoryRef.current.length - 1,
+    });
+  }, []);
+
+  const updateUrl = useCallback((tab: TabValue, view: string) => {
+    const params = new URLSearchParams();
+    if (tab !== "activity") params.set("tab", tab);
+    if (view !== VALID_VIEWS[tab][0]) params.set("view", view);
+    const url = params.toString() ? `/?${params}` : "/";
+    router.replace(url, { scroll: false });
+  }, [router]);
+
+  const pushNavHistory = useCallback((entry: NavEntry) => {
+    const current = navHistoryRef.current[navIndexRef.current];
+    if (current?.tab === entry.tab && current.view === entry.view) {
+      syncNavState();
+      return;
+    }
+
+    const nextHistory = navHistoryRef.current.slice(0, navIndexRef.current + 1);
+    nextHistory.push(entry);
+
+    if (nextHistory.length > 20) {
+      nextHistory.shift();
+    }
+
+    navHistoryRef.current = nextHistory;
+    navIndexRef.current = nextHistory.length - 1;
+    syncNavState();
+  }, [syncNavState]);
+
+  const applyNavigation = useCallback((tab: TabValue, view: string, options?: { recordHistory?: boolean; showHud?: boolean; context?: Record<string, string> }) => {
+    setActiveTab(tab);
+    setActiveView(view);
+    updateUrl(tab, view);
+
+    if (options?.recordHistory !== false) {
+      pushNavHistory({ tab, view });
+    }
+
+    if (options?.showHud) {
+      window.dispatchEvent(new CustomEvent("nav-hud", { detail: { tab, view } }));
+    }
+
+    if (options?.context) {
+      setTimeout(() => {
+        window.dispatchEvent(new CustomEvent("focus-item", { detail: options.context }));
+      }, 300);
+    }
+  }, [pushNavHistory, updateUrl]);
+
+  const goToHistoryEntry = useCallback((direction: "back" | "forward") => {
+    const delta = direction === "back" ? -1 : 1;
+    const nextIndex = navIndexRef.current + delta;
+    const target = navHistoryRef.current[nextIndex];
+    if (!target) return;
+
+    navIndexRef.current = nextIndex;
+    syncNavState();
+    applyNavigation(target.tab, target.view, { recordHistory: false, showHud: true });
+  }, [applyNavigation, syncNavState]);
 
   // Sync view changes to URL
   const handleViewChange = useCallback((view: string) => {
-    setActiveView(view);
-    const params = new URLSearchParams();
-    if (activeTab !== "activity") params.set("tab", activeTab);
-    const defaultView = VALID_VIEWS[activeTab][0];
-    if (view !== defaultView) params.set("view", view);
-    const url = params.toString() ? `/?${params}` : "/";
-    router.replace(url, { scroll: false });
-  }, [activeTab, router]);
+    applyNavigation(activeTab, view);
+  }, [activeTab, applyNavigation]);
 
-  // Sync tab changes to URL, reset view to default
+  // Sync tab changes to URL and restore the last sub-view used for that tab
   const handleTabChange = useCallback((value: string) => {
     const tab = value as TabValue;
-    setActiveTab(tab);
-    const defaultView = VALID_VIEWS[tab][0];
-    setActiveView(defaultView);
-    const url = tab === "activity" ? "/" : `/?tab=${tab}`;
-    router.replace(url, { scroll: false });
-  }, [router]);
+    const nextView = getStoredTabView(tab) ?? VALID_VIEWS[tab][0];
+    applyNavigation(tab, nextView);
+  }, [applyNavigation]);
 
   // Cross-view navigation: any component can dispatch "navigate-to" to switch tabs/views
   const navigateTo = useCallback((tab: TabValue, view?: string, context?: Record<string, string>) => {
-    setActiveTab(tab);
     const targetView = view && VALID_VIEWS[tab]?.includes(view) ? view : VALID_VIEWS[tab][0];
-    setActiveView(targetView);
-
-    const params = new URLSearchParams();
-    if (tab !== "activity") params.set("tab", tab);
-    if (targetView !== VALID_VIEWS[tab][0]) params.set("view", targetView);
-    const url = params.toString() ? `/?${params}` : "/";
-    router.replace(url, { scroll: false });
-
-    window.dispatchEvent(new CustomEvent("nav-hud", { detail: { tab, view: targetView } }));
-
-    if (context) {
-      setTimeout(() => {
-        window.dispatchEvent(new CustomEvent("focus-item", { detail: context }));
-      }, 300);
-    }
-  }, [router]);
+    applyNavigation(tab, targetView, { showHud: true, context });
+  }, [applyNavigation]);
 
   useEffect(() => {
     const handler = (e: Event) => {
@@ -351,11 +498,31 @@ function DashboardContent() {
     return () => window.removeEventListener("navigate-to", handler);
   }, [navigateTo]);
 
+  const recentViewLinks = useMemo(
+    () => recentViews.filter((item) => !(item.tab === activeTab && item.view === activeView)),
+    [recentViews, activeTab, activeView]
+  );
+
+  const currentViewLabel = VIEW_LABELS[activeView] ?? activeView;
+
   // Keyboard shortcuts: 1-4 for tabs, Shift+1/2/3 for sub-views, r for refresh
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
       if (target.tagName === "INPUT" || target.tagName === "TEXTAREA" || target.isContentEditable) return;
+
+      if (e.altKey && !e.shiftKey && !e.metaKey && !e.ctrlKey) {
+        if (e.key === "ArrowLeft") {
+          e.preventDefault();
+          goToHistoryEntry("back");
+          return;
+        }
+        if (e.key === "ArrowRight") {
+          e.preventDefault();
+          goToHistoryEntry("forward");
+          return;
+        }
+      }
 
       // Tab switching: 1-4
       if (!e.shiftKey && !e.metaKey && !e.ctrlKey && !e.altKey) {
@@ -381,7 +548,7 @@ function DashboardContent() {
     };
     window.addEventListener("keydown", handleKeyDown);
     return () => window.removeEventListener("keydown", handleKeyDown);
-  }, [activeTab, handleTabChange, handleViewChange]);
+  }, [activeTab, goToHistoryEntry, handleTabChange, handleViewChange]);
 
   // Dynamic page title with notification count
   useEffect(() => {
@@ -437,6 +604,54 @@ function DashboardContent() {
           {notifications.logs > 0 && <TabCount count={notifications.logs} color="amber" />}
         </TabsTrigger>
       </TabsList>
+      <div className="mt-2 flex flex-wrap items-center gap-2" data-testid="recent-views">
+        <div className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/80 px-1 py-1">
+          <button
+            type="button"
+            onClick={() => goToHistoryEntry("back")}
+            disabled={!navState.canBack}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
+            title="Back to previous view (Alt+Left)"
+            aria-label="Go back"
+          >
+            <ChevronLeft className="h-4 w-4" />
+          </button>
+          <button
+            type="button"
+            onClick={() => goToHistoryEntry("forward")}
+            disabled={!navState.canForward}
+            className="inline-flex h-7 w-7 items-center justify-center rounded-full text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-35"
+            title="Forward to next view (Alt+Right)"
+            aria-label="Go forward"
+          >
+            <ChevronRight className="h-4 w-4" />
+          </button>
+          <span className="mx-1 h-4 w-px bg-border/60" />
+          <span className="inline-flex items-center gap-1.5 px-2 text-[11px] text-muted-foreground">
+            <History className="h-3 w-3" />
+            <span className="font-medium text-foreground/80">{TAB_LABELS[activeTab]}</span>
+            <span className="text-muted-foreground/40">/</span>
+            <span>{currentViewLabel}</span>
+          </span>
+        </div>
+        {recentViewLinks.length > 0 && (
+          <>
+            <span className="text-[11px] text-muted-foreground">Recent</span>
+            {recentViewLinks.map((item) => (
+              <button
+                key={`${item.tab}:${item.view}`}
+                onClick={() => navigateTo(item.tab, item.view)}
+                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                title={`Jump to ${TAB_LABELS[item.tab]} ${VIEW_LABELS[item.view] ?? item.view}`}
+              >
+                <span className="font-medium text-foreground/80">{TAB_LABELS[item.tab]}</span>
+                <span className="text-muted-foreground/40">/</span>
+                <span>{VIEW_LABELS[item.view] ?? item.view}</span>
+              </button>
+            ))}
+          </>
+        )}
+      </div>
       </div>
 
       <TabsContent value="activity" className="mt-6 space-y-4">
@@ -508,8 +723,10 @@ function DashboardContent() {
 export default function Home() {
   return (
     <ToastProvider>
-      <CommandPalette />
-      <KeyboardShortcuts />
+      <Suspense fallback={null}>
+        <CommandPalette />
+        <KeyboardShortcuts />
+      </Suspense>
       <DynamicFavicon />
       <TabReturnNotifier />
       <NavigationHUD />
@@ -533,7 +750,7 @@ export default function Home() {
               </div>
               <div className="flex items-center gap-2">
                 <button
-                  onClick={() => window.dispatchEvent(new KeyboardEvent("keydown", { key: "k", metaKey: true, ctrlKey: true, bubbles: true }))}
+                  onClick={() => window.dispatchEvent(new CustomEvent("open-command-palette"))}
                   className="flex items-center justify-center rounded-lg border border-border/60 bg-muted/30 p-1.5 sm:px-3 sm:py-1.5 text-xs text-muted-foreground hover:bg-muted/50 hover:text-foreground transition-colors"
                 >
                   <Search className="h-4 w-4 sm:hidden" />

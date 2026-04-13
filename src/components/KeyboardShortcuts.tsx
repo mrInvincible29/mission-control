@@ -116,6 +116,8 @@ const GLOBAL_GROUPS: ShortcutGroup[] = [
       { keys: ["3"], description: "Tasks tab" },
       { keys: ["4"], description: "System tab" },
       { keys: ["\u21e7", "1\u20133"], description: "Switch sub-view" },
+      { keys: ["\u2325", "\u2190"], description: "Back to previous view" },
+      { keys: ["\u2325", "\u2192"], description: "Forward to next view" },
     ],
   },
   {
