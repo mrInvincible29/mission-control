@@ -306,7 +306,7 @@ export function ServicesView() {
   const [categoryFilter, setCategoryFilter] = useState<string>("");
   const [statusFilter, setStatusFilter] = useState<"all" | "attention" | "healthy" | "slow">("all");
   const [lastRefresh, setLastRefresh] = useState<number>(0);
-  const [sortBy, setSortBy] = useState<"name" | "status" | "response">("status");
+  const [sortBy, setSortBy] = useState<"priority" | "name" | "status" | "response">("status");
   const [selectedService, setSelectedService] = useState<ServiceData | null>(null);
   const [copiedUrl, setCopiedUrl] = useState(false);
   const [, setTick] = useState(0);
@@ -409,9 +409,9 @@ export function ServicesView() {
     );
   }, [services, serviceFlags]);
 
-  const attentionQueue = useMemo(() => {
-    return services
-      .map((svc) => {
+  const serviceInsights = useMemo(() => {
+    return Object.fromEntries(
+      services.map((svc) => {
         const history = historyMap[svc.name];
         const uptimePercent = history?.uptimePercent;
         const latency = svc.responseTime ?? 0;
@@ -433,18 +433,34 @@ export function ServicesView() {
                     ? `${uptimePercent}% uptime`
                     : null;
 
-        return {
-          ...svc,
-          uptimePercent,
-          latency,
-          severity,
-          reason,
-        };
+        const label =
+          svc.status === "down"
+            ? "Down"
+            : svc.status === "degraded"
+              ? "Degraded"
+              : latency >= 1000
+                ? "Very slow"
+                : latency >= 500
+                  ? "Slow"
+                  : uptimePercent !== undefined && uptimePercent < 99
+                    ? "Flaky"
+                    : "Healthy";
+
+        return [svc.name, { uptimePercent, latency, severity, reason, label }];
       })
+    ) as Record<string, { uptimePercent?: number; latency: number; severity: number; reason: string | null; label: string }>;
+  }, [services, historyMap]);
+
+  const attentionQueue = useMemo(() => {
+    return services
+      .map((svc) => ({
+        ...svc,
+        ...serviceInsights[svc.name],
+      }))
       .filter((svc) => svc.reason)
       .sort((a, b) => b.severity - a.severity || a.name.localeCompare(b.name))
       .slice(0, 4);
-  }, [services, historyMap]);
+  }, [services, serviceInsights]);
 
   const filtered = useMemo(() => {
     const statusOrder = { down: 0, degraded: 1, up: 2 };
@@ -468,10 +484,15 @@ export function ServicesView() {
       .sort((a, b) => {
         if (sortBy === "name") return a.name.localeCompare(b.name);
         if (sortBy === "response") return (a.responseTime ?? 9999) - (b.responseTime ?? 9999);
+        if (sortBy === "priority") {
+          const aSeverity = serviceInsights[a.name]?.severity ?? 0;
+          const bSeverity = serviceInsights[b.name]?.severity ?? 0;
+          return bSeverity - aSeverity || statusOrder[a.status] - statusOrder[b.status] || a.name.localeCompare(b.name);
+        }
         // status: down first, then degraded, then up
         return statusOrder[a.status] - statusOrder[b.status] || a.name.localeCompare(b.name);
       });
-  }, [services, categoryFilter, statusFilter, filter, sortBy, serviceFlags]);
+  }, [services, categoryFilter, statusFilter, filter, sortBy, serviceFlags, serviceInsights]);
 
   const upCount = services.filter((s) => s.status === "up").length;
   const selectedHistory = selectedService ? historyMap[selectedService.name] : undefined;
@@ -740,7 +761,7 @@ export function ServicesView() {
             {/* Sort toggle */}
             <div className="flex items-center gap-1 mr-1">
               <ArrowUpDown className="h-3 w-3 text-muted-foreground/50" />
-              {(["status", "name", "response"] as const).map((s) => (
+              {(["priority", "status", "name", "response"] as const).map((s) => (
                 <button
                   key={s}
                   onClick={() => setSortBy(s)}
@@ -751,7 +772,7 @@ export function ServicesView() {
                       : "bg-muted/30 text-muted-foreground border-border/40 hover:bg-muted/50"
                   }`}
                 >
-                  {s === "response" ? "speed" : s}
+                  {s === "response" ? "speed" : s === "priority" ? "priority" : s}
                 </button>
               ))}
             </div>
@@ -802,6 +823,7 @@ export function ServicesView() {
               const history = historyMap[svc.name];
               const pings = history?.pings ?? [];
               const uptimePercent = history?.uptimePercent;
+              const insight = serviceInsights[svc.name];
 
               return (
                 <div
@@ -845,6 +867,21 @@ export function ServicesView() {
                       </span>
                     )}
                   </div>
+
+                  {insight?.reason && (
+                    <div className="flex items-center gap-1.5 text-[10px]" data-testid="service-priority-badge">
+                      <span className={`inline-flex items-center rounded-full border px-1.5 py-0.5 font-medium ${
+                        svc.status === "down"
+                          ? "border-red-500/30 bg-red-500/10 text-red-300"
+                          : svc.status === "degraded"
+                            ? "border-amber-500/30 bg-amber-500/10 text-amber-300"
+                            : "border-amber-500/20 bg-amber-500/5 text-amber-200"
+                      }`}>
+                        {insight.label}
+                      </span>
+                      <span className="truncate text-muted-foreground">{insight.reason}</span>
+                    </div>
+                  )}
 
                   {/* Uptime dots — StatusPage style */}
                   {pings.length > 0 && (
@@ -949,6 +986,17 @@ export function ServicesView() {
                       <div className="mt-1 text-sm font-medium">{selectedService.port ?? "n/a"}</div>
                     </div>
                   </div>
+
+                  {serviceInsights[selectedService.name]?.reason && (
+                    <div className="rounded-lg border border-amber-500/20 bg-amber-500/8 p-3 space-y-1.5">
+                      <div className="flex items-center gap-2 text-xs font-medium text-amber-200">
+                        <AlertTriangle className="h-3.5 w-3.5 text-amber-400" />
+                        Why this service is bubbling up
+                      </div>
+                      <div className="text-sm text-foreground">{serviceInsights[selectedService.name]?.label}</div>
+                      <div className="text-[11px] text-muted-foreground">{serviceInsights[selectedService.name]?.reason}</div>
+                    </div>
+                  )}
 
                   <div className="rounded-lg border border-border/40 bg-muted/20 p-3 space-y-2">
                     <div className="flex items-center justify-between gap-2">
