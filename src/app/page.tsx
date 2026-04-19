@@ -276,6 +276,14 @@ const TAB_LABELS: Record<string, string> = {
   activity: "Activity", schedule: "Schedule", tasks: "Tasks", system: "System",
 };
 
+function formatRecentAge(timestamp: number): string {
+  const diff = Date.now() - timestamp;
+  if (diff < 60_000) return "just now";
+  if (diff < 3_600_000) return `${Math.round(diff / 60_000)}m ago`;
+  if (diff < 86_400_000) return `${Math.round(diff / 3_600_000)}h ago`;
+  return `${Math.round(diff / 86_400_000)}d ago`;
+}
+
 function NavigationHUD() {
   const [hud, setHud] = useState<{ tab: string; view: string } | null>(null);
   const timeoutRef = useRef<ReturnType<typeof setTimeout>>(null);
@@ -503,6 +511,11 @@ function DashboardContent() {
     [recentViews, activeTab, activeView]
   );
 
+  const clearRecentViews = useCallback(() => {
+    setRecentViews([]);
+    storeRecentViews([]);
+  }, []);
+
   const currentViewLabel = VIEW_LABELS[activeView] ?? activeView;
 
   // Keyboard shortcuts: 1-4 for tabs, Shift+1/2/3 for sub-views, r for refresh
@@ -636,19 +649,35 @@ function DashboardContent() {
         </div>
         {recentViewLinks.length > 0 && (
           <>
-            <span className="text-[11px] text-muted-foreground">Recent</span>
-            {recentViewLinks.map((item) => (
+            <div className="flex items-center gap-2 text-[11px] text-muted-foreground">
+              <span>Recent</span>
               <button
-                key={`${item.tab}:${item.view}`}
-                onClick={() => navigateTo(item.tab, item.view)}
-                className="inline-flex items-center gap-1 rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
-                title={`Jump to ${TAB_LABELS[item.tab]} ${VIEW_LABELS[item.view] ?? item.view}`}
+                type="button"
+                onClick={clearRecentViews}
+                className="rounded-full border border-border/60 px-2 py-0.5 text-[10px] text-muted-foreground transition-colors hover:border-primary/40 hover:text-foreground"
+                title="Clear recent view history"
               >
-                <span className="font-medium text-foreground/80">{TAB_LABELS[item.tab]}</span>
-                <span className="text-muted-foreground/40">/</span>
-                <span>{VIEW_LABELS[item.view] ?? item.view}</span>
+                Clear
               </button>
-            ))}
+            </div>
+            {recentViewLinks.map((item) => {
+              const age = formatRecentAge(item.timestamp);
+              return (
+                <button
+                  key={`${item.tab}:${item.view}`}
+                  onClick={() => navigateTo(item.tab, item.view)}
+                  className="inline-flex items-center gap-2 rounded-full border border-border/60 bg-background/80 px-2.5 py-1 text-[11px] text-muted-foreground hover:text-foreground hover:border-primary/40 transition-colors"
+                  title={`Jump to ${TAB_LABELS[item.tab]} ${VIEW_LABELS[item.view] ?? item.view} · ${age}`}
+                >
+                  <span className="font-medium text-foreground/80">{TAB_LABELS[item.tab]}</span>
+                  <span className="text-muted-foreground/40">/</span>
+                  <span>{VIEW_LABELS[item.view] ?? item.view}</span>
+                  <span className="rounded-full bg-muted/60 px-1.5 py-0.5 text-[10px] text-muted-foreground/80">
+                    {age}
+                  </span>
+                </button>
+              );
+            })}
           </>
         )}
       </div>
