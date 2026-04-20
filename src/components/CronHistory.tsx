@@ -645,6 +645,7 @@ function SuccessRateBar({ ok, total }: { ok: number; total: number }) {
 }
 
 type SortMode = "recent" | "name" | "runs" | "success";
+type JobHealthFilter = "all" | "attention" | "healthy" | "overdue" | "disabled";
 
 export function CronHistory() {
   const [runs, setRuns] = useState<CronRun[]>([]);
@@ -656,6 +657,7 @@ export function CronHistory() {
   const [expandedJobs, setExpandedJobs] = useState<Set<string>>(new Set());
   const [sortMode, setSortMode] = useState<SortMode>("recent");
   const [statusFilter, setStatusFilter] = useState<"all" | "ok" | "error">("all");
+  const [jobHealthFilter, setJobHealthFilter] = useState<JobHealthFilter>("all");
   const [autoRefresh, setAutoRefresh] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
   const [lastRefresh, setLastRefresh] = useState(0);
@@ -766,6 +768,27 @@ export function CronHistory() {
     return map;
   }, [runs]);
 
+  const jobHealthCounts = useMemo(() => {
+    let attention = 0;
+    let healthy = 0;
+    let overdue = 0;
+    let disabled = 0;
+
+    for (const job of jobs) {
+      const isDisabled = job.enabled === false;
+      const isJobOverdue = isOverdue(nextRunByJob[job.id]);
+      const hasFailures = job.stats.error > 0;
+      const needsAttention = isDisabled || isJobOverdue || hasFailures;
+
+      if (isDisabled) disabled += 1;
+      if (isJobOverdue) overdue += 1;
+      if (needsAttention) attention += 1;
+      if (!needsAttention && job.stats.total > 0) healthy += 1;
+    }
+
+    return { attention, healthy, overdue, disabled };
+  }, [jobs, nextRunByJob]);
+
   // Filtered and sorted jobs
   const sortedJobs = useMemo(() => {
     let filtered = [...jobs];
@@ -782,6 +805,28 @@ export function CronHistory() {
         j.name.toLowerCase().includes(lower) ||
         (j.model && getModelLabel(j.model).toLowerCase().includes(lower))
       );
+    }
+
+    if (jobHealthFilter !== "all") {
+      filtered = filtered.filter((job) => {
+        const isDisabled = job.enabled === false;
+        const isJobOverdue = isOverdue(nextRunByJob[job.id]);
+        const hasFailures = job.stats.error > 0;
+        const needsAttention = isDisabled || isJobOverdue || hasFailures;
+
+        switch (jobHealthFilter) {
+          case "attention":
+            return needsAttention;
+          case "healthy":
+            return !needsAttention && job.stats.total > 0;
+          case "overdue":
+            return isJobOverdue;
+          case "disabled":
+            return isDisabled;
+          default:
+            return true;
+        }
+      });
     }
 
     switch (sortMode) {
@@ -804,7 +849,7 @@ export function CronHistory() {
     }
 
     return filtered;
-  }, [jobs, sortMode, selectedJobId, searchQuery]);
+  }, [jobs, sortMode, selectedJobId, searchQuery, jobHealthFilter, nextRunByJob]);
 
   // Filtered runs for timeline view
   const filteredRuns = useMemo(() => {
@@ -1032,6 +1077,39 @@ export function CronHistory() {
           </div>
         )}
 
+        {/* Job health filters */}
+        {!selectedJobId && (
+          <div className="mt-3 flex flex-wrap gap-2" data-testid="cron-job-health-filters">
+            {[
+              { key: "all", label: "All jobs", count: jobs.length, activeClass: "border-primary/40 bg-primary/10 text-foreground" },
+              { key: "attention", label: "Needs attention", count: jobHealthCounts.attention, activeClass: "border-amber-500/40 bg-amber-500/10 text-amber-300" },
+              { key: "healthy", label: "Healthy", count: jobHealthCounts.healthy, activeClass: "border-emerald-500/40 bg-emerald-500/10 text-emerald-300" },
+              { key: "overdue", label: "Overdue", count: jobHealthCounts.overdue, activeClass: "border-red-500/40 bg-red-500/10 text-red-300" },
+              { key: "disabled", label: "Disabled", count: jobHealthCounts.disabled, activeClass: "border-slate-500/40 bg-slate-500/10 text-slate-300" },
+            ].map((filter) => {
+              const isActive = jobHealthFilter === filter.key;
+              return (
+                <button
+                  key={filter.key}
+                  type="button"
+                  onClick={() => setJobHealthFilter(filter.key as JobHealthFilter)}
+                  className={`inline-flex items-center gap-2 rounded-lg border px-2.5 py-1.5 text-xs transition-colors ${
+                    isActive
+                      ? filter.activeClass
+                      : "border-border/50 bg-muted/20 text-muted-foreground hover:bg-muted/40"
+                  }`}
+                  aria-pressed={isActive}
+                >
+                  <span>{filter.label}</span>
+                  <span className="rounded bg-background/50 px-1.5 py-0.5 text-[10px] font-mono leading-none">
+                    {filter.count}
+                  </span>
+                </button>
+              );
+            })}
+          </div>
+        )}
+
         {/* Search input */}
         <div className="relative mt-3">
           <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
@@ -1083,7 +1161,7 @@ export function CronHistory() {
             ))}
           </div>
 
-          {searchQuery && (
+          {(searchQuery || jobHealthFilter !== "all") && (
             <span className="text-[10px] text-muted-foreground ml-1">
               {sortedJobs.length} of {jobs.length} jobs
             </span>
