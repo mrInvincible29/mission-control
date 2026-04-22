@@ -11,6 +11,7 @@ import {
   Bot,
   ArrowRight,
   Circle,
+  Server,
 } from "lucide-react";
 import { formatCost, formatTokens, formatRelativeTime, getModelColor } from "@/lib/formatters";
 import {
@@ -247,6 +248,54 @@ function AgentPreview({
   );
 }
 
+function ServicePreview({
+  services,
+}: {
+  services: Array<{ name: string; status: string; responseTime: number | null; category: string }>;
+}) {
+  if (services.length === 0) {
+    return (
+      <div className="text-xs text-muted-foreground/60 text-center py-2">
+        All tracked services look healthy
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {services.slice(0, 5).map((service) => {
+        const tone =
+          service.status === "down"
+            ? "text-red-400"
+            : service.status === "degraded"
+              ? "text-amber-400"
+              : "text-amber-300";
+        const label =
+          service.status === "down"
+            ? "Down"
+            : service.status === "degraded"
+              ? "Degraded"
+              : service.responseTime !== null
+                ? `${service.responseTime}ms`
+                : "Slow";
+
+        return (
+          <div key={service.name} className="flex items-start gap-2 text-[11px]">
+            <div className={`mt-1 h-2 w-2 rounded-full ${service.status === "down" ? "bg-red-500" : service.status === "degraded" ? "bg-amber-500" : "bg-yellow-500"}`} />
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center gap-2">
+                <span className="truncate font-medium">{service.name}</span>
+                <span className={`shrink-0 font-mono ${tone}`}>{label}</span>
+              </div>
+              <div className="truncate text-muted-foreground/50">{service.category}</div>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /** Hover card wrapper with consistent styling */
 function StatHoverCard({
   children,
@@ -305,6 +354,12 @@ export function QuickStats() {
     dedupingInterval: 15000,
   });
 
+  // Services needing attention
+  const { data: servicesData } = useSWR("quick-stats-services", () => fetcher("/api/services"), {
+    refreshInterval: 60000,
+    dedupingInterval: 15000,
+  });
+
   const stats = useMemo(() => {
     const todayCost = analytics?.totalCost ?? 0;
     const todayTokens = analytics?.totalTokens ?? 0;
@@ -324,10 +379,38 @@ export function QuickStats() {
         }).length
       : 0;
 
-    return { todayCost, todayTokens, models, activeTasks, blockedTasks, todoTasks, activeSessions };
-  }, [analytics, tasksData, agents]);
+    const services = Array.isArray(servicesData) ? servicesData : [];
+    const attentionServices = services
+      .filter((service: any) => service.status !== "up" || (service.responseTime ?? 0) >= 500)
+      .sort((a: any, b: any) => {
+        const rank = (service: any) =>
+          service.status === "down"
+            ? 0
+            : service.status === "degraded"
+              ? 1
+              : 2;
+        return rank(a) - rank(b) || (b.responseTime ?? 0) - (a.responseTime ?? 0) || a.name.localeCompare(b.name);
+      });
 
-  const navigate = (tab: string, view?: string) => {
+    return {
+      todayCost,
+      todayTokens,
+      models,
+      activeTasks,
+      blockedTasks,
+      todoTasks,
+      activeSessions,
+      attentionServices,
+      attentionServiceCount: attentionServices.length,
+    };
+  }, [analytics, tasksData, agents, servicesData]);
+
+  const navigate = (tab: string, view?: string, context?: Record<string, string>) => {
+    if (typeof window !== "undefined") {
+      window.dispatchEvent(new CustomEvent("navigate-to", { detail: { tab, view, context } }));
+      return;
+    }
+
     const params = new URLSearchParams();
     if (tab !== "activity") params.set("tab", tab);
     if (view) params.set("view", view);
@@ -336,7 +419,7 @@ export function QuickStats() {
   };
 
   // Don't render until at least one data source has loaded
-  if (!analytics && !tasksData && !agents) return null;
+  if (!analytics && !tasksData && !agents && !servicesData) return null;
 
   const tasks = tasksData?.tasks ?? [];
 
@@ -441,6 +524,25 @@ export function QuickStats() {
             value={String(stats.activeSessions)}
             color="text-purple-400"
             onClick={() => navigate("activity", "agents")}
+          />
+        </StatHoverCard>
+      )}
+
+      {/* Services needing attention — hover shows worst offenders */}
+      {servicesData && stats.attentionServiceCount > 0 && (
+        <StatHoverCard
+          title="Services Needing Attention"
+          content={<ServicePreview services={stats.attentionServices} />}
+          footer="Click to open Services filtered to attention"
+          wide
+        >
+          <QuickStatBadge
+            icon={<Server className="h-3 w-3" />}
+            label="services"
+            value={String(stats.attentionServiceCount)}
+            color="text-amber-400"
+            onClick={() => navigate("system", "services", { statusFilter: "attention" })}
+            alert
           />
         </StatHoverCard>
       )}

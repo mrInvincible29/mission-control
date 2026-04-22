@@ -528,6 +528,35 @@ export function ServicesView() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, []);
 
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, string>>).detail;
+      if (!detail) return;
+
+      if (detail.statusFilter === "all" || detail.statusFilter === "attention" || detail.statusFilter === "healthy" || detail.statusFilter === "slow") {
+        setStatusFilter(detail.statusFilter);
+      }
+
+      if (typeof detail.categoryFilter === "string") {
+        setCategoryFilter(detail.categoryFilter);
+      }
+
+      if (typeof detail.filter === "string") {
+        setFilter(detail.filter);
+      }
+
+      if (typeof detail.serviceName === "string") {
+        const match = services.find((service) => service.name === detail.serviceName);
+        if (match) {
+          setSelectedService(match);
+        }
+      }
+    };
+
+    window.addEventListener("focus-item", handler);
+    return () => window.removeEventListener("focus-item", handler);
+  }, [services]);
+
   if (loading && services.length === 0) {
     return (
       <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
