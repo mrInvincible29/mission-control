@@ -212,7 +212,17 @@ function TaskAgeBadge({ task }: { task: Task }) {
 // SummaryStrip — glanceable task stats
 // ---------------------------------------------------------------------------
 
-function SummaryStrip({ tasks }: { tasks: Task[] }) {
+type TaskHealthFilter = "all" | "active" | "blocked" | "stale" | "done_today";
+
+function SummaryStrip({
+  tasks,
+  healthFilter,
+  onHealthFilterChange,
+}: {
+  tasks: Task[];
+  healthFilter: TaskHealthFilter;
+  onHealthFilterChange: (filter: TaskHealthFilter) => void;
+}) {
   const total = tasks.length;
   const done = tasks.filter((t) => t.status === "done").length;
   const inProgress = tasks.filter((t) => t.status === "in_progress").length;
@@ -242,13 +252,13 @@ function SummaryStrip({ tasks }: { tasks: Task[] }) {
   if (total === 0) return null;
 
   const stats = [
-    { icon: <BarChart3 className="h-3 w-3" />, label: "Total", value: String(total), color: "text-foreground/70" },
-    { icon: <TrendingUp className="h-3 w-3" />, label: "Done", value: `${completionRate}%`, color: completionRate >= 50 ? "text-emerald-400" : "text-foreground/70" },
-    { icon: <Loader2 className="h-3 w-3" />, label: "Active", value: String(inProgress), color: inProgress > 0 ? "text-blue-400" : "text-foreground/70" },
-    ...(blocked > 0 ? [{ icon: <AlertTriangle className="h-3 w-3" />, label: "Blocked", value: String(blocked), color: "text-amber-400" }] : []),
-    ...(stale > 0 ? [{ icon: <Hourglass className="h-3 w-3" />, label: "Stale", value: String(stale), color: "text-red-400" }] : []),
-    { icon: <Clock className="h-3 w-3" />, label: "Avg age", value: formatAge(avgAge), color: avgAge > 3 * ONE_DAY_MS ? "text-amber-400" : "text-foreground/70" },
-    ...(recentlyDone > 0 ? [{ icon: <Zap className="h-3 w-3" />, label: "Done today", value: String(recentlyDone), color: "text-emerald-400" }] : []),
+    { icon: <BarChart3 className="h-3 w-3" />, label: "Total", value: String(total), color: "text-foreground/70", filter: "all" as TaskHealthFilter, interactive: true },
+    { icon: <TrendingUp className="h-3 w-3" />, label: "Done", value: `${completionRate}%`, color: completionRate >= 50 ? "text-emerald-400" : "text-foreground/70", interactive: false },
+    { icon: <Loader2 className="h-3 w-3" />, label: "Active", value: String(inProgress), color: inProgress > 0 ? "text-blue-400" : "text-foreground/70", filter: "active" as TaskHealthFilter, interactive: inProgress > 0 },
+    ...(blocked > 0 ? [{ icon: <AlertTriangle className="h-3 w-3" />, label: "Blocked", value: String(blocked), color: "text-amber-400", filter: "blocked" as TaskHealthFilter, interactive: true }] : []),
+    ...(stale > 0 ? [{ icon: <Hourglass className="h-3 w-3" />, label: "Stale", value: String(stale), color: "text-red-400", filter: "stale" as TaskHealthFilter, interactive: true }] : []),
+    { icon: <Clock className="h-3 w-3" />, label: "Avg age", value: formatAge(avgAge), color: avgAge > 3 * ONE_DAY_MS ? "text-amber-400" : "text-foreground/70", interactive: false },
+    ...(recentlyDone > 0 ? [{ icon: <Zap className="h-3 w-3" />, label: "Done today", value: String(recentlyDone), color: "text-emerald-400", filter: "done_today" as TaskHealthFilter, interactive: true }] : []),
   ];
 
   return (
@@ -257,12 +267,17 @@ function SummaryStrip({ tasks }: { tasks: Task[] }) {
         {stats.map((stat) => (
           <Tooltip key={stat.label}>
             <TooltipTrigger asChild>
-              <div className={`flex items-center gap-1 text-[11px] tabular-nums whitespace-nowrap ${stat.color}`}>
+              <button
+                type="button"
+                onClick={() => stat.interactive && stat.filter && onHealthFilterChange(stat.filter)}
+                className={`flex items-center gap-1 rounded-md px-1.5 py-0.5 text-[11px] tabular-nums whitespace-nowrap transition-colors ${stat.color} ${stat.filter === healthFilter ? "bg-primary/10 ring-1 ring-primary/20" : ""} ${stat.interactive ? "hover:bg-muted/50" : "cursor-default"}`}
+                aria-pressed={stat.filter === healthFilter}
+              >
                 {stat.icon}
                 <span className="font-medium">{stat.value}</span>
-              </div>
+              </button>
             </TooltipTrigger>
-            <TooltipContent side="bottom" className="text-xs">{stat.label}</TooltipContent>
+            <TooltipContent side="bottom" className="text-xs">{stat.label}{stat.interactive ? " filter" : ""}</TooltipContent>
           </Tooltip>
         ))}
       </div>
@@ -811,6 +826,7 @@ export function KanbanBoard() {
   // Filters
   const [filterAssignee, setFilterAssignee] = useState<string | null>(null);
   const [filterPriority, setFilterPriority] = useState<TaskPriority | null>(null);
+  const [healthFilter, setHealthFilter] = useState<TaskHealthFilter>("all");
   const [searchText, setSearchText] = useState("");
   const searchInputRef = useRef<HTMLInputElement>(null);
 
@@ -849,6 +865,12 @@ export function KanbanBoard() {
       }
     }
     if (filterPriority !== null && t.priority !== filterPriority) return false;
+    if (healthFilter === "active" && t.status !== "in_progress") return false;
+    if (healthFilter === "blocked" && t.status !== "blocked") return false;
+    if (healthFilter === "stale" && !isStale(t)) return false;
+    if (healthFilter === "done_today") {
+      if (t.status !== "done" || !t.completedAt || Date.now() - t.completedAt >= ONE_DAY_MS) return false;
+    }
     if (searchText.trim()) {
       const lower = searchText.toLowerCase();
       const matchTitle = t.title.toLowerCase().includes(lower);
@@ -858,6 +880,13 @@ export function KanbanBoard() {
     }
     return true;
   });
+
+  const clearFilters = useCallback(() => {
+    setFilterAssignee(null);
+    setFilterPriority(null);
+    setHealthFilter("all");
+    setSearchText("");
+  }, []);
 
   // Group tasks by column
   const tasksByColumn = COLUMNS.reduce(
@@ -1154,6 +1183,42 @@ export function KanbanBoard() {
     return () => window.removeEventListener("keydown", handleKeyDown);
   }, [allVisibleTasks, focusedCardIdx, selectedTask]);
 
+  // Cross-navigation focus support (e.g. QuickStats or attention chips opening filtered task slices)
+  useEffect(() => {
+    const handler = (event: Event) => {
+      const detail = (event as CustomEvent<Record<string, string>>).detail;
+      if (!detail) return;
+
+      if (detail.healthFilter === "all" || detail.healthFilter === "active" || detail.healthFilter === "blocked" || detail.healthFilter === "stale" || detail.healthFilter === "done_today") {
+        setHealthFilter(detail.healthFilter);
+      }
+
+      if (detail.assigneeFilter === "__unassigned__" || assignees.some((assignee) => assignee.name === detail.assigneeFilter)) {
+        setFilterAssignee(detail.assigneeFilter);
+      }
+
+      if (detail.priorityFilter === "urgent" || detail.priorityFilter === "high" || detail.priorityFilter === "medium" || detail.priorityFilter === "low") {
+        setFilterPriority(detail.priorityFilter);
+      }
+
+      if (typeof detail.searchText === "string") {
+        setSearchText(detail.searchText);
+      }
+
+      if (detail.taskId && typeof detail.taskId === "string") {
+        const match = tasks.find((task) => task.id === detail.taskId);
+        if (match) {
+          setSelectedTask(match);
+          const idx = allVisibleTasks.findIndex((task) => task.id === match.id);
+          if (idx >= 0) setFocusedCardIdx(idx);
+        }
+      }
+    };
+
+    window.addEventListener("focus-item", handler);
+    return () => window.removeEventListener("focus-item", handler);
+  }, [allVisibleTasks, assignees, tasks]);
+
   // Scroll focused card into view
   useEffect(() => {
     if (focusedCardIdx < 0 || focusedCardIdx >= allVisibleTasks.length) return;
@@ -1219,7 +1284,7 @@ export function KanbanBoard() {
   return (
     <Card className="h-full flex flex-col border-0 shadow-none bg-transparent">
       {/* Summary strip */}
-      <SummaryStrip tasks={tasks} />
+      <SummaryStrip tasks={tasks} healthFilter={healthFilter} onHealthFilterChange={setHealthFilter} />
 
       {/* Filter bar */}
       <div className="flex flex-wrap items-center gap-2 px-4 pt-3 pb-2">
@@ -1350,6 +1415,59 @@ export function KanbanBoard() {
           })}
         </div>
       </div>
+
+      {(healthFilter !== "all" || filterAssignee !== null || filterPriority !== null || Boolean(searchText.trim())) && (
+        <div className="flex flex-wrap items-center gap-2 px-4 pb-2 text-[11px]" data-testid="kanban-active-filters">
+          <span className="text-muted-foreground/60">Filtered by</span>
+          {healthFilter !== "all" && (
+            <button
+              type="button"
+              onClick={() => setHealthFilter("all")}
+              className="inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-2 py-1 text-foreground/80 hover:bg-muted/50"
+            >
+              <span className="capitalize">{healthFilter.replace("_", " ")}</span>
+              <X className="h-3 w-3" />
+            </button>
+          )}
+          {filterAssignee !== null && (
+            <button
+              type="button"
+              onClick={() => setFilterAssignee(null)}
+              className="inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-2 py-1 text-foreground/80 hover:bg-muted/50"
+            >
+              <span>{filterAssignee === "__unassigned__" ? "Unassigned" : `Assignee: ${assignees.find((a) => a.name === filterAssignee)?.displayName ?? filterAssignee}`}</span>
+              <X className="h-3 w-3" />
+            </button>
+          )}
+          {filterPriority !== null && (
+            <button
+              type="button"
+              onClick={() => setFilterPriority(null)}
+              className="inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-2 py-1 text-foreground/80 hover:bg-muted/50"
+            >
+              <span className="capitalize">Priority: {filterPriority}</span>
+              <X className="h-3 w-3" />
+            </button>
+          )}
+          {Boolean(searchText.trim()) && (
+            <button
+              type="button"
+              onClick={() => setSearchText("")}
+              className="inline-flex items-center gap-1 rounded-full border border-border/50 bg-muted/30 px-2 py-1 text-foreground/80 hover:bg-muted/50 max-w-full"
+            >
+              <span className="truncate max-w-[180px]">Search: {searchText.trim()}</span>
+              <X className="h-3 w-3" />
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={clearFilters}
+            className="text-muted-foreground hover:text-foreground underline underline-offset-2"
+          >
+            Clear all
+          </button>
+        </div>
+      )}
 
       {/* Priority distribution bar */}
       {filteredTasks.length > 0 && (

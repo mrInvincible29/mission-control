@@ -486,7 +486,7 @@ export function QuickStats() {
             label={stats.activeTasks > 0 ? "active" : "to do"}
             value={String(stats.activeTasks > 0 ? stats.activeTasks : stats.todoTasks)}
             color="text-blue-400"
-            onClick={() => navigate("tasks")}
+            onClick={() => navigate("tasks", undefined, { healthFilter: stats.activeTasks > 0 ? "active" : "all" })}
           />
         </StatHoverCard>
       )}
@@ -504,7 +504,7 @@ export function QuickStats() {
             label="blocked"
             value={String(stats.blockedTasks)}
             color="text-amber-400"
-            onClick={() => navigate("tasks")}
+            onClick={() => navigate("tasks", undefined, { healthFilter: "blocked" })}
             alert
           />
         </StatHoverCard>
